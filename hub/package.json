@@ -1,0 +1,27 @@
+{
+  "name": "omp-hub",
+  "version": "0.1.0",
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/bun": "^1.2.9",
+    "typescript": "^5.8.3"
+  },
+  "description": "Standalone OMP Collab fleet dashboard, host broker, and private relay. Inspired by claude-net's semantics; shares no source with it.",
+  "private": true,
+  "scripts": {
+    "dev": "bun --watch src/server/index.ts",
+    "start": "bun run src/server/index.ts",
+    "relay": "bun run src/relay/relay.ts",
+    "build:webui": "bun run scripts/build-webui.ts",
+    "build:collab": "scripts/build-vendor-collab.sh",
+    "build": "bun run build:webui && bun run build:collab",
+    "test": "bun test",
+    "lint": "biome check .",
+    "fmt": "biome format --write ."
+  },
+  "type": "module",
+  "dependencies": {
+    "@elysiajs/static": "1.4.10",
+    "elysia": "1.4.28"
+  }
+}

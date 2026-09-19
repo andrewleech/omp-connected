@@ -1,0 +1,198 @@
+// Pure, unit-testable helpers for the fleet dashboard's client-side state.
+// Ported from claude-net's src/hub/omp-dashboard.js as part of the omp-hub
+// extraction — the logic is unchanged; only the module boundary and types
+// are new (the original was untyped JS with no build step).
+
+export const WORKSPACE_STORAGE_KEY = "omp-hub-dashboard/v1";
+
+const WORKSPACE_VERSION = 1;
+export const INSPECTOR_PANES = [
+  "messages",
+  "controls",
+  "participants",
+  "files",
+] as const;
+export type InspectorPane = (typeof INSPECTOR_PANES)[number];
+
+export interface CollabSession {
+  host_id: string;
+  instanceId: string;
+  generation: number;
+  access: "view" | "control";
+  startedAt: number;
+  sessionName?: string | null;
+  sessionId?: string;
+  participants?: number;
+}
+
+export interface WorkspaceGroup {
+  id: string;
+  name: string;
+  sessions: string[];
+}
+
+export interface Workspace {
+  version: number;
+  groups: WorkspaceGroup[];
+  selected: string | null;
+  inspector: InspectorPane;
+}
+
+export interface SessionGroup {
+  id: string;
+  name: string;
+  custom: boolean;
+  sessions: CollabSession[];
+}
+
+export interface StorageLike {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+}
+
+export function sessionKey(session: CollabSession): string {
+  return `${session.host_id}:${session.instanceId}:${session.generation}`;
+}
+
+export function readWorkspace(storage: StorageLike): Workspace {
+  try {
+    const raw = storage.getItem(WORKSPACE_STORAGE_KEY);
+    const value = raw
+      ? (JSON.parse(raw) as Partial<Workspace> & { groups?: unknown })
+      : null;
+    if (
+      !value ||
+      value.version !== WORKSPACE_VERSION ||
+      !Array.isArray(value.groups)
+    ) {
+      return {
+        version: WORKSPACE_VERSION,
+        groups: [],
+        selected: null,
+        inspector: "messages",
+      };
+    }
+    const groups = value.groups
+      .filter((group): group is WorkspaceGroup => {
+        return (
+          !!group &&
+          typeof group === "object" &&
+          typeof (group as WorkspaceGroup).id === "string" &&
+          typeof (group as WorkspaceGroup).name === "string"
+        );
+      })
+      .map((group) => ({
+        id: group.id,
+        name: group.name,
+        sessions: Array.isArray(group.sessions)
+          ? group.sessions.filter(
+              (key): key is string => typeof key === "string",
+            )
+          : [],
+      }));
+    return {
+      version: WORKSPACE_VERSION,
+      groups,
+      selected: typeof value.selected === "string" ? value.selected : null,
+      inspector: INSPECTOR_PANES.includes(value.inspector as InspectorPane)
+        ? (value.inspector as InspectorPane)
+        : "messages",
+    };
+  } catch {
+    return {
+      version: WORKSPACE_VERSION,
+      groups: [],
+      selected: null,
+      inspector: "messages",
+    };
+  }
+}
+
+export function writeWorkspace(
+  storage: StorageLike,
+  workspace: Workspace,
+): void {
+  storage.setItem(
+    WORKSPACE_STORAGE_KEY,
+    JSON.stringify({
+      version: WORKSPACE_VERSION,
+      groups: workspace.groups.map(({ id, name, sessions }) => ({
+        id,
+        name,
+        sessions,
+      })),
+      selected: workspace.selected,
+      inspector: workspace.inspector,
+    }),
+  );
+}
+
+export function groupSessions(
+  sessions: CollabSession[],
+  groups: WorkspaceGroup[],
+): SessionGroup[] {
+  const grouped = new Set(groups.flatMap((group) => group.sessions));
+  const byRecency = (left: CollabSession, right: CollabSession) =>
+    right.startedAt - left.startedAt ||
+    sessionKey(left).localeCompare(sessionKey(right));
+  const named: SessionGroup[] = groups.map((group) => ({
+    id: group.id,
+    name: group.name,
+    custom: true,
+    sessions: sessions
+      .filter((session) => group.sessions.includes(sessionKey(session)))
+      .sort(byRecency),
+  }));
+  const hosts = new Map<string, CollabSession[]>();
+  for (const session of sessions.filter(
+    (session) => !grouped.has(sessionKey(session)),
+  )) {
+    const host = hosts.get(session.host_id) ?? [];
+    host.push(session);
+    hosts.set(session.host_id, host);
+  }
+  return [
+    ...named,
+    ...[...hosts.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([id, hostSessions]) => ({
+        id: `host:${id}`,
+        name: id,
+        custom: false,
+        sessions: hostSessions.sort(byRecency),
+      })),
+  ];
+}
+
+export function canRequestAccess(
+  session: CollabSession,
+  access: "view" | "control",
+): boolean {
+  return (
+    access === "view" || (access === "control" && session.access === "control")
+  );
+}
+
+export function resolveRememberedSession(
+  sessions: CollabSession[],
+  selected: string | null,
+): CollabSession | null {
+  return sessions.find((session) => sessionKey(session) === selected) ?? null;
+}
+
+/**
+ * Identity of what the workspace pane currently shows. Two renders with the
+ * same signature must leave the live <iframe> untouched — detaching and
+ * reinserting it forces a browser to reload its browsing context, dropping
+ * the embedded Collab guest's connection and transcript. This was a real
+ * bug in claude-net's predecessor (a 5s heartbeat event triggered a full
+ * dashboard refetch and re-render on every tick); this server never even
+ * has a heartbeat to trigger it (see dashboard-events.ts), but the memo
+ * stays as defense in depth against any future over-eager render() call.
+ */
+export function workspaceSignature(
+  session: CollabSession | null,
+  access: string | null,
+): string | null {
+  return session ? `${sessionKey(session)}::${access ?? ""}` : null;
+}

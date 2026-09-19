@@ -1,0 +1,19 @@
+[Unit]
+Description=OMP Hub Server (fleet dashboard + Collab host broker)
+Wants=network-online.target tailscaled.service
+After=network-online.target tailscaled.service
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/omp-hub/omp-hub.env
+ExecStartPre=/bin/sh -c 'until /usr/bin/tailscale ip -4 >/dev/null 2>&1; do sleep 1; done'
+WorkingDirectory=%h/omp-hub
+ExecStart=%h/.bun/bin/bun run src/server/index.ts
+Restart=on-failure
+RestartSec=2s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
