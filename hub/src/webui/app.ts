@@ -21,6 +21,7 @@ import {
   readWorkspace,
   resolveRememberedSession,
   sessionKey,
+  sessionLabel,
   workspaceSignature,
   writeWorkspace,
 } from "./lib/workspace";
@@ -60,6 +61,98 @@ function el(
 
 function displayName(session: CollabSession): string {
   return session.sessionName || session.sessionId || session.instanceId;
+}
+
+interface ContextMenuItem {
+  label: string;
+  onSelect: () => void;
+  disabled?: boolean;
+}
+
+let activeContextMenu: HTMLElement | null = null;
+
+function closeContextMenu(): void {
+  activeContextMenu?.remove();
+  activeContextMenu = null;
+}
+
+function openContextMenu(x: number, y: number, items: ContextMenuItem[]): void {
+  closeContextMenu();
+  const menu = el("ul", { className: "ctx-menu" });
+  for (const item of items) {
+    const li = el("li");
+    const button = el("button", {
+      type: "button",
+      text: item.label,
+      disabled: item.disabled,
+    }) as HTMLButtonElement;
+    button.onclick = () => {
+      closeContextMenu();
+      item.onSelect();
+    };
+    li.append(button);
+    menu.append(li);
+  }
+  document.body.append(menu);
+  const rect = menu.getBoundingClientRect();
+  const left = Math.max(8, Math.min(x, window.innerWidth - rect.width - 8));
+  const top = Math.max(8, Math.min(y, window.innerHeight - rect.height - 8));
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+  activeContextMenu = menu;
+}
+
+// Outside-dismissal uses `pointerdown` (capture phase) rather than `click`:
+// the `contextmenu` event that opens a menu never itself produces a `click`,
+// but the touch gesture ending a long-press does, which would otherwise
+// close a just-opened menu before the user can tap an item.
+document.addEventListener(
+  "pointerdown",
+  (event) => {
+    if (activeContextMenu?.contains(event.target as Node)) return;
+    closeContextMenu();
+  },
+  true,
+);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeContextMenu();
+});
+window.addEventListener("resize", closeContextMenu);
+window.addEventListener("scroll", closeContextMenu, true);
+
+/**
+ * Fallback long-press trigger for touch devices whose browser does not
+ * dispatch a native `contextmenu` event on press-and-hold (older iOS
+ * Safari). Cancels on release or once the finger moves past a small
+ * threshold, so it never fires mid-scroll.
+ */
+function attachLongPress(
+  target: HTMLElement,
+  onTrigger: (x: number, y: number) => void,
+): void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let start: { x: number; y: number } | null = null;
+  const cancel = () => {
+    clearTimeout(timer);
+    timer = undefined;
+    start = null;
+  };
+  target.addEventListener("pointerdown", (event) => {
+    if (event.pointerType !== "touch") return;
+    start = { x: event.clientX, y: event.clientY };
+    const { clientX, clientY } = event;
+    timer = setTimeout(() => {
+      onTrigger(clientX, clientY);
+      cancel();
+    }, 550);
+  });
+  target.addEventListener("pointermove", (event) => {
+    if (!start) return;
+    if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 10)
+      cancel();
+  });
+  target.addEventListener("pointerup", cancel);
+  target.addEventListener("pointercancel", cancel);
 }
 
 function createDashboard(root: HTMLElement): void {
@@ -120,12 +213,25 @@ function createDashboard(root: HTMLElement): void {
       }),
     );
     state.sessions = entries.flat();
-    state.selectedSession = resolveRememberedSession(
-      state.sessions,
-      state.selected,
-    );
-    if (!state.selectedSession && state.sessions.length > 0)
-      selectSession(state.sessions[0] as CollabSession);
+    const resolved =
+      resolveRememberedSession(state.sessions, state.selected) ??
+      (state.sessions[0] as CollabSession | undefined) ??
+      null;
+    if (!resolved) {
+      state.selectedSession = null;
+      return;
+    }
+    if (
+      state.selectedSession &&
+      sessionKey(state.selectedSession) === sessionKey(resolved)
+    ) {
+      // Same room as before this refresh — only update its polled fields
+      // (participants, etc.); selectSession() would blank and reload the
+      // live iframe for no reason.
+      state.selectedSession = resolved;
+      return;
+    }
+    selectSession(resolved);
   }
 
   async function refresh(): Promise<void> {
@@ -159,6 +265,7 @@ function createDashboard(root: HTMLElement): void {
     state.selectedAccess = null;
     persist();
     render();
+    void openCollab("view");
   }
 
   function setGroup(session: CollabSession, groupId: string | null): void {
@@ -234,6 +341,46 @@ function createDashboard(root: HTMLElement): void {
     }
   }
 
+  function sessionMenuItems(session: CollabSession): ContextMenuItem[] {
+    const items: ContextMenuItem[] = [
+      {
+        label: "Copy session name",
+        onSelect: () => {
+          void navigator.clipboard.writeText(sessionLabel(session)).then(
+            () => showStatus("Session name copied", "ok"),
+            () => showStatus("Copy failed — clipboard unavailable", "warning"),
+          );
+        },
+      },
+    ];
+    const current = state.groups.find((group) =>
+      group.sessions.includes(sessionKey(session)),
+    );
+    if (current)
+      items.push({
+        label: `Remove from "${current.name}"`,
+        onSelect: () => setGroup(session, null),
+      });
+    for (const group of state.groups) {
+      if (group.id === current?.id) continue;
+      items.push({
+        label: `Move to "${group.name}"`,
+        onSelect: () => setGroup(session, group.id),
+      });
+    }
+    items.push({
+      label: "New group…",
+      onSelect: () => {
+        const name = prompt("Group name?");
+        if (!name) return;
+        const group = { id: crypto.randomUUID(), name, sessions: [] };
+        state.groups.push(group);
+        setGroup(session, group.id);
+      },
+    });
+    return items;
+  }
+
   function renderRail(container: Element): void {
     container.replaceChildren();
     const addGroup = el("button", {
@@ -255,27 +402,35 @@ function createDashboard(root: HTMLElement): void {
       if (group.sessions.length === 0)
         section.append(el("p", { className: "empty", text: "No sessions" }));
       for (const session of group.sessions) {
-        const card = el("div", {
+        const card = el("button", {
           className: `session-card${sessionKey(session) === state.selected ? " selected" : ""}`,
-        });
-        const open = el("button", { type: "button" });
-        open.append(el("span", { text: displayName(session) }));
-        open.append(el("span", { text: session.host_id }));
-        open.append(
+          type: "button",
+          title: displayName(session),
+        }) as HTMLButtonElement;
+        card.append(
+          el("span", {
+            className: "session-label",
+            text: sessionLabel(session),
+          }),
+        );
+        card.append(
           el("span", {
             className: `badge ${session.access}`,
             text: session.access,
           }),
         );
-        (open as HTMLButtonElement).onclick = () => selectSession(session);
-        const moveTo = el("select") as HTMLSelectElement;
-        moveTo.append(new Option("Ungrouped", ""));
-        for (const g of state.groups)
-          moveTo.append(
-            new Option(g.name, g.id, false, g.id === group.id && group.custom),
+        card.onclick = () => selectSession(session);
+        card.oncontextmenu = (event) => {
+          event.preventDefault();
+          openContextMenu(
+            event.clientX,
+            event.clientY,
+            sessionMenuItems(session),
           );
-        moveTo.onchange = () => setGroup(session, moveTo.value || null);
-        card.append(open, moveTo);
+        };
+        attachLongPress(card, (x, y) =>
+          openContextMenu(x, y, sessionMenuItems(session)),
+        );
         section.append(card);
       }
       container.append(section);
@@ -299,30 +454,33 @@ function createDashboard(root: HTMLElement): void {
       return;
     }
     const header = el("header", { className: "workspace-header" });
-    header.append(
-      el("div", { text: `${displayName(session)} · ${session.host_id}` }),
+    const title = el("div", { className: "workspace-title" });
+    title.append(
+      el("span", {
+        className: "workspace-title-text",
+        text: `${displayName(session)} · ${session.host_id}`,
+      }),
     );
-    const actions = el("div", { className: "actions" });
-    const view = el("button", { text: "Open view", type: "button" });
-    (view as HTMLButtonElement).onclick = () => void openCollab("view");
-    actions.append(view);
-    const control = el("button", {
-      text: "Open control",
-      type: "button",
-      disabled: !canRequestAccess(session, "control"),
-    });
-    control.title = (control as HTMLButtonElement).disabled
-      ? "This room exposes view-only access."
-      : "Opens the real OMP Collab control room.";
-    (control as HTMLButtonElement).onclick = () => void openCollab("control");
-    actions.append(control);
-    header.append(actions);
+    title.append(
+      el("span", {
+        className: `badge ${state.selectedAccess ?? "connecting"}`,
+        text:
+          state.selectedAccess === "control"
+            ? "control"
+            : state.selectedAccess === "view"
+              ? "view"
+              : "connecting…",
+      }),
+    );
+    header.append(title);
     const hint = el("p", {
       className: "channel-hint",
       text:
         state.selectedAccess === "control"
           ? "Prompt session in the Collab composer below. Agent messages remain a separate roster-routed channel."
-          : "Open control to prompt this session. Agent messages are sent through the roster, never as session prompts.",
+          : canRequestAccess(session, "control")
+            ? "Viewing read-only. Send a message in the composer below to switch this room to control. Agent messages (right pane) are a separate roster channel, never a session prompt."
+            : "This room is view-only on its host; session prompting isn't available here. Agent messages (right pane) are a separate roster channel.",
     });
     container.append(
       header,
@@ -442,6 +600,28 @@ function createDashboard(root: HTMLElement): void {
       "Hub event stream disconnected; use Refresh to retry.",
       "warning",
     );
+
+  async function handlePromoteRequest(): Promise<void> {
+    const session = state.selectedSession;
+    if (!session || state.selectedAccess === "control") return;
+    if (!canRequestAccess(session, "control")) {
+      showStatus(
+        "This room is view-only; session prompting isn't available.",
+        "warning",
+      );
+      return;
+    }
+    await openCollab("control");
+  }
+
+  window.addEventListener("message", (event) => {
+    const frame = root.querySelector<HTMLIFrameElement>("[data-collab-frame]");
+    if (!frame || event.source !== frame.contentWindow) return;
+    const data = event.data as { source?: string; type?: string } | null;
+    if (data?.source !== "omp-collab-web" || data.type !== "promote-request")
+      return;
+    void handlePromoteRequest();
+  });
   setInterval(() => void pollSessions().catch(() => {}), SESSION_POLL_MS);
   void refresh().catch((error) => showStatus(error.message, "warning"));
 }

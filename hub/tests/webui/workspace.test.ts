@@ -7,6 +7,7 @@ import {
   readWorkspace,
   resolveRememberedSession,
   sessionKey,
+  sessionLabel,
   workspaceSignature,
   writeWorkspace,
 } from "@/webui/lib/workspace";
@@ -104,5 +105,21 @@ describe("fleet dashboard workspace", () => {
       selected: null,
       inspector: "messages",
     });
+  });
+
+  test("labels a session by its project directory basename", () => {
+    expect(sessionLabel({ ...alpha, cwd: "/home/andrew/studio/mesh" })).toBe(
+      "mesh",
+    );
+    expect(sessionLabel({ ...alpha, cwd: "/home/andrew/studio/mesh/" })).toBe(
+      "mesh",
+    );
+  });
+
+  test("falls back to verbose name then instance id without a cwd", () => {
+    expect(
+      sessionLabel({ ...alpha, sessionName: "Support multiple providers" }),
+    ).toBe("Support multiple providers");
+    expect(sessionLabel(alpha)).toBe(alpha.instanceId);
   });
 });

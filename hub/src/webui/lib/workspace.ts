@@ -22,6 +22,7 @@ export interface CollabSession {
   startedAt: number;
   sessionName?: string | null;
   sessionId?: string;
+  cwd?: string;
   participants?: number;
 }
 
@@ -52,6 +53,18 @@ export interface StorageLike {
 
 export function sessionKey(session: CollabSession): string {
   return `${session.host_id}:${session.instanceId}:${session.generation}`;
+}
+
+/**
+ * Compact rail label: the project directory's basename (matching bin/ompc's
+ * own default session-naming convention), falling back to the session's own
+ * verbose name only when no cwd was reported. The verbose name remains
+ * available via the session object for the central pane heading; this is
+ * deliberately the short form.
+ */
+export function sessionLabel(session: CollabSession): string {
+  const base = session.cwd?.split("/").filter(Boolean).pop();
+  return base || session.sessionName || session.sessionId || session.instanceId;
 }
 
 export function readWorkspace(storage: StorageLike): Workspace {
