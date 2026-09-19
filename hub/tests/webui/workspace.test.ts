@@ -103,7 +103,7 @@ describe("fleet dashboard workspace", () => {
       version: 1,
       groups: [],
       selected: null,
-      inspector: "messages",
+      inspector: "controls",
     });
   });
 

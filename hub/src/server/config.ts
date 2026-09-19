@@ -10,11 +10,6 @@ export interface HubConfig {
   hostToken: string;
   tlsCert: string | undefined;
   tlsKey: string | undefined;
-  /** Origin of whichever claude-net instance is authoritative for the real
-   *  agent roster (e.g. https://reference-host.your-tailnet.ts.net:4815). Optional:
-   *  when unset, the roster/messaging pane in the webui is disabled rather
-   *  than pointed at a wrong or scratch instance by accident. */
-  claudeNetHub: string | undefined;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): HubConfig {
@@ -26,6 +21,5 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): HubConfig {
     hostToken,
     tlsCert: env.OMP_HUB_TLS_CERT,
     tlsKey: env.OMP_HUB_TLS_KEY,
-    claudeNetHub: env.CLAUDE_NET_HUB,
   };
 }

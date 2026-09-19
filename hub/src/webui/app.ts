@@ -2,8 +2,9 @@
 // (src/hub/omp-dashboard.js) with two structural changes:
 //
 // 1. Routes point at this server's own surface (`/api/hosts/...` for the
-//    collab broker, `/api/roster/...` — a proxy to claude-net — for the
-//    agent-message pane) instead of claude-net's `/api/...`.
+//    collab broker) instead of claude-net's `/api/...`. This server has no
+//    other coupling to claude-net: no source dependency and no network
+//    dependency either.
 // 2. The dashboard socket only ever receives `host.connected` /
 //    `host.disconnected` (see dashboard-events.ts) — never a generic
 //    heartbeat — so there is no broadcast-storm to defend against here.
@@ -28,13 +29,6 @@ import {
 
 const SESSION_POLL_MS = 15_000;
 
-interface AgentSummary {
-  fullName: string;
-  status: "online" | "offline";
-}
-interface TeamSummary {
-  name: string;
-}
 interface HostSummary {
   hostId: string;
 }
@@ -158,8 +152,6 @@ function attachLongPress(
 function createDashboard(root: HTMLElement): void {
   const state = {
     ...readWorkspace(localStorage),
-    agents: [] as AgentSummary[],
-    teams: [] as TeamSummary[],
     hosts: [] as HostSummary[],
     sessions: [] as CollabSession[],
     selectedSession: null as CollabSession | null,
@@ -237,13 +229,6 @@ function createDashboard(root: HTMLElement): void {
   async function refresh(): Promise<void> {
     showStatus("Refreshing fleet…");
     state.hosts = await json<HostSummary[]>("/api/hosts");
-    try {
-      state.agents = await json<AgentSummary[]>("/api/roster/agents");
-      state.teams = await json<TeamSummary[]>("/api/roster/teams");
-    } catch {
-      // Roster proxy is optional (CLAUDE_NET_HUB may be unconfigured on
-      // this instance) — the collab dashboard still works without it.
-    }
     await loadSessions();
     render();
     showStatus(
@@ -251,7 +236,6 @@ function createDashboard(root: HTMLElement): void {
       "ok",
     );
   }
-
   async function pollSessions(): Promise<void> {
     await loadSessions();
     render();
@@ -312,32 +296,6 @@ function createDashboard(root: HTMLElement): void {
           : message,
         "warning",
       );
-    }
-  }
-
-  async function sendAgentMessage(form: HTMLFormElement): Promise<void> {
-    const data = new FormData(form);
-    const target = String(data.get("target") ?? "");
-    const content = String(data.get("content") ?? "");
-    if (!target || !content) return;
-    const [kind, name] = target.split(/:(.+)/);
-    try {
-      if (kind === "team")
-        await json("/api/roster/send_team", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ team: name, content }),
-        });
-      else
-        await json("/api/roster/send", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ to: name, content }),
-        });
-      form.reset();
-      showStatus("Agent message sent", "ok");
-    } catch (error) {
-      showStatus((error as Error).message, "warning");
     }
   }
 
@@ -477,10 +435,10 @@ function createDashboard(root: HTMLElement): void {
       className: "channel-hint",
       text:
         state.selectedAccess === "control"
-          ? "Prompt session in the Collab composer below. Agent messages remain a separate roster-routed channel."
+          ? "Prompt this session in the Collab composer below."
           : canRequestAccess(session, "control")
-            ? "Viewing read-only. Send a message in the composer below to switch this room to control. Agent messages (right pane) are a separate roster channel, never a session prompt."
-            : "This room is view-only on its host; session prompting isn't available here. Agent messages (right pane) are a separate roster channel.",
+            ? "Viewing read-only. Send a message in the composer below to switch this room to control."
+            : "This room is view-only on its host; session prompting isn't available here.",
     });
     container.append(
       header,
@@ -515,34 +473,7 @@ function createDashboard(root: HTMLElement): void {
     }
     container.append(tabs);
     const body = el("div", { className: "inspector-body" });
-    if (state.inspector === "messages") {
-      body.append(el("h2", { text: "Message agent" }));
-      body.append(
-        el("p", {
-          text: "Routed through claude-net's roster. This is not a session prompt and arrives with structural agent provenance.",
-        }),
-      );
-      const form = el("form") as HTMLFormElement;
-      const target = el("select") as HTMLSelectElement;
-      target.name = "target";
-      target.append(new Option("Select agent or team", ""));
-      for (const agent of state.agents.filter(
-        (agent) => agent.status === "online",
-      ))
-        target.append(new Option(agent.fullName, `agent:${agent.fullName}`));
-      for (const team of state.teams)
-        target.append(new Option(`Team: ${team.name}`, `team:${team.name}`));
-      const content = el("textarea") as HTMLTextAreaElement;
-      content.name = "content";
-      content.placeholder = "Message content";
-      const send = el("button", { text: "Send agent message", type: "submit" });
-      form.append(target, content, send);
-      form.onsubmit = (event) => {
-        event.preventDefault();
-        void sendAgentMessage(form);
-      };
-      body.append(form);
-    } else if (state.inspector === "controls") {
+    if (state.inspector === "controls") {
       body.append(el("h2", { text: "Controls" }));
       body.append(
         el("p", {

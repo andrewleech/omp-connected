@@ -20,21 +20,18 @@ protocol, and security model.
 - A private relay (`src/relay/relay.ts`) carries the actual encrypted
   Collab terminal bytes between a host and its guests, on its own port.
 
-## Two distinct hub URLs — do not conflate them
+## `OMP_HUB_URL` and `OMP_HUB_HOST_TOKEN`
 
-- `CLAUDE_NET_HUB` — a **claude-net** instance, used only for
-  agent-to-agent messaging (the OMP extension's `claude_net_register` /
-  `claude_net_send_message` tools). Unrelated to this project; untouched by
-  this repo.
-- `OMP_HUB_URL` — **this server**, used only by `bin/omp-host` to register
-  a host and broker Collab session links. Requires `OMP_HUB_HOST_TOKEN` to
-  match what this server is configured with.
+`OMP_HUB_URL` is **this server**, used only by `bin/omp-host` to register a
+host and broker Collab session links. Requires `OMP_HUB_HOST_TOKEN` to match
+what this server is configured with.
 
-This server optionally also reads `CLAUDE_NET_HUB` itself (server-side, not
-from the browser) to proxy a small read-mostly "message agent" pane in the
-dashboard through `/api/roster/*` — that's the *only* coupling to
-claude-net, and it's a plain HTTP client relationship, not shared source.
-Leave it unset to disable that pane entirely.
+This project has no coupling of any kind to claude-net — no source
+dependency, and no runtime/network dependency either. `bin/omp-host` (in
+`cc-pi-bridge/trial-omp/marketplace/plugins/claude-net-omp`) also registers
+with a separate claude-net hub for its own agent-to-agent messaging tools,
+but that is a wholly separate concern this server never talks to, proxies,
+or depends on.
 
 ## Local development
 
