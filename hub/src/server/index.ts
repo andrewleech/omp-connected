@@ -10,6 +10,7 @@ import { wsHostPlugin } from "./ws-host";
 
 export interface CreateHubOptions {
   port?: number;
+  host?: string;
   hostToken?: string;
   claudeNetHub?: string;
   tls?: { cert: string; key: string };
@@ -28,6 +29,7 @@ export interface Hub {
 export function createHub(options: CreateHubOptions = {}): Hub {
   const env = loadConfig();
   const port = options.port ?? env.port;
+  const host = options.host ?? env.host;
   const hostToken = options.hostToken ?? env.hostToken;
   const claudeNetHub = options.claudeNetHub ?? env.claudeNetHub;
   const webuiRoot = options.webuiRoot ?? `${import.meta.dir}/../../dist/webui`;
@@ -70,12 +72,13 @@ export function createHub(options: CreateHubOptions = {}): Hub {
       : undefined);
   app.listen({
     port,
+    ...(host ? { hostname: host } : {}),
     ...(tls
       ? { tls: { cert: Bun.file(tls.cert), key: Bun.file(tls.key) } }
       : {}),
   });
   console.log(
-    `omp-hub listening on port ${port}${tls ? " (TLS enabled)" : ""}`,
+    `omp-hub listening on ${host ?? "0.0.0.0"}:${port}${tls ? " (TLS enabled)" : ""}`,
   );
 
   return {
