@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="same-origin">
+<title>OMP fleet</title>
+<style>
+:root { color-scheme: dark; font-family: ui-sans-serif, system-ui, sans-serif; background: #101317; color: #e8edf2; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; }
+button, select, textarea { font: inherit; }
+button { border: 1px solid #3c4b59; border-radius: .45rem; background: #1d2a36; color: inherit; cursor: pointer; padding: .45rem .65rem; }
+button:hover:not(:disabled), button.active { background: #2a5d79; }
+button:disabled { cursor: not-allowed; opacity: .45; }
+select, textarea { border: 1px solid #3c4b59; border-radius: .4rem; background: #111920; color: inherit; padding: .5rem; width: 100%; }
+textarea { min-height: 7rem; resize: vertical; }
+.omp-shell { display: grid; grid-template-columns: minmax(14rem, 19rem) minmax(0, 1fr) minmax(17rem, 24rem); grid-template-rows: auto 1fr; min-height: 100vh; }
+.topbar { align-items: center; background: #17212b; border-bottom: 1px solid #344453; display: flex; gap: 1rem; grid-column: 1 / -1; justify-content: space-between; padding: .7rem 1rem; }
+.brand { font-weight: 700; letter-spacing: .03em; }
+.status { color: #b7c4cf; font-size: .9rem; margin-left: auto; }
+.status.ok { color: #91d9b3; }.status.warning { color: #ffc776; }
+.session-rail, .inspector { background: #131a21; overflow: auto; padding: .8rem; }
+.session-rail { border-right: 1px solid #344453; }.inspector { border-left: 1px solid #344453; }
+.quiet { background: transparent; border-style: dashed; margin-bottom: .8rem; width: 100%; }
+.session-group { border-top: 1px solid #2b3945; margin-top: .65rem; padding-top: .65rem; min-height: 2.2rem; }
+.session-group h2, .inspector h2 { font-size: .86rem; letter-spacing: .06em; margin: 0 0 .45rem; text-transform: uppercase; }
+.session-card { display: grid; gap: .16rem; margin: .35rem 0; text-align: left; width: 100%; }.session-card button { display: grid; gap: .16rem; text-align: left; width: 100%; }.session-card span { color: #a7b6c4; font-size: .78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.session-card.selected { border-color: #65b9e8; box-shadow: inset .2rem 0 #65b9e8; }.badge { justify-self: start; padding: .08rem .3rem; }.badge.control { color: #9be5bd; }.badge.view { color: #8bcdf7; }
+.workspace { display: grid; grid-template-rows: auto auto minmax(22rem, 1fr); min-width: 0; padding: .9rem; }.workspace-header { align-items: center; display: flex; gap: 1rem; justify-content: space-between; }.actions { display: flex; gap: .5rem; }.channel-hint, .inspector-body p { color: #acbac7; font-size: .9rem; line-height: 1.4; }.empty { color: #a7b6c4; font-size: .86rem; }.workspace-empty { align-self: center; justify-self: center; max-width: 34rem; text-align: center; }.collab-frame { border: 1px solid #344453; border-radius: .55rem; height: 100%; min-height: 22rem; width: 100%; }
+.tabs { display: flex; flex-wrap: wrap; gap: .35rem; margin-bottom: .8rem; }.tabs button { background: transparent; border: 0; border-bottom: .15rem solid transparent; border-radius: 0; padding: .35rem .2rem; }.tabs button.active { border-bottom-color: #65b9e8; }
+form { display: grid; gap: .55rem; }
+@media (max-width: 900px) { .omp-shell { grid-template-columns: minmax(12rem, 15rem) minmax(0, 1fr); }.inspector { border-left: 0; border-top: 1px solid #344453; grid-column: 1 / -1; }.workspace { min-height: 66vh; } }
+@media (max-width: 620px) { .omp-shell { display: flex; flex-direction: column; }.topbar { position: sticky; top: 0; z-index: 1; }.session-rail { border-bottom: 1px solid #344453; border-right: 0; max-height: 35vh; }.workspace { min-height: 64vh; }.workspace-header { align-items: start; flex-direction: column; }.collab-frame { min-height: 52vh; }.status { margin-left: 0; } }
+</style>
+</head>
+<body>
+<main class="omp-shell" data-omp-dashboard>
+<header class="topbar"><span class="brand">OMP fleet</span><span class="status" data-status>Loading fleet…</span><button type="button" data-refresh>Refresh</button></header>
+<aside class="session-rail" aria-label="Sessions" data-session-rail></aside>
+<section class="workspace" aria-label="Selected OMP session" data-workspace><iframe class="collab-frame" data-collab-frame title="OMP Collab session" referrerpolicy="no-referrer"></iframe></section>
+<aside class="inspector" aria-label="Inspector" data-inspector></aside>
+</main>
+<script type="module" src="/app.js"></script>
+</body>
+</html>
