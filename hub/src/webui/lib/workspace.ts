@@ -6,12 +6,7 @@
 export const WORKSPACE_STORAGE_KEY = "omp-hub-dashboard/v1";
 
 const WORKSPACE_VERSION = 1;
-export const INSPECTOR_PANES = [
-  "messages",
-  "controls",
-  "participants",
-  "files",
-] as const;
+export const INSPECTOR_PANES = ["controls", "participants", "files"] as const;
 export type InspectorPane = (typeof INSPECTOR_PANES)[number];
 
 export interface CollabSession {
@@ -82,7 +77,7 @@ export function readWorkspace(storage: StorageLike): Workspace {
         version: WORKSPACE_VERSION,
         groups: [],
         selected: null,
-        inspector: "messages",
+        inspector: "controls",
       };
     }
     const groups = value.groups
@@ -109,14 +104,14 @@ export function readWorkspace(storage: StorageLike): Workspace {
       selected: typeof value.selected === "string" ? value.selected : null,
       inspector: INSPECTOR_PANES.includes(value.inspector as InspectorPane)
         ? (value.inspector as InspectorPane)
-        : "messages",
+        : "controls",
     };
   } catch {
     return {
       version: WORKSPACE_VERSION,
       groups: [],
       selected: null,
-      inspector: "messages",
+      inspector: "controls",
     };
   }
 }

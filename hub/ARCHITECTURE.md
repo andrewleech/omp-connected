@@ -88,12 +88,9 @@ REST routes built on top of the same live registry:
 - It does not launch, mirror, or otherwise manage Claude Code sessions.
   `bin/omp-host` and the local `omp` CLI own that; this server only ever
   talks to a *registered* host's existing sessions through `/ws/host`.
-- It has no concept of "teams" or a mailbox. Agent-to-agent messaging is
-  claude-net's job exclusively; when the dashboard shows roster or
-  messaging context it does so purely as an HTTP client of a claude-net
-  instance's own API (via the optional `CLAUDE_NET_HUB` env var) — never by
-  sharing source, importing claude-net code, or duplicating its data model.
-- It does not persist or proxy claude-net's own hub state beyond that
-  read-only client relationship; omp-hub's own registry (hosts, Collab
-  sessions, brokered links) is independent and does not merge with or
-  depend on claude-net's.
+- It has no concept of "teams" or a mailbox, and no coupling of any kind —
+  source or runtime — to claude-net. Agent-to-agent messaging is entirely
+  claude-net's job and this server neither implements it nor proxies to it.
+- Its own registry (hosts, Collab sessions, brokered links) is fully
+  independent and does not merge with, read, or depend on any other
+  service's state.

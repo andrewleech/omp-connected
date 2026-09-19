@@ -4,15 +4,12 @@ import { loadConfig } from "./config";
 import { dashboardEventsPlugin } from "./dashboard-events";
 import { HostRegistry } from "./host-registry";
 import { hostRpcRoutes } from "./host-rpc-routes";
-import { RosterProxy } from "./roster-proxy";
-import { rosterRoutes } from "./roster-routes";
 import { wsHostPlugin } from "./ws-host";
 
 export interface CreateHubOptions {
   port?: number;
   host?: string;
   hostToken?: string;
-  claudeNetHub?: string;
   tls?: { cert: string; key: string };
   /** Root that holds the built webui (index.html + assets) and the vendored
    *  collab-web guest under `collab/`. Defaults to `dist/webui` next to the
@@ -31,11 +28,9 @@ export function createHub(options: CreateHubOptions = {}): Hub {
   const port = options.port ?? env.port;
   const host = options.host ?? env.host;
   const hostToken = options.hostToken ?? env.hostToken;
-  const claudeNetHub = options.claudeNetHub ?? env.claudeNetHub;
   const webuiRoot = options.webuiRoot ?? `${import.meta.dir}/../../dist/webui`;
 
   const registry = new HostRegistry();
-  const roster = new RosterProxy(claudeNetHub);
 
   const app = new Elysia()
     .get("/health", () => ({
@@ -51,7 +46,6 @@ export function createHub(options: CreateHubOptions = {}): Hub {
         }),
     )
     .use(hostRpcRoutes(registry))
-    .use(rosterRoutes(roster))
     .use(wsHostPlugin(registry, hostToken))
     .use(dashboardEventsPlugin(registry))
     .use(
