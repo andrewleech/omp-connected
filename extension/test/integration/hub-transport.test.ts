@@ -43,7 +43,7 @@ test("register() sends the shared token and resolves the server's agent summary"
 	});
 	const transport = new HubTransport(`http://localhost:${hub.port}`, "secret-token", () => undefined);
 
-	const result = await transport.register({ hostId: "user@hub-host", instanceId: "inst-1", pid: 4242 });
+	const result = await transport.register({ hostId: "user@hub-host", instanceId: "inst-1", pid: 4242, cwd: "/tmp/test" });
 	expect(result.agent.id).toBe("user@hub-host:inst-1");
 	expect(socket).toBeDefined();
 	transport.close();
@@ -64,7 +64,7 @@ test("a server-pushed agent.message request is delivered inbound and acked", asy
 	const transport = new HubTransport(`http://localhost:${hub.port}`, "secret-token", (message) =>
 		inbound.push(message.content),
 	);
-	await transport.register({ hostId: "user@hub-host", instanceId: "inst-1", pid: 4242 });
+	await transport.register({ hostId: "user@hub-host", instanceId: "inst-1", pid: 4242, cwd: "/tmp/test" });
 
 	socket?.send(
 		JSON.stringify({
@@ -115,8 +115,72 @@ test("a JSON-RPC error response rejects the pending request with its message", a
 	});
 	const transport = new HubTransport(`http://localhost:${hub.port}`, "wrong-token", () => undefined);
 
-	await expect(transport.register({ hostId: "user@hub-host", instanceId: "inst-1", pid: 1 })).rejects.toThrow(
+	await expect(transport.register({ hostId: "user@hub-host", instanceId: "inst-1", pid: 1, cwd: "/tmp" })).rejects.toThrow(
 		"invalid token",
 	);
+	transport.close();
+});
+
+test("a server-pushed collab.list request is answered with the registry result", async () => {
+	let socket: ServerWebSocket<unknown> | undefined;
+	const collabReplies: unknown[] = [];
+	const hub = startHub((client, request) => {
+		socket = client;
+		if (request.method === "agent.register") {
+			respond(client, request.id, { ok: true, agent: { id: "a" } });
+			return;
+		}
+		// Capture collab reply frames
+		if ("result" in request || "error" in request) collabReplies.push(request);
+	});
+	const transport = new HubTransport(`http://localhost:${hub.port}`, "secret-token", () => undefined);
+	await transport.register({ hostId: "user@hub-host", instanceId: "inst-1", pid: 4242, cwd: "/tmp/test" });
+
+	// Push a collab.list request — the transport answers via the
+	// collab-registry helper. The registry is importable in this workspace
+	// (node_modules has @oh-my-pi/pi-coding-agent), so we get a result
+	// with a sessions array (empty — no OMP host is actually running).
+	socket?.send(
+		JSON.stringify({ jsonrpc: "2.0", id: "collab-1", method: "collab.list", params: {} }),
+	);
+
+	for (let attempt = 0; attempt < 20 && collabReplies.length === 0; attempt += 1) {
+		await Bun.sleep(10);
+	}
+	expect(collabReplies).toHaveLength(1);
+	const reply = collabReplies[0] as Record<string, unknown>;
+	expect(reply.id).toBe("collab-1");
+	expect(reply).toHaveProperty("result");
+	const result = reply.result as { sessions: unknown[] };
+	expect(Array.isArray(result.sessions)).toBe(true);
+	transport.close();
+});
+
+test("a server-pushed collab.link request with invalid params returns an error", async () => {
+	let socket: ServerWebSocket<unknown> | undefined;
+	const collabReplies: unknown[] = [];
+	const hub = startHub((client, request) => {
+		socket = client;
+		if (request.method === "agent.register") {
+			respond(client, request.id, { ok: true, agent: { id: "a" } });
+			return;
+		}
+		if ("result" in request || "error" in request) collabReplies.push(request);
+	});
+	const transport = new HubTransport(`http://localhost:${hub.port}`, "secret-token", () => undefined);
+	await transport.register({ hostId: "user@hub-host", instanceId: "inst-1", pid: 4242, cwd: "/tmp/test" });
+
+	// Push collab.link with missing params — should get an error back
+	socket?.send(
+		JSON.stringify({ jsonrpc: "2.0", id: "link-1", method: "collab.link", params: { instanceId: "x" } }),
+	);
+
+	for (let attempt = 0; attempt < 20 && collabReplies.length === 0; attempt += 1) {
+		await Bun.sleep(10);
+	}
+	expect(collabReplies).toHaveLength(1);
+	const reply = collabReplies[0] as Record<string, unknown>;
+	expect(reply.id).toBe("link-1");
+	expect(reply).toHaveProperty("error");
 	transport.close();
 });
