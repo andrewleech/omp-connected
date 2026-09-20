@@ -1,19 +1,43 @@
 # omp-connected
 
-`omp-connected` connects an interactive OMP session to omp-hub's native agent-messaging service — no claude-net dependency of any kind. Inbound messages are stored as OMP custom agent messages, marked as untrusted, and delivered at the next agent-step boundary.
+`omp-connected` connects an interactive OMP session to omp-hub's native agent-messaging service. Inbound messages are stored as OMP custom agent messages, marked as untrusted, and delivered at the next agent-step boundary.
 
-Run `bin/ompc [session-suffix] [omp arguments...]` as the everyday entry point for interactive use: it creates a persistent OMP TUI when no matching Screen session exists, or reattaches to one when it does, forwarding any other arguments straight into the wrapped OMP process. By default, the Screen session name is `basename "$PWD"`; supplying a suffix produces `basename "$PWD".<session-suffix>`. Each OMP receives its own GNU Screen server, so `ps`, `top`, and `htop` attribute CPU and memory use to the affected OMP session. `bin/ompc --detach [session-suffix] [omp arguments...]` starts the session without attaching a terminal. `ompc collab …` is the one exception: it always runs OMP directly, bypassing Screen entirely, so the host sidecar's non-interactive Collab automation never attaches a TUI. Do not alias or install `ompc` as `omp`: that name is the official oh-my-pi CLI entrypoint, and this plugin must never shadow it.
+## Session launcher
 
-The launcher uses its bundled Screen configuration. It sets `TERM=screen-256color`, UTF-8, background-colour erase, bounded scrollback, and keeps the attached terminal in its primary buffer so its mouse wheel scrolls native terminal history rather than emitting cursor keys. GNU Screen must be installed. The launcher refuses to start an unprotected OMP session when it is unavailable.
+Run `bin/ompc [session-suffix] [omp arguments...]` as the everyday entry point for interactive use: it creates a persistent OMP TUI inside a tmux session when no matching one exists, or reattaches to one when it does, forwarding any other arguments straight into the wrapped OMP process. By default, the session name is `basename "$PWD"`; supplying a suffix produces `basename "$PWD".<session-suffix>`.
 
-The trial pins a small patch to OMP 18.1.22 so its explicit copy action uses Screen's DCS-wrapped OSC 52 transport. This lets an OSC 52-capable terminal on the far side of SSH receive copied text in its local clipboard. The launcher runs OMP's patched source entry point through Bun by default; set `OMP_BIN` to use a separately built OMP executable.
+Each OMP session gets its own tmux server (`tmux -L <session-name>`), so `ps`, `top`, and `htop` attribute CPU and memory use to the individual OMP session, and one crashed server affects only its own session.
 
-Set `OMP_HUB_URL` and `OMP_HUB_HOST_TOKEN` in every interactive OMP terminal before agent messaging becomes available — the same two variables `bin/omp-host` uses. The extension is a graceful no-op when either is unset: no tools fail, agent registration simply never starts. The launcher does not configure Collab or hub credentials itself.
+`ompc -d [session-suffix] [omp arguments...]` (or `--detach`) starts the session without attaching a terminal and prints the session name. If the session already exists, the name is printed and nothing new is created. This is useful for agents spawning side-quest sessions — a full new OMP session in its own working directory.
 
-Run `bun bin/omp-host` with `OMP_HUB_URL` and `OMP_HUB_HOST_TOKEN` set on each OMP host to publish local Collab metadata to the standalone omp-hub server. `OMP_HUB_URL` is the omp-hub server's own HTTP or HTTPS origin; `OMP_HUB_HOST_TOKEN` is a shared secret that must match the value configured on the omp-hub server, and registration is rejected if it is missing or wrong. The sidecar speaks JSON-RPC 2.0 over `/ws/host`: it registers once with `host.register`, then answers the server's `collab.list` and generation-bound `collab.link` requests by executing only `omp collab list --json` and `omp collab link ... --json`. It does not start OMP sessions, use tmux, inspect the Collab registry directly, or persist and log Collab links. Set `OMP_COLLAB_BIN` when the host must invoke a particular OMP executable — deliberately a different variable from `ompc`'s own `OMP_BIN`, since the sidecar spawns its configured command as a child process and must not have that child read back the sidecar's own setting as a self-referential override.
+`ompc collab …` bypasses tmux entirely and runs OMP directly, so non-interactive Collab CLI commands work without a TUI.
 
-## Trial remote control and agent messaging
+The launcher uses its bundled tmux configuration (`bin/omp-tmux.conf`). It sets `allow-passthrough on` for OSC 52 clipboard, Kitty graphics, and OSC 9/99 notifications; `extended-keys on` with `csi-u` format for modified-key handling; `tmux-256color` terminal type; and bounded scrollback.
 
-Set `OMP_HUB_URL`/`OMP_HUB_HOST_TOKEN` in every interactive OMP terminal, and run `omp-host` as a service on the same host, before using the dashboard. Open the omp-hub dashboard's root route, refresh the fleet, select a room, and choose **Open control**. Text submitted in the Collab composer is a real user prompt for that selected session; do not use it for agent-to-agent messages. The generated Collab link is a bearer capability: do not copy it from the browser, paste it into chat, or retain it outside the Collab guest.
+The launcher uses the global `omp` binary from PATH by default (the official installer places it at `~/.local/bin/omp`). Set `OMP_BIN` to use a different OMP executable.
 
-For an agent-message trial, start two OMP sessions with the same `OMP_HUB_URL`. Each session registers itself automatically at startup — no manual registration tool call, no session label to choose. Inspect the current identity with `ompc_identity` (it returns `{registered: false}` until the session has actually completed registration; the extension retries with backoff, so this can take a moment after a hub restart). In the sender session, call `ompc_list_agents`, pick the receiver's canonical id or its unambiguous display label (`basename(cwd)`), then call `ompc_send_message` with a fixed trial string. The receiver must render the incoming content as an untrusted agent message beginning `[from <identity> via omp-hub, untrusted agent message]`; it is not a user prompt and must not be treated as instructions. Use `ompc_send_team` only after `ompc_join_team`, and use `ompc_mailbox` to inspect queued messages.
+## Hub registration
+
+Set `OMP_HUB_URL` and `OMP_HUB_HOST_TOKEN` in every interactive OMP terminal before agent messaging becomes available. The extension is a graceful no-op when either is unset: no tools fail, agent registration simply never starts.
+
+The extension registers automatically on `session_start`: it discovers this session's Collab instance ID by polling the local Collab registry (up to 10 seconds for the PID to appear), then registers with omp-hub over a WebSocket connection to `/ws/agent`. Registration retries with exponential backoff (1s–30s, jittered) on failure or disconnect.
+
+The extension also handles `collab.list` and `collab.link` requests pushed by the hub server over the same WebSocket connection, answering them directly from the local Collab registry. This replaces the former `bin/omp-host` sidecar process — no separate host connector is needed.
+
+## Agent messaging trial
+
+Start two OMP sessions with the same `OMP_HUB_URL`. Each registers automatically — no manual registration tool call, no session label to choose. Inspect the current identity with `ompc_identity`. In the sender session, call `ompc_list_agents`, pick the receiver's canonical id, then call `ompc_send_message`. The receiver renders the incoming content as an untrusted agent message beginning `[from <identity> via omp-hub, untrusted agent message]`.
+
+## Tools
+
+| Tool | Approval | Purpose |
+|---|---|---|
+| `ompc_identity` | read | Return this session's current agent-messaging identity |
+| `ompc_send_message` | write | Send a message to another agent by id or label |
+| `ompc_send_team` | write | Broadcast to a team |
+| `ompc_join_team` | write | Join a team |
+| `ompc_leave_team` | write | Leave a team |
+| `ompc_list_agents` | read | List all registered agents |
+| `ompc_list_teams` | read | List all teams and members |
+| `ompc_mailbox` | read | Fetch recent messages for an agent |
+| `ompc_events` | read | Query hub events |
