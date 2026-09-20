@@ -1,0 +1,21 @@
+[Unit]
+Description=OMP Host Collab Broker Sidecar
+Documentation=https://github.com/andrewleech/cc-pi-bridge
+Wants=network-online.target tailscaled.service
+After=network-online.target tailscaled.service
+ConditionPathExists=%h/cc-pi-bridge/omp-workspace/marketplace/plugins/omp-connected/bin/omp-host
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/omp-connected/omp-host.env
+Environment=PATH=/home/user/.bun/bin:/home/user/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStartPre=/bin/sh -c 'until /usr/bin/tailscale ip -4 >/dev/null 2>&1; do sleep 1; done'
+ExecStart=%h/.bun/bin/bun %h/cc-pi-bridge/omp-workspace/marketplace/plugins/omp-connected/bin/omp-host
+Restart=on-failure
+RestartSec=2s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

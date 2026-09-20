@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+	echo "usage: ompc [--detach] [session-suffix] [omp arguments...]" >&2
+	exit 64
+}
+
+detach=false
+if [[ ${1:-} == --detach ]]; then
+	detach=true
+	shift
+fi
+
+plugin_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+trial_root="$(cd -- "$plugin_root/../../.." && pwd)"
+if [[ -n ${OMP_BIN:-} ]]; then
+	omp_command=("$OMP_BIN")
+else
+	omp_command=(bun "$trial_root/node_modules/@oh-my-pi/pi-coding-agent/src/cli.ts")
+fi
+
+# The Collab CLI is not a session name, and automation -- in particular
+# bin/omp-host, which invokes the configured OMP_COLLAB_BIN with
+# `collab ...` -- must never attach a TUI. OMP flags are ordinary
+# arguments forwarded into the Screen-wrapped session like any other,
+# not a bypass signal, so `ompc --model sonnet` still gets persistence.
+if [[ ${1:-} == collab ]]; then
+	exec "${omp_command[@]}" "$@"
+fi
+
+session_name=${PWD##*/}
+if [[ ${1:-} != -* && -n ${1:-} ]]; then
+	session_name+=".${1}"
+	shift
+fi
+
+[[ $session_name =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$ ]] || usage
+
+command -v screen >/dev/null 2>&1 || {
+	echo "ompc requires GNU Screen; refusing to start an unprotected OMP session" >&2
+	exit 69
+}
+
+screen_config="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/omp-screenrc"
+session_id="$({ screen -ls 2>/dev/null || true; } | sed -n "s/^[[:space:]]*\\([0-9]*\\.${session_name}\\).*/\\1/p")"
+
+if [[ -n $session_id ]]; then
+	if "$detach"; then
+		printf '%s\n' "$session_id"
+		exit 0
+	fi
+	exec screen -r "$session_id"
+fi
+
+if "$detach"; then
+	TERM=xterm screen -c "$screen_config" -DmS "$session_name" "${omp_command[@]}" "$@" </dev/null >/dev/null 2>&1 &
+	printf '%s\n' "$session_name"
+	exit 0
+fi
+
+exec screen -c "$screen_config" -S "$session_name" "${omp_command[@]}" "$@"
