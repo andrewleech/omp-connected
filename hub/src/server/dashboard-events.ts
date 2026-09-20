@@ -1,16 +1,16 @@
 // /ws/dashboard — pushes ONLY the events the server actually knows to be
-// true the instant they happen: a host or agent connecting/disconnecting.
-// Deliberately NOT a generic event bus: there is no ping/heartbeat tick,
-// and Collab *session* state is never pushed here (the server only ever
-// learns it by RPC-polling a host) — the webui polls for that on its own
-// schedule plus a manual Refresh. This is the fix for the broadcast-storm
-// bug found in claude-net's predecessor (every hub event, including a 5s
-// heartbeat, triggered a full dashboard refetch and reloaded a live
-// embedded iframe).
+// true the instant they happen: an agent registering/disconnecting (which
+// is also the only signal a host connecting/disconnecting has now that
+// host-level Collab discovery is served through the same /ws/agent
+// connection). Deliberately NOT a generic event bus: there is no
+// ping/heartbeat tick, and Collab *session* state is never pushed here
+// (the server only ever learns it by RPC-polling a host) — the webui
+// polls for that on its own schedule plus a manual Refresh, avoiding a
+// full dashboard refetch (and a reload of the live embedded Collab
+// iframe) on anything but a real registration/disconnection.
 
 import { Elysia } from "elysia";
 import type { AgentRegistry } from "./agent-registry";
-import type { HostRegistry } from "./host-registry";
 import type { DashboardEvent } from "./types";
 
 interface DashboardWs {
@@ -18,16 +18,12 @@ interface DashboardWs {
   raw: object;
 }
 
-export function dashboardEventsPlugin(
-  hostRegistry: HostRegistry,
-  agentRegistry: AgentRegistry,
-) {
+export function dashboardEventsPlugin(agentRegistry: AgentRegistry) {
   const clients = new Set<DashboardWs>();
   const broadcast = (event: DashboardEvent) => {
     const payload = JSON.stringify(event);
     for (const client of clients) client.send(payload);
   };
-  hostRegistry.onChange(broadcast);
   agentRegistry.onChange(broadcast);
 
   return new Elysia().ws("/ws/dashboard", {

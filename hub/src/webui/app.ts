@@ -1,16 +1,11 @@
-// The OMP fleet dashboard shell. Ported from claude-net's predecessor
-// (src/hub/omp-dashboard.js) with two structural changes:
+// The OMP fleet dashboard shell.
 //
-// 1. Routes point at this server's own surface (`/api/hosts/...` for the
-//    collab broker) instead of claude-net's `/api/...`. This server has no
-//    other coupling to claude-net: no source dependency and no network
-//    dependency either.
-// 2. The dashboard socket only ever receives `host.connected` /
-//    `host.disconnected` (see dashboard-events.ts) — never a generic
-//    heartbeat — so there is no broadcast-storm to defend against here.
-//    Session state (what's running on a host) is polled on a fixed
-//    interval instead of being pushed, since this server only ever learns
-//    it by RPC-polling a host itself.
+// The dashboard socket only ever receives `agent.registered` /
+// `agent.disconnected` (see dashboard-events.ts) — never a generic
+// heartbeat — so there is no broadcast-storm to defend against here.
+// Collab session state (what's running on a host) is polled on a fixed
+// interval instead of being pushed, since this server only ever learns
+// it by RPC-polling a host itself.
 
 import { collabFrameUrl } from "./lib/collab-link";
 import {
@@ -522,10 +517,10 @@ function createDashboard(root: HTMLElement): void {
   }
 
   // Roster + compose UI backed natively by omp-hub's own AgentRegistry via
-  // GET/POST /api/agents — no claude-net RosterProxy, no HTTP-proxying to
-  // another server. Display label collisions (two agents sharing the same
-  // basename(cwd)) are disambiguated by showing each candidate's hostId,
-  // matching the resolve() ambiguity data the server itself returns.
+  // GET/POST /api/agents. Display label collisions (two agents sharing the
+  // same basename(cwd)) are disambiguated by showing each candidate's
+  // hostId, matching the resolve() ambiguity data the server itself
+  // returns.
   function renderAgentsBody(body: HTMLElement): void {
     body.append(el("h2", { text: "Agents" }));
     if (!state.agentsLoaded && !agentsFetchInFlight) {
@@ -670,15 +665,14 @@ function createDashboard(root: HTMLElement): void {
     try {
       const data = JSON.parse(String(event.data)) as { event?: string };
       if (
-        data.event === "host.connected" ||
-        data.event === "host.disconnected"
-      ) {
-        void refresh().catch(() => {});
-      } else if (
         data.event === "agent.registered" ||
         data.event === "agent.disconnected"
       ) {
-        void loadAgents()
+        // An agent connecting/disconnecting is also the only signal a
+        // host's Collab visibility changed — host-level discovery is
+        // served through the same /ws/agent connection now, so refresh
+        // both the host/session list and the agent roster together.
+        void Promise.all([refresh(), loadAgents()])
           .then(() => render())
           .catch(() => {});
       }

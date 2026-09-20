@@ -1,16 +1,18 @@
 // Registry of connected agent-messaging sessions — individual OMP sessions
 // that opted into agent-to-agent messaging via the omp-connected extension.
-// Analogous to HostRegistry, but keyed by canonical agent identity
-// (`${hostId}:${instanceId}`) rather than host id. Native to omp-hub: this
-// replaces claude-net's hub-brokered agent messaging entirely, not a port
-// of it.
 //
-// Pure logic only — no WebSocket handling, no cross-validation RPC. The
-// `/ws/agent` plugin (ws-agent.ts, Phase 8B) owns the network side and
-// calls into this registry only after independently confirming, via
-// HostRegistry.call("collab.list"), that the registering session's
-// instanceId is a live Collab session on that host. `cwd` passed to
-// register() MUST already be that server-confirmed value.
+// Also the only channel host-level Collab discovery has: there is no
+// separate host-registration connection. `callOnHost()` forwards
+// collab.list/collab.link to whichever agent connection is currently live
+// for a given hostId (any one — the answer is host-wide, not
+// session-specific) and the extension answers it directly against
+// `@oh-my-pi/pi-coding-agent`'s own Collab registry. A host with zero
+// connected agents cannot answer these calls and does not appear in
+// listHostIds() — there is nothing else on that host to ask.
+//
+// `register()` takes `cwd` as the extension's own claim: there is no
+// independent process to confirm it against, so this registry does not
+// try to.
 
 import { basename } from "node:path";
 import {
@@ -27,6 +29,9 @@ import {
   type AgentSummary,
   type AgentTeamMember,
   type AgentTeamSummary,
+  type CollabMethod,
+  type CollabMethodParams,
+  type CollabMethodResult,
   type DashboardEvent,
   type JsonRpcRequest,
 } from "./types";
@@ -82,6 +87,16 @@ interface AgentEntry {
   mailbox: AgentMessage[];
 }
 
+interface PendingHostCall {
+  resolve(result: unknown): void;
+  reject(error: Error): void;
+  timer: ReturnType<typeof setTimeout>;
+  /** Canonical id of the agent connection this call is outstanding
+   *  against, so unregister() can reject it if that specific connection
+   *  drops before replying. */
+  agentId: string;
+}
+
 type ResolvedEntry =
   | { kind: "found"; entry: AgentEntry }
   | { kind: "ambiguous"; data: AgentAddressAmbiguousErrorData }
@@ -114,6 +129,7 @@ export class AgentRegistry {
   private onChangeFn: (event: DashboardEvent) => void = () => {};
   private readonly now: () => number;
   private readonly disconnectedTtlMs: number;
+  private pendingHostCalls = new Map<string, PendingHostCall>();
 
   constructor(options: AgentRegistryOptions = {}) {
     this.now = options.now ?? (() => Date.now());
@@ -183,11 +199,84 @@ export class AgentRegistry {
     if (!entry || entry.conn !== conn) return;
     entry.conn = undefined;
     entry.disconnectedAt = this.now();
+    this.rejectPendingHostCallsFor(id);
     this.recordEvent("agent.disconnected", { agentId: id });
     this.onChangeFn({ event: "agent.disconnected", agentId: id });
   }
 
-  /** Currently connected agents only — parity with HostRegistry.list(). */
+  /** Currently connected agents only — same "live only" contract as
+   *  listAgents(). A hostId with zero live agents has nothing that can
+   *  answer collab.list/collab.link, so it does not appear here. */
+  listHostIds(): string[] {
+    this.pruneExpired();
+    const ids = new Set<string>();
+    for (const entry of this.agents.values()) {
+      if (entry.conn !== undefined) ids.add(entry.hostId);
+    }
+    return [...ids].sort();
+  }
+
+  /** Forwards a Collab RPC to any one currently-connected agent on
+   *  `hostId` and awaits its JSON-RPC reply. The answer is host-wide
+   *  (Collab session state, not agent-messaging state), so which live
+   *  connection answers it doesn't matter. */
+  async callOnHost<M extends CollabMethod>(
+    hostId: string,
+    method: M,
+    params: CollabMethodParams[M],
+    timeoutMs: number,
+  ): Promise<CollabMethodResult[M]> {
+    this.pruneExpired();
+    const entry = [...this.agents.values()].find(
+      (e) => e.hostId === hostId && e.conn !== undefined,
+    );
+    if (!entry) throw new Error(`no connected agent on host '${hostId}'`);
+    const conn = entry.conn;
+    if (!conn) throw new Error(`no connected agent on host '${hostId}'`);
+    const id = crypto.randomUUID();
+    return new Promise<CollabMethodResult[M]>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingHostCalls.delete(id);
+        reject(new Error(`agent RPC ${method} timed out`));
+      }, timeoutMs);
+      if (typeof timer === "object" && "unref" in timer) timer.unref();
+      this.pendingHostCalls.set(id, {
+        resolve: resolve as (result: unknown) => void,
+        reject,
+        timer,
+        agentId: entry.id,
+      });
+      try {
+        conn.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
+      } catch (err) {
+        clearTimeout(timer);
+        this.pendingHostCalls.delete(id);
+        reject(err as Error);
+      }
+    });
+  }
+
+  /** Called by the ws-agent handler when a JSON-RPC result/error arrives
+   *  that isn't a message-delivery ack. Returns false when `id` doesn't
+   *  match an outstanding callOnHost() — the caller falls back to
+   *  treating the frame as an ack in that case. */
+  resolveHostCall(
+    id: string,
+    result: unknown | undefined,
+    error: string | undefined,
+  ): boolean {
+    const pending = this.pendingHostCalls.get(id);
+    if (!pending) return false;
+    this.pendingHostCalls.delete(id);
+    clearTimeout(pending.timer);
+    if (error !== undefined) pending.reject(new Error(error));
+    else pending.resolve(result);
+    return true;
+  }
+
+  /** Currently connected agents only — disconnected-but-within-TTL
+   *  entries stay resolvable (resolve()/send()) but drop out of the
+   *  roster immediately. */
   listAgents(): AgentSummary[] {
     this.pruneExpired();
     return [...this.agents.values()]
@@ -570,6 +659,15 @@ export class AgentRegistry {
     const prefix = `${agentId}:`;
     for (const key of this.idempotency.keys()) {
       if (key.startsWith(prefix)) this.idempotency.delete(key);
+    }
+  }
+
+  private rejectPendingHostCallsFor(agentId: string): void {
+    for (const [id, pending] of this.pendingHostCalls) {
+      if (pending.agentId !== agentId) continue;
+      this.pendingHostCalls.delete(id);
+      clearTimeout(pending.timer);
+      pending.reject(new Error(`agent '${agentId}' disconnected`));
     }
   }
 }

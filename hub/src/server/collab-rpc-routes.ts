@@ -1,28 +1,27 @@
-// REST surface for the collab broker. Relays to the owning omp-host
-// sidecar over /ws/host and awaits its JSON-RPC reply. Same validation and
-// rate-limit shape as claude-net's predecessor routes, renamed from
-// /api/host/... to /api/hosts/... while nothing external depends on the
-// old path yet.
+// REST surface for the collab broker. Forwards to whichever agent
+// connection is currently live for a hostId (AgentRegistry.callOnHost) and
+// awaits its JSON-RPC reply — there is no separate host-registration
+// connection to relay through.
 
 import { Elysia } from "elysia";
-import type { HostRegistry } from "./host-registry";
+import type { AgentRegistry } from "./agent-registry";
 import { RateLimiter } from "./rate-limit";
 
 const COLLAB_TIMEOUT_MS = 5_000;
 const COLLAB_INSTANCE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 /** Capability URLs are short-lived: a link that leaks or goes unused has a
- *  bounded blast radius. Not present in the claude-net-hosted predecessor. */
+ *  bounded blast radius. */
 const COLLAB_LINK_TTL_MS = 90_000;
 
-export function hostRpcRoutes(registry: HostRegistry) {
+export function collabRpcRoutes(agentRegistry: AgentRegistry) {
   const collabLimiter = new RateLimiter({ max: 20, windowMs: 10_000 });
 
   return new Elysia({ prefix: "/api/hosts" })
-    .get("/", () => registry.list())
+    .get("/", () => agentRegistry.listHostIds().map((hostId) => ({ hostId })))
 
     .get("/:id/collab", async ({ params, set }) => {
       const hostId = params.id;
-      if (!registry.get(hostId)) {
+      if (!agentRegistry.listHostIds().includes(hostId)) {
         set.status = 404;
         return { error: `host '${hostId}' not connected` };
       }
@@ -32,7 +31,7 @@ export function hostRpcRoutes(registry: HostRegistry) {
         return { error: "Rate limit: collab (20 per 10s)" };
       }
       try {
-        const result = await registry.call(
+        const result = await agentRegistry.callOnHost(
           hostId,
           "collab.list",
           {},
@@ -65,7 +64,7 @@ export function hostRpcRoutes(registry: HostRegistry) {
         set.status = 400;
         return { error: "access must be view or control" };
       }
-      if (!registry.get(hostId)) {
+      if (!agentRegistry.listHostIds().includes(hostId)) {
         set.status = 404;
         return { error: `host '${hostId}' not connected` };
       }
@@ -75,7 +74,7 @@ export function hostRpcRoutes(registry: HostRegistry) {
         return { error: "Rate limit: collab (20 per 10s)" };
       }
       try {
-        const result = await registry.call(
+        const result = await agentRegistry.callOnHost(
           hostId,
           "collab.link",
           {

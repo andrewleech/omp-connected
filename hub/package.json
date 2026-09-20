@@ -6,7 +6,7 @@
     "@types/bun": "^1.2.9",
     "typescript": "^5.8.3"
   },
-  "description": "Standalone OMP Collab fleet dashboard, host broker, and private relay. Inspired by claude-net's semantics; shares no source with it.",
+  "description": "Standalone OMP Collab fleet dashboard, host broker, and private relay.",
   "private": true,
   "scripts": {
     "dev": "bun --watch src/server/index.ts",
