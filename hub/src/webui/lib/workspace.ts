@@ -1,7 +1,4 @@
 // Pure, unit-testable helpers for the fleet dashboard's client-side state.
-// Ported from claude-net's src/hub/omp-dashboard.js as part of the omp-hub
-// extraction — the logic is unchanged; only the module boundary and types
-// are new (the original was untyped JS with no build step).
 
 export const WORKSPACE_STORAGE_KEY = "omp-hub-dashboard/v1";
 
@@ -197,11 +194,10 @@ export function resolveRememberedSession(
  * Identity of what the workspace pane currently shows. Two renders with the
  * same signature must leave the live <iframe> untouched — detaching and
  * reinserting it forces a browser to reload its browsing context, dropping
- * the embedded Collab guest's connection and transcript. This was a real
- * bug in claude-net's predecessor (a 5s heartbeat event triggered a full
- * dashboard refetch and re-render on every tick); this server never even
- * has a heartbeat to trigger it (see dashboard-events.ts), but the memo
- * stays as defense in depth against any future over-eager render() call.
+ * the embedded Collab guest's connection and transcript. There is no
+ * heartbeat or generic event tick that could trigger a spurious re-render
+ * (see dashboard-events.ts); the memo stays as defense in depth against
+ * any future over-eager render() call.
  */
 export function workspaceSignature(
   session: CollabSession | null,

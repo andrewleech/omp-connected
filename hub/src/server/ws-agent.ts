@@ -1,17 +1,19 @@
 // /ws/agent — JSON-RPC 2.0 over one WebSocket per omp-connected extension
-// instance. Native to omp-hub; no claude-net lineage. The only inbound
+// instance. The only inbound
 // method a fresh connection may send is agent.register; after that this
 // plugin dispatches agent.* methods to AgentRegistry and treats any
-// incoming {result: ...} frame as the extension's delivery receipt for a
-// server-pushed agent.message request (AgentRegistry.pushToRecipient uses
-// the message's own id, so no separate pending-push table is needed here).
+// incoming {result: ...}/{error: ...} frame as one of two things: a reply
+// to a collab.list/collab.link call this server pushed to serve host-level
+// Collab discovery (AgentRegistry.resolveHostCall, checked first), or
+// otherwise the extension's delivery receipt for a server-pushed
+// agent.message request (AgentRegistry.pushToRecipient uses the message's
+// own id, so no separate pending-push table is needed for that case).
 //
-// Cross-validation: agent.register is never trusted at face value. The
-// server calls HostRegistry.call(hostId, "collab.list", ...) and only
-// admits the registration if a session with the claimed instanceId is
-// live on that host right now — the same trust boundary the dashboard's
-// GET /api/hosts/:id/collab route already crosses. See
-// cc-pi-bridge/planning/20260920_research_cross-validation-algorithm.md.
+// agent.register is token-gated only. There is no second, independent
+// connection to confirm a registering session's claimed instanceId/cwd
+// against — accepting the token is accepting the extension's identity
+// claim. See ARCHITECTURE.md's security model section for what that does
+// and doesn't protect against.
 
 import { Elysia } from "elysia";
 import {
@@ -19,11 +21,8 @@ import {
   type AgentRegistry,
   AgentRegistryError,
 } from "./agent-registry";
-import type { HostRegistry } from "./host-registry";
 import { RateLimiter } from "./rate-limit";
 import { AGENT_RPC_ERRORS, type AgentRegisterParams } from "./types";
-
-const COLLAB_TIMEOUT_MS = 5_000;
 
 interface AgentWs {
   send(data: string): void;
@@ -55,16 +54,14 @@ function isAgentRegisterParams(value: unknown): value is AgentRegisterParams {
     typeof value.instanceId === "string" &&
     "pid" in value &&
     typeof value.pid === "number" &&
+    "cwd" in value &&
+    typeof value.cwd === "string" &&
     "token" in value &&
     typeof value.token === "string"
   );
 }
 
-export function wsAgentPlugin(
-  agentRegistry: AgentRegistry,
-  hostRegistry: HostRegistry,
-  hostToken: string,
-) {
+export function wsAgentPlugin(agentRegistry: AgentRegistry, hostToken: string) {
   const registeredByConn = new WeakMap<object, Registered>();
   const sendLimiter = new RateLimiter({ max: 20, windowMs: 10_000 });
 
@@ -203,46 +200,6 @@ export function wsAgentPlugin(
       ws.close();
       return;
     }
-    if (!hostRegistry.get(params.hostId)) {
-      sendError(
-        ws,
-        id,
-        AGENT_RPC_ERRORS.hostSessionNotFound,
-        `host '${params.hostId}' not connected`,
-      );
-      ws.close();
-      return;
-    }
-    let sessions: { instanceId: string; cwd: string }[];
-    try {
-      const result = await hostRegistry.call(
-        params.hostId,
-        "collab.list",
-        {},
-        COLLAB_TIMEOUT_MS,
-      );
-      sessions = result.sessions;
-    } catch (err) {
-      sendError(
-        ws,
-        id,
-        AGENT_RPC_ERRORS.hostSessionNotFound,
-        (err as Error).message,
-      );
-      ws.close();
-      return;
-    }
-    const session = sessions.find((s) => s.instanceId === params.instanceId);
-    if (!session) {
-      sendError(
-        ws,
-        id,
-        AGENT_RPC_ERRORS.hostSessionNotFound,
-        `instanceId '${params.instanceId}' not found on host '${params.hostId}'`,
-      );
-      ws.close();
-      return;
-    }
     const conn: AgentConn = {
       send: (payload) => ws.send(payload),
       close: () => ws.close(),
@@ -254,7 +211,7 @@ export function wsAgentPlugin(
           hostId: params.hostId,
           instanceId: params.instanceId,
           pid: params.pid,
-          cwd: session.cwd,
+          cwd: params.cwd,
         },
         conn,
       );
@@ -283,9 +240,27 @@ export function wsAgentPlugin(
         return;
       const id = data.id;
 
-      // A reply frame from the extension — the delivery receipt for a
-      // server-pushed agent.message request. Its id is that message's id.
+      // A reply frame from the extension: either a collab.list/collab.link
+      // result this server is awaiting on behalf of a host-level query, or
+      // otherwise the delivery receipt for a server-pushed agent.message
+      // request. Its id is that call's/message's own id.
       if ("result" in data || "error" in data) {
+        const errorMessage =
+          "error" in data &&
+          data.error &&
+          typeof data.error === "object" &&
+          "message" in data.error &&
+          typeof (data.error as { message: unknown }).message === "string"
+            ? (data.error as { message: string }).message
+            : undefined;
+        if (
+          agentRegistry.resolveHostCall(
+            id,
+            "result" in data ? data.result : undefined,
+            errorMessage,
+          )
+        )
+          return;
         const registered = registeredByConn.get(ws.raw);
         if (!registered) return;
         if ("result" in data) agentRegistry.ackMessage(registered.id, id);

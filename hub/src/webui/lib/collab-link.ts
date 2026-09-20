@@ -1,9 +1,7 @@
 // Splits a brokered Collab link's URL fragment (the bearer capability) off
 // and rebuilds it against this origin's vendored guest at /collab/. The
 // capability must never enter the outer page's history or storage — only
-// the guest's in-memory fragment. Ported unchanged from claude-net's
-// predecessor (`collabFrameUrl`); logic verified correct in the original
-// dashboard ticket's browser smoke test.
+// the guest's in-memory fragment.
 
 export function collabFrameUrl(link: string, origin: string): string {
   const fragmentOffset = link.indexOf("#");

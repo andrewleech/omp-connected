@@ -1,8 +1,5 @@
 // Small token-bucket rate limiter keyed by arbitrary string (typically
 // host id). Exposed so tests can inject a controlled clock.
-//
-// Ported verbatim from claude-net's src/hub/rate-limit.ts (protocol-agnostic,
-// no claude-net-specific dependencies) as part of the omp-hub extraction.
 
 export interface RateLimiterOptions {
   /** Max events permitted per window. */

@@ -597,3 +597,87 @@ describe("AgentRegistry — dashboard events", () => {
     ]);
   });
 });
+
+describe("AgentRegistry — host-level Collab calls", () => {
+  test("listHostIds returns unique hostIds from currently connected agents only", () => {
+    const registry = new AgentRegistry();
+    const conn = fakeConn();
+    const titanConn = fakeConn();
+    registerAgent(registry, { hostId: "user@hub-host", instanceId: "a" }, conn);
+    registerAgent(registry, { hostId: "user@hub-host", instanceId: "b" });
+    registerAgent(
+      registry,
+      { hostId: "user@worker-host", instanceId: "c" },
+      titanConn,
+    );
+    registry.unregister("user@worker-host:c", titanConn);
+
+    expect(registry.listHostIds()).toEqual(["user@hub-host"]);
+  });
+
+  test("callOnHost forwards to a live connection on that hostId and resolves from its reply", async () => {
+    const registry = new AgentRegistry();
+    const sent: { id: string; method: string }[] = [];
+    registerAgent(
+      registry,
+      { hostId: "user@hub-host", instanceId: "a" },
+      fakeConn((data) => sent.push(JSON.parse(data))),
+    );
+
+    const call = registry.callOnHost("user@hub-host", "collab.list", {}, 2000);
+    await Promise.resolve();
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.method).toBe("collab.list");
+    registry.resolveHostCall(
+      sent[0]?.id as string,
+      { sessions: [] },
+      undefined,
+    );
+
+    expect(await call).toEqual({ sessions: [] });
+  });
+
+  test("callOnHost rejects with the agent's error message", async () => {
+    const registry = new AgentRegistry();
+    const sent: { id: string }[] = [];
+    registerAgent(
+      registry,
+      { hostId: "user@hub-host", instanceId: "a" },
+      fakeConn((data) => sent.push(JSON.parse(data))),
+    );
+
+    const call = registry.callOnHost(
+      "user@hub-host",
+      "collab.link",
+      { instanceId: "a", generation: 0, access: "view" },
+      2000,
+    );
+    await Promise.resolve();
+    registry.resolveHostCall(sent[0]?.id as string, undefined, "not found");
+
+    await expect(call).rejects.toThrow("not found");
+  });
+
+  test("callOnHost rejects immediately when the hostId has no live connection", async () => {
+    const registry = new AgentRegistry();
+    await expect(
+      registry.callOnHost("nowhere", "collab.list", {}, 2000),
+    ).rejects.toThrow("no connected agent on host 'nowhere'");
+  });
+
+  test("disconnecting the answering agent rejects its outstanding host call", async () => {
+    const registry = new AgentRegistry();
+    const conn = fakeConn();
+    registerAgent(registry, { hostId: "user@hub-host", instanceId: "a" }, conn);
+
+    const call = registry.callOnHost("user@hub-host", "collab.list", {}, 2000);
+    registry.unregister("user@hub-host:a", conn);
+
+    await expect(call).rejects.toThrow("disconnected");
+  });
+
+  test("resolveHostCall returns false for an id it doesn't recognize", () => {
+    const registry = new AgentRegistry();
+    expect(registry.resolveHostCall("unknown-id", {}, undefined)).toBe(false);
+  });
+});

@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { AgentRegistry } from "@/server/agent-registry";
 import { dashboardEventsPlugin } from "@/server/dashboard-events";
-import { type HostConn, HostRegistry } from "@/server/host-registry";
 import type { DashboardEvent } from "@/server/types";
 import { wsAgentPlugin } from "@/server/ws-agent";
 import { Elysia } from "elysia";
@@ -15,13 +14,13 @@ afterEach(() => {
   stopServer = undefined;
 });
 
-function start(
-  agentRegistry: AgentRegistry,
-  hostRegistry: HostRegistry,
-): { url: string; dashboardUrl: string } {
+function start(agentRegistry: AgentRegistry): {
+  url: string;
+  dashboardUrl: string;
+} {
   const app = new Elysia()
-    .use(wsAgentPlugin(agentRegistry, hostRegistry, HOST_TOKEN))
-    .use(dashboardEventsPlugin(hostRegistry, agentRegistry));
+    .use(wsAgentPlugin(agentRegistry, HOST_TOKEN))
+    .use(dashboardEventsPlugin(agentRegistry));
   app.listen(0);
   const port = app.server?.port;
   if (!port) throw new Error("server did not report a port");
@@ -43,7 +42,12 @@ interface Frame {
   id?: string;
   method?: string;
   params?: { content?: string; from?: string };
-  result?: { ok?: boolean; recipientOnline?: boolean; agent?: unknown };
+  result?: {
+    ok?: boolean;
+    recipientOnline?: boolean;
+    agent?: unknown;
+    sessions?: unknown[];
+  };
   error?: {
     code: number;
     message?: string;
@@ -79,53 +83,21 @@ function collectFrames<T = Frame>(
   return promise;
 }
 
-interface FakeSession {
-  instanceId: string;
-  cwd: string;
-}
-
-/** Registers a fake omp-host sidecar connection that answers collab.list
- *  with a fixed session list, mimicking the real omp-host sidecar's
- *  round-trip reply. */
-function registerFakeHost(
-  hostRegistry: HostRegistry,
-  hostId: string,
-  sessions: FakeSession[],
-): void {
-  const conn: HostConn = {
-    send: (data) => {
-      const frame = JSON.parse(data) as { id: string; method: string };
-      if (frame.method !== "collab.list") return;
-      queueMicrotask(() => {
-        hostRegistry.resolve(
-          hostId,
-          frame.id,
-          {
-            sessions: sessions.map((s) => ({
-              instanceId: s.instanceId,
-              generation: 0,
-              access: "control" as const,
-              pid: 111,
-              sessionId: "s1",
-              sessionName: null,
-              cwd: s.cwd,
-              model: null,
-              startedAt: Date.now(),
-              participants: 1,
-              relayConnected: true,
-              inputRequired: false,
-            })),
-          },
-          undefined,
-        );
-      });
-    },
-    close: () => {},
+function fakeSession(overrides: Partial<{ instanceId: string }> = {}) {
+  return {
+    instanceId: overrides.instanceId ?? "inst-1",
+    generation: 0,
+    access: "control" as const,
+    pid: 111,
+    sessionId: "s1",
+    sessionName: null,
+    cwd: "/home/user/api",
+    model: null,
+    startedAt: Date.now(),
+    participants: 1,
+    relayConnected: true,
+    inputRequired: false,
   };
-  hostRegistry.register(
-    { hostId, user: "user", hostname: "hub-host", ompVersion: "1" },
-    conn,
-  );
 }
 
 function registerParams(
@@ -133,6 +105,7 @@ function registerParams(
     hostId: string;
     instanceId: string;
     pid: number;
+    cwd: string;
     token: string;
   }> = {},
 ) {
@@ -140,6 +113,7 @@ function registerParams(
     hostId: overrides.hostId ?? "user@hub-host",
     instanceId: overrides.instanceId ?? "inst-1",
     pid: overrides.pid ?? 4242,
+    cwd: overrides.cwd ?? "/home/user/api",
     token: overrides.token ?? HOST_TOKEN,
   };
 }
@@ -167,13 +141,9 @@ async function connectAndRegister(
 }
 
 describe("wsAgentPlugin — registration", () => {
-  test("valid registration cross-validated against a live collab session succeeds", async () => {
+  test("a valid token registers the extension's own claimed hostId/instanceId/cwd", async () => {
     const agentRegistry = new AgentRegistry();
-    const hostRegistry = new HostRegistry();
-    registerFakeHost(hostRegistry, "user@hub-host", [
-      { instanceId: "inst-1", cwd: "/home/user/api" },
-    ]);
-    const { url } = start(agentRegistry, hostRegistry);
+    const { url } = start(agentRegistry);
 
     const socket = new WebSocket(url);
     await waitOpen(socket);
@@ -183,7 +153,7 @@ describe("wsAgentPlugin — registration", () => {
         jsonrpc: "2.0",
         id: "1",
         method: "agent.register",
-        params: registerParams(),
+        params: registerParams({ cwd: "/home/user/api" }),
       }),
     );
 
@@ -204,40 +174,9 @@ describe("wsAgentPlugin — registration", () => {
     socket.close();
   });
 
-  test("registration is rejected when instanceId isn't in the host's live collab.list", async () => {
-    const agentRegistry = new AgentRegistry();
-    const hostRegistry = new HostRegistry();
-    registerFakeHost(hostRegistry, "user@hub-host", []); // no live sessions
-    const { url } = start(agentRegistry, hostRegistry);
-
-    const socket = new WebSocket(url);
-    await waitOpen(socket);
-    const reply = waitForMessage(socket);
-    const { promise: closed, resolve: onClosed } =
-      Promise.withResolvers<void>();
-    socket.onclose = () => onClosed();
-    socket.send(
-      JSON.stringify({
-        jsonrpc: "2.0",
-        id: "1",
-        method: "agent.register",
-        params: registerParams(),
-      }),
-    );
-
-    const result = await reply;
-    expect(result.error?.code).toBe(-32003);
-    await closed;
-    expect(agentRegistry.listAgents()).toHaveLength(0);
-  });
-
   test("an invalid host token is rejected with -32001 and the socket is closed", async () => {
     const agentRegistry = new AgentRegistry();
-    const hostRegistry = new HostRegistry();
-    registerFakeHost(hostRegistry, "user@hub-host", [
-      { instanceId: "inst-1", cwd: "/x" },
-    ]);
-    const { url } = start(agentRegistry, hostRegistry);
+    const { url } = start(agentRegistry);
 
     const socket = new WebSocket(url);
     await waitOpen(socket);
@@ -259,31 +198,35 @@ describe("wsAgentPlugin — registration", () => {
     await closed;
   });
 
-  test("registering against a host that never connected is rejected with -32003", async () => {
+  test("registration missing cwd is rejected with -32602 and the socket is closed", async () => {
     const agentRegistry = new AgentRegistry();
-    const hostRegistry = new HostRegistry();
-    const { url } = start(agentRegistry, hostRegistry);
+    const { url } = start(agentRegistry);
 
     const socket = new WebSocket(url);
     await waitOpen(socket);
     const reply = waitForMessage(socket);
+    const { promise: closed, resolve: onClosed } =
+      Promise.withResolvers<void>();
+    socket.onclose = () => onClosed();
+    const { cwd: _omit, ...withoutCwd } = registerParams();
     socket.send(
       JSON.stringify({
         jsonrpc: "2.0",
         id: "1",
         method: "agent.register",
-        params: registerParams(),
+        params: withoutCwd,
       }),
     );
 
     const result = await reply;
-    expect(result.error?.code).toBe(-32003);
+    expect(result.error?.code).toBe(-32602);
+    await closed;
+    expect(agentRegistry.listAgents()).toHaveLength(0);
   });
 
   test("any method sent before agent.register is rejected with -32002", async () => {
     const agentRegistry = new AgentRegistry();
-    const hostRegistry = new HostRegistry();
-    const { url } = start(agentRegistry, hostRegistry);
+    const { url } = start(agentRegistry);
 
     const socket = new WebSocket(url);
     await waitOpen(socket);
@@ -305,20 +248,15 @@ describe("wsAgentPlugin — registration", () => {
 describe("wsAgentPlugin — message routing", () => {
   test("A sends to B by label; B acks; A's result reports recipientOnline", async () => {
     const agentRegistry = new AgentRegistry();
-    const hostRegistry = new HostRegistry();
-    registerFakeHost(hostRegistry, "user@hub-host", [
-      { instanceId: "a", cwd: "/home/user/alpha" },
-      { instanceId: "b", cwd: "/home/user/beta" },
-    ]);
-    const { url } = start(agentRegistry, hostRegistry);
+    const { url } = start(agentRegistry);
 
     const socketA = await connectAndRegister(
       url,
-      registerParams({ instanceId: "a" }),
+      registerParams({ instanceId: "a", cwd: "/home/user/alpha" }),
     );
     const socketB = await connectAndRegister(
       url,
-      registerParams({ instanceId: "b" }),
+      registerParams({ instanceId: "b", cwd: "/home/user/beta" }),
     );
 
     const bPush = waitForMessage(socketB);
@@ -353,20 +291,15 @@ describe("wsAgentPlugin — message routing", () => {
 
   test("a message sent while the recipient is offline is delivered on reconnect", async () => {
     const agentRegistry = new AgentRegistry();
-    const hostRegistry = new HostRegistry();
-    registerFakeHost(hostRegistry, "user@hub-host", [
-      { instanceId: "a", cwd: "/home/user/alpha" },
-      { instanceId: "b", cwd: "/home/user/beta" },
-    ]);
-    const { url } = start(agentRegistry, hostRegistry);
+    const { url } = start(agentRegistry);
 
     const socketA = await connectAndRegister(
       url,
-      registerParams({ instanceId: "a" }),
+      registerParams({ instanceId: "a", cwd: "/home/user/alpha" }),
     );
     const socketB = await connectAndRegister(
       url,
-      registerParams({ instanceId: "b" }),
+      registerParams({ instanceId: "b", cwd: "/home/user/beta" }),
     );
     const bClosed = new Promise<void>((resolve) => {
       socketB.onclose = () => resolve();
@@ -394,7 +327,7 @@ describe("wsAgentPlugin — message routing", () => {
         jsonrpc: "2.0",
         id: "reg2",
         method: "agent.register",
-        params: registerParams({ instanceId: "b" }),
+        params: registerParams({ instanceId: "b", cwd: "/home/user/beta" }),
       }),
     );
 
@@ -408,22 +341,23 @@ describe("wsAgentPlugin — message routing", () => {
 
   test("sending to an ambiguous label returns -32010 with both candidates", async () => {
     const agentRegistry = new AgentRegistry();
-    const hostRegistry = new HostRegistry();
-    registerFakeHost(hostRegistry, "user@hub-host", [
-      { instanceId: "a", cwd: "/home/user/api" },
-    ]);
-    registerFakeHost(hostRegistry, "user@worker-host", [
-      { instanceId: "b", cwd: "/srv/api" },
-    ]);
-    const { url } = start(agentRegistry, hostRegistry);
+    const { url } = start(agentRegistry);
 
     const socketA = await connectAndRegister(
       url,
-      registerParams({ hostId: "user@hub-host", instanceId: "a" }),
+      registerParams({
+        hostId: "user@hub-host",
+        instanceId: "a",
+        cwd: "/home/user/api",
+      }),
     );
     await connectAndRegister(
       url,
-      registerParams({ hostId: "user@worker-host", instanceId: "b" }),
+      registerParams({
+        hostId: "user@worker-host",
+        instanceId: "b",
+        cwd: "/srv/api",
+      }),
     );
 
     const reply = waitForMessage(socketA);
@@ -442,14 +376,126 @@ describe("wsAgentPlugin — message routing", () => {
   });
 });
 
+describe("wsAgentPlugin — host-level collab RPC forwarding", () => {
+  test("callOnHost forwards to the connected agent's socket and resolves from its reply", async () => {
+    const agentRegistry = new AgentRegistry();
+    const { url } = start(agentRegistry);
+
+    const socket = await connectAndRegister(
+      url,
+      registerParams({ hostId: "user@hub-host", instanceId: "inst-1" }),
+    );
+    const push = waitForMessage(socket);
+
+    const callResult = agentRegistry.callOnHost(
+      "user@hub-host",
+      "collab.list",
+      {},
+      2000,
+    );
+
+    const pushFrame = await push;
+    expect(pushFrame.method).toBe("collab.list");
+    socket.send(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: pushFrame.id,
+        result: { sessions: [fakeSession({ instanceId: "inst-1" })] },
+      }),
+    );
+
+    expect(await callResult).toEqual({
+      sessions: [fakeSession({ instanceId: "inst-1" })],
+    });
+    socket.close();
+  });
+
+  test("callOnHost rejects when the agent replies with an error", async () => {
+    const agentRegistry = new AgentRegistry();
+    const { url } = start(agentRegistry);
+
+    const socket = await connectAndRegister(
+      url,
+      registerParams({ hostId: "user@hub-host", instanceId: "inst-1" }),
+    );
+    const push = waitForMessage(socket);
+
+    const callResult = agentRegistry.callOnHost(
+      "user@hub-host",
+      "collab.link",
+      { instanceId: "inst-1", generation: 0, access: "view" },
+      2000,
+    );
+
+    const pushFrame = await push;
+    socket.send(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: pushFrame.id,
+        error: {
+          code: -32000,
+          message: "stale or invalid Collab link response",
+        },
+      }),
+    );
+
+    await expect(callResult).rejects.toThrow(
+      "stale or invalid Collab link response",
+    );
+    socket.close();
+  });
+
+  test("callOnHost rejects immediately when no agent is connected for the host", async () => {
+    const agentRegistry = new AgentRegistry();
+    start(agentRegistry);
+
+    await expect(
+      agentRegistry.callOnHost("user@nowhere", "collab.list", {}, 2000),
+    ).rejects.toThrow("no connected agent on host");
+  });
+
+  test("a collab-call reply is not mistaken for a message-delivery ack", async () => {
+    const agentRegistry = new AgentRegistry();
+    const { url } = start(agentRegistry);
+
+    const socket = await connectAndRegister(
+      url,
+      registerParams({ hostId: "user@hub-host", instanceId: "inst-1" }),
+    );
+    const push = waitForMessage(socket);
+    const callResult = agentRegistry.callOnHost(
+      "user@hub-host",
+      "collab.list",
+      {},
+      2000,
+    );
+    const pushFrame = await push;
+    socket.send(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: pushFrame.id,
+        result: { sessions: [] },
+      }),
+    );
+    await callResult;
+
+    // The agent's mailbox is untouched by the collab-call reply above — it
+    // was resolved as a host call, never reached ackMessage().
+    agentRegistry.send({
+      from: "operator@hub-host",
+      to: "user@hub-host:inst-1",
+      content: "hello",
+      idempotencyKey: "k1",
+    });
+    expect(agentRegistry.getMailbox("user@hub-host:inst-1")).toHaveLength(1);
+    socket.close();
+  });
+});
+
 describe("wsAgentPlugin — dashboard events", () => {
   test("agent register/disconnect propagate to /ws/dashboard clients", async () => {
     const agentRegistry = new AgentRegistry();
-    const hostRegistry = new HostRegistry();
-    registerFakeHost(hostRegistry, "user@hub-host", [
-      { instanceId: "inst-1", cwd: "/home/user/api" },
-    ]);
-    const { url, dashboardUrl } = start(agentRegistry, hostRegistry);
+    const { url, dashboardUrl } = start(agentRegistry);
 
     const dashboard = new WebSocket(dashboardUrl);
     await waitOpen(dashboard);

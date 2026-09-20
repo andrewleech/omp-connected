@@ -1,22 +1,23 @@
 import { describe, expect, test } from "bun:test";
-import { type HostConn, HostRegistry } from "@/server/host-registry";
-import { hostRpcRoutes } from "@/server/host-rpc-routes";
+import { type AgentConn, AgentRegistry } from "@/server/agent-registry";
+import { collabRpcRoutes } from "@/server/collab-rpc-routes";
 
-function registerFakeHost(registry: HostRegistry, hostId: string): void {
-  const conn: HostConn = {
+/** Registers a fake connected agent that answers collab.list/collab.link
+ *  pushes, mimicking a real omp-connected extension's reply. */
+function registerFakeAgent(registry: AgentRegistry, hostId: string): void {
+  const conn: AgentConn = {
     send: (data) => {
       const frame = JSON.parse(data) as {
         id: string;
         method: string;
         params: Record<string, unknown>;
       };
-      // Reply on the next microtask, mimicking a real host round-trip.
+      // Reply on the next microtask, mimicking a real round trip.
       queueMicrotask(() => {
         if (frame.method === "collab.list") {
-          registry.resolve(hostId, frame.id, { sessions: [] }, undefined);
+          registry.resolveHostCall(frame.id, { sessions: [] }, undefined);
         } else if (frame.method === "collab.link") {
-          registry.resolve(
-            hostId,
+          registry.resolveHostCall(
             frame.id,
             {
               access: frame.params.access,
@@ -31,24 +32,35 @@ function registerFakeHost(registry: HostRegistry, hostId: string): void {
     close: () => {},
   };
   registry.register(
-    { hostId, user: "user", hostname: "hub-host", ompVersion: "1" },
+    { hostId, instanceId: "inst-1", pid: 111, cwd: "/x" },
     conn,
   );
 }
 
-describe("host-rpc-routes", () => {
-  test("GET /:id/collab 404s for an unregistered host", async () => {
-    const app = hostRpcRoutes(new HostRegistry());
+describe("collab-rpc-routes", () => {
+  test("GET /:id/collab 404s for a host with no connected agent", async () => {
+    const app = collabRpcRoutes(new AgentRegistry());
     const response = await app.handle(
       new Request("http://localhost/api/hosts/nobody/collab"),
     );
     expect(response.status).toBe(404);
   });
 
-  test("GET /:id/collab relays a registered host's session list", async () => {
-    const registry = new HostRegistry();
-    registerFakeHost(registry, "user@hub-host");
-    const app = hostRpcRoutes(registry);
+  test("GET / lists hostIds derived from currently connected agents", async () => {
+    const registry = new AgentRegistry();
+    registerFakeAgent(registry, "user@hub-host");
+    const app = collabRpcRoutes(registry);
+    const response = await app.handle(
+      new Request("http://localhost/api/hosts/"),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([{ hostId: "user@hub-host" }]);
+  });
+
+  test("GET /:id/collab relays a connected host's session list", async () => {
+    const registry = new AgentRegistry();
+    registerFakeAgent(registry, "user@hub-host");
+    const app = collabRpcRoutes(registry);
     const response = await app.handle(
       new Request("http://localhost/api/hosts/user@hub-host/collab"),
     );
@@ -57,9 +69,9 @@ describe("host-rpc-routes", () => {
   });
 
   test("POST /:id/collab/:instanceId/link rejects an invalid instance id before touching the host", async () => {
-    const registry = new HostRegistry();
-    registerFakeHost(registry, "user@hub-host");
-    const app = hostRpcRoutes(registry);
+    const registry = new AgentRegistry();
+    registerFakeAgent(registry, "user@hub-host");
+    const app = collabRpcRoutes(registry);
     const response = await app.handle(
       new Request(
         "http://localhost/api/hosts/user@hub-host/collab/bad%20id/link",
@@ -74,9 +86,9 @@ describe("host-rpc-routes", () => {
   });
 
   test("POST /:id/collab/:instanceId/link rejects a negative or non-integer generation", async () => {
-    const registry = new HostRegistry();
-    registerFakeHost(registry, "user@hub-host");
-    const app = hostRpcRoutes(registry);
+    const registry = new AgentRegistry();
+    registerFakeAgent(registry, "user@hub-host");
+    const app = collabRpcRoutes(registry);
     const response = await app.handle(
       new Request(
         "http://localhost/api/hosts/user@hub-host/collab/room1/link",
@@ -91,9 +103,9 @@ describe("host-rpc-routes", () => {
   });
 
   test("POST /:id/collab/:instanceId/link rejects an access value outside view|control", async () => {
-    const registry = new HostRegistry();
-    registerFakeHost(registry, "user@hub-host");
-    const app = hostRpcRoutes(registry);
+    const registry = new AgentRegistry();
+    registerFakeAgent(registry, "user@hub-host");
+    const app = collabRpcRoutes(registry);
     const response = await app.handle(
       new Request(
         "http://localhost/api/hosts/user@hub-host/collab/room1/link",
@@ -108,9 +120,9 @@ describe("host-rpc-routes", () => {
   });
 
   test("POST /:id/collab/:instanceId/link brokers a valid request end to end", async () => {
-    const registry = new HostRegistry();
-    registerFakeHost(registry, "user@hub-host");
-    const app = hostRpcRoutes(registry);
+    const registry = new AgentRegistry();
+    registerFakeAgent(registry, "user@hub-host");
+    const app = collabRpcRoutes(registry);
     const response = await app.handle(
       new Request(
         "http://localhost/api/hosts/user@hub-host/collab/room1/link",
