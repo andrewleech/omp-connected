@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  INSPECTOR_PANES,
   type StorageLike,
   WORKSPACE_STORAGE_KEY,
   canRequestAccess,
@@ -94,6 +95,32 @@ describe("fleet dashboard workspace", () => {
     ]);
     expect(restored.selected).toBe(sessionKey(alpha));
     expect(restored.inspector).toBe("controls");
+  });
+
+  test("INSPECTOR_PANES includes agents", () => {
+    expect(INSPECTOR_PANES).toContain("agents");
+  });
+
+  test("round-trips the agents inspector pane through storage", () => {
+    const storage = new MemoryStorage();
+    writeWorkspace(storage, {
+      version: 1,
+      groups: [],
+      selected: null,
+      inspector: "agents",
+    });
+    expect(readWorkspace(storage).inspector).toBe("agents");
+  });
+
+  test("falls back to the default inspector pane for an unknown stored value", () => {
+    const storage = new MemoryStorage();
+    storage.value = JSON.stringify({
+      version: 1,
+      groups: [],
+      selected: null,
+      inspector: "not-a-real-pane",
+    });
+    expect(readWorkspace(storage).inspector).toBe("controls");
   });
 
   test("falls back to defaults on corrupt storage", () => {

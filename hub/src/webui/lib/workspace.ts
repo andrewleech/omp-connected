@@ -6,7 +6,12 @@
 export const WORKSPACE_STORAGE_KEY = "omp-hub-dashboard/v1";
 
 const WORKSPACE_VERSION = 1;
-export const INSPECTOR_PANES = ["controls", "participants", "files"] as const;
+export const INSPECTOR_PANES = [
+  "controls",
+  "participants",
+  "agents",
+  "files",
+] as const;
 export type InspectorPane = (typeof INSPECTOR_PANES)[number];
 
 export interface CollabSession {
