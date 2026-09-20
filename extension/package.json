@@ -1,0 +1,12 @@
+{
+  "name": "omp-connected",
+  "version": "0.1.0",
+  "description": "Native OMP agent messaging with hub-stamped provenance.",
+  "private": true,
+  "type": "module",
+  "omp": {
+    "version": "0.1.0",
+    "description": "Connect OMP sessions to omp-hub's native agent-messaging service.",
+    "extensions": ["src/index.ts"]
+  }
+}
