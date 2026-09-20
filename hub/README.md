@@ -10,28 +10,35 @@ protocol, and security model.
 ## What this is
 
 - A `bin/omp-host` sidecar (lives in
-  [`cc-pi-bridge/trial-omp/marketplace/plugins/claude-net-omp`](https://github.com/)
+  [`cc-pi-bridge/trial-omp/marketplace/plugins/omp-connected`](https://github.com/)
   as `bin/omp-host`) registers each OMP host with this server over
   `/ws/host` and answers `collab.list`/`collab.link` RPCs.
-- The server exposes that over REST (`/api/hosts/:id/collab`,
-  `/api/hosts/:id/collab/:instanceId/link`) and serves a small fleet
-  dashboard webui at `/` plus the vendored OMP Collab guest client at
-  `/collab/`.
+- The `omp-connected` extension (same plugin, `src/index.ts`) registers
+  each OMP session with this server over `/ws/agent`, giving it a
+  native, hub-stamped agent-to-agent messaging identity — see
+  [ARCHITECTURE.md](./ARCHITECTURE.md) for the wire protocol.
+- The server exposes both over REST (`/api/hosts/:id/collab`,
+  `/api/hosts/:id/collab/:instanceId/link`, `/api/agents`,
+  `/api/agents/:id/send`) and serves a small fleet dashboard webui at
+  `/` plus the vendored OMP Collab guest client at `/collab/`.
 - A private relay (`src/relay/relay.ts`) carries the actual encrypted
   Collab terminal bytes between a host and its guests, on its own port.
 
 ## `OMP_HUB_URL` and `OMP_HUB_HOST_TOKEN`
 
-`OMP_HUB_URL` is **this server**, used only by `bin/omp-host` to register a
-host and broker Collab session links. Requires `OMP_HUB_HOST_TOKEN` to match
-what this server is configured with.
+`OMP_HUB_URL` is **this server**. `bin/omp-host` uses it to register a
+host and broker Collab session links; the `omp-connected` extension
+uses the same two variables, set in every interactive OMP terminal, to
+register that session's native agent-messaging identity over
+`/ws/agent`. Both require `OMP_HUB_HOST_TOKEN` to match what this
+server is configured with; the extension is a graceful no-op when
+either variable is unset.
 
 This project has no coupling of any kind to claude-net — no source
-dependency, and no runtime/network dependency either. `bin/omp-host` (in
-`cc-pi-bridge/trial-omp/marketplace/plugins/claude-net-omp`) also registers
-with a separate claude-net hub for its own agent-to-agent messaging tools,
-but that is a wholly separate concern this server never talks to, proxies,
-or depends on.
+dependency, and no runtime/network dependency either. Agent-to-agent
+messaging used to be deferred to a separate claude-net hub; it is now
+implemented natively by this server (`AgentRegistry`, `/ws/agent`) with
+no such coupling remaining anywhere in this repo.
 
 ## Local development
 
