@@ -1,8 +1,0 @@
-term screen-256color
-defutf8 on
-defbce on
-defscrollback 10000
-
-# Keep the attached terminal's primary scrollback active: without this,
-# terminals with alternate-scroll map the wheel to cursor keys.
-termcapinfo xterm* ti@:te@
