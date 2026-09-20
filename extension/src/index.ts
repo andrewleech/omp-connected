@@ -2,6 +2,7 @@ import * as os from "node:os";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type { Component } from "@oh-my-pi/pi-tui";
 import { type AgentSummary, HubTransport } from "./hub-transport.js";
+import { getCollabRegistry } from "./collab-registry.js";
 import { AGENT_MESSAGE_TYPE, type AgentMessage, formatInboundMessage, isReservedIdentity } from "./provenance.js";
 
 const DISCOVERY_ATTEMPTS = 10;
@@ -10,10 +11,6 @@ const REGISTER_BACKOFF_MIN_MS = 1_000;
 const REGISTER_BACKOFF_MAX_MS = 30_000;
 const SEND_RETRY_ATTEMPTS = 3;
 const SEND_RETRY_BASE_MS = 500;
-
-type CollabHostsModule = {
-	listCollabHosts(): Promise<{ pid: number; instanceId: string }[]>;
-};
 
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
@@ -68,7 +65,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		try {
 			for (let attempt = 0; !shuttingDown; attempt += 1) {
 				try {
-					const result = await ensureTransport(hubUrl, token).register({ hostId, instanceId, pid: process.pid });
+					const result = await ensureTransport(hubUrl, token).register({ hostId, instanceId, pid: process.pid, cwd: process.cwd() });
 					identity = result.agent;
 					return;
 				} catch (error) {
@@ -89,19 +86,13 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 	 *  not appear immediately at extension-init time. Poll with a bounded
 	 *  timeout rather than assume it is there on the first check. */
 	async function discoverInstanceId(): Promise<string | undefined> {
-		let listCollabHosts: CollabHostsModule["listCollabHosts"];
-		try {
-			({ listCollabHosts } = (await import(
-				"@oh-my-pi/pi-coding-agent/collab/registry"
-			)) as unknown as CollabHostsModule);
-		} catch (error) {
-			pi.logger.warn("omp-connected: could not import the Collab registry; agent messaging disabled", {
-				err: error instanceof Error ? error.message : String(error),
-			});
+		const registry = await getCollabRegistry();
+		if (!registry) {
+			pi.logger.warn("omp-connected: could not import the Collab registry; agent messaging disabled");
 			return undefined;
 		}
 		for (let attempt = 0; attempt < DISCOVERY_ATTEMPTS; attempt += 1) {
-			const hosts = await listCollabHosts();
+			const hosts = await registry.listCollabHosts();
 			const mine = hosts.find((h) => h.pid === process.pid);
 			if (mine) return mine.instanceId;
 			await sleep(DISCOVERY_INTERVAL_MS);

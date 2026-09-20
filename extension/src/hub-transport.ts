@@ -1,4 +1,5 @@
 import type { AgentMessage } from "./provenance.js";
+import { getCollabRegistry } from "./collab-registry.js";
 import { hubWebSocketUrl, makeRequest } from "./protocol.js";
 
 // Wire shapes from omp-hub's agent.register — kept as small local mirrors
@@ -39,7 +40,7 @@ export class HubTransport {
 
 	/** Sends `agent.register`, injecting the shared-secret token so callers
 	 *  never have to remember to attach it themselves. */
-	async register(params: { hostId: string; instanceId: string; pid: number }): Promise<AgentRegisterResult> {
+	async register(params: { hostId: string; instanceId: string; pid: number; cwd: string }): Promise<AgentRegisterResult> {
 		return (await this.request("agent.register", { ...params, token: this.token })) as AgentRegisterResult;
 	}
 
@@ -158,13 +159,68 @@ export class HubTransport {
 	}
 
 	private handlePush(id: string, method: string, params: unknown): void {
-		if (method !== "agent.message") return;
-		this.onInbound(params as AgentMessage);
+		if (method === "agent.message") {
+			this.onInbound(params as AgentMessage);
+			try {
+				this.#socket?.send(JSON.stringify({ jsonrpc: "2.0", id, result: { received: true } }));
+			} catch {
+				// Best-effort ack; the server retains the message and redelivers
+				// on reconnect if this drops.
+			}
+			return;
+		}
+		if (method === "collab.list" || method === "collab.link") {
+			void this.handleCollabPush(id, method, params);
+			return;
+		}
+	}
+
+	private async handleCollabPush(id: string, method: string, params: unknown): Promise<void> {
+		const reply = (result: unknown) => {
+			try {
+				this.#socket?.send(JSON.stringify({ jsonrpc: "2.0", id, result }));
+			} catch { /* best-effort */ }
+		};
+		const replyError = (message: string) => {
+			try {
+				this.#socket?.send(JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32000, message } }));
+			} catch { /* best-effort */ }
+		};
+
+		const registry = await getCollabRegistry();
+		if (!registry) return replyError("Collab registry not available");
+
 		try {
-			this.#socket?.send(JSON.stringify({ jsonrpc: "2.0", id, result: { received: true } }));
-		} catch {
-			// Best-effort ack; the server retains the message and redelivers
-			// on reconnect if this drops.
+			if (method === "collab.list") {
+				const hosts = await registry.listCollabHosts();
+				reply({ sessions: hosts });
+				return;
+			}
+
+			// collab.link — replicate bin/omp-host:92-101 validation.
+			const p = params as Record<string, unknown> | undefined;
+			if (
+				typeof p?.instanceId !== "string" ||
+				typeof p?.generation !== "number" ||
+				(p?.access !== "view" && p?.access !== "control")
+			) return replyError("invalid Collab link request");
+
+			const result = await registry.resolveCollabHostLink(
+				p.instanceId,
+				{ access: p.access as "view" | "control" },
+			);
+
+			if (
+				result.version !== 1 ||
+				result.instanceId !== p.instanceId ||
+				result.generation !== p.generation ||
+				result.access !== p.access ||
+				typeof result.url !== "string"
+			) return replyError("stale or invalid Collab link response");
+
+			reply({ access: result.access, url: result.url, expiresAt: result.expiresAt });
+		} catch (error) {
+			replyError(error instanceof Error ? error.message : String(error));
 		}
 	}
 }
