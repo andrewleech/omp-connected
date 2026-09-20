@@ -1,5 +1,5 @@
-// /ws/dashboard — pushes ONLY the two events the server actually knows to
-// be true the instant they happen: a host connecting or disconnecting.
+// /ws/dashboard — pushes ONLY the events the server actually knows to be
+// true the instant they happen: a host or agent connecting/disconnecting.
 // Deliberately NOT a generic event bus: there is no ping/heartbeat tick,
 // and Collab *session* state is never pushed here (the server only ever
 // learns it by RPC-polling a host) — the webui polls for that on its own
@@ -9,6 +9,7 @@
 // embedded iframe).
 
 import { Elysia } from "elysia";
+import type { AgentRegistry } from "./agent-registry";
 import type { HostRegistry } from "./host-registry";
 import type { DashboardEvent } from "./types";
 
@@ -17,12 +18,17 @@ interface DashboardWs {
   raw: object;
 }
 
-export function dashboardEventsPlugin(registry: HostRegistry) {
+export function dashboardEventsPlugin(
+  hostRegistry: HostRegistry,
+  agentRegistry: AgentRegistry,
+) {
   const clients = new Set<DashboardWs>();
-  registry.onChange((event: DashboardEvent) => {
+  const broadcast = (event: DashboardEvent) => {
     const payload = JSON.stringify(event);
     for (const client of clients) client.send(payload);
-  });
+  };
+  hostRegistry.onChange(broadcast);
+  agentRegistry.onChange(broadcast);
 
   return new Elysia().ws("/ws/dashboard", {
     open(ws: DashboardWs) {
