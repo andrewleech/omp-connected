@@ -7,15 +7,10 @@ src/
   server/   Elysia HTTP + WebSocket server: REST routes, /ws/host host
             registry, /ws/agent native agent-message registry, serves
             webui/ at "/" and webui/collab at "/collab/".
-  relay/    src/relay/relay.ts — the Collab terminal-byte relay (port 7466),
-            copied verbatim from claude-net's collab-relay.ts. Unchanged
-            protocol, unchanged behavior.
+  relay/    src/relay/relay.ts — the Collab terminal-byte relay (port 7466).
 webui/
-  (dashboard)   fleet dashboard served at "/" (was "/omp" on claude-net;
-                this project has its own dedicated origin, so it is now
-                server root).
-  collab/       vendored Collab guest client, served at "/collab/" (was
-                "/omp/collab/" on claude-net).
+  (dashboard)   fleet dashboard served at "/".
+  collab/       vendored Collab guest client, served at "/collab/".
 ```
 
 `src/server` and `src/relay` never import from each other; the relay is a
@@ -66,7 +61,7 @@ REST routes built on top of the same live registry:
 ## Agent protocol: `/ws/agent`
 
 One WebSocket connection per `omp-connected` extension instance,
-JSON-RPC 2.0 framed — native to omp-hub, no claude-net lineage. The
+JSON-RPC 2.0 framed. The
 extension always speaks first with `agent.register`; after that the
 server dispatches `agent.*` calls from the extension (this is the
 inverse of `/ws/host`: the agent, not the server, drives most calls),
@@ -124,10 +119,8 @@ real agent's identity):
   `OMP_HUB_HOST_TOKEN`, configured identically on the server and on every
   `bin/omp-host` sidecar. If it doesn't match, registration is rejected and
   the socket is closed immediately — the host never enters the registry and
-  never receives `collab.list`/`collab.link` calls. This is new: the old
-  claude-net-hosted version relied only on Tailscale network position
-  (any host reachable on the tailnet could register), which is not safe to
-  keep now that this server is not gated behind claude-net's own perimeter.
+  never receives `collab.list`/`collab.link` calls. A host reachable on the
+  tailnet is not implicitly trusted; only the shared secret admits it.
 - **Capability URLs stay client-side only.** The `url` returned by
   `collab.link` (a short-TTL, capability-bearing relay URL) is handed to the
   browser and lives only in the URL fragment (`#...`), which is never sent
@@ -144,12 +137,9 @@ real agent's identity):
 - It does not launch, mirror, or otherwise manage Claude Code sessions.
   `bin/omp-host` and the local `omp` CLI own that; this server only ever
   talks to a *registered* host's existing sessions through `/ws/host`.
-- It does not depend on claude-net for anything, including agent
-  messaging. That used to be deferred entirely to a separate
-  claude-net hub; it is now implemented natively (`AgentRegistry`,
-  `/ws/agent`, teams, mailbox — see "Agent protocol" above), and no
-  claude-net coupling of any kind — source or runtime — remains
-  anywhere in this repo.
+- It does not depend on claude-net for anything, source or runtime.
+  Agent-to-agent messaging (`AgentRegistry`, `/ws/agent`, teams,
+  mailbox — see "Agent protocol" above) is implemented natively.
 - Its own registry (hosts, Collab sessions, brokered links) is fully
   independent and does not merge with, read, or depend on any other
   service's state.
