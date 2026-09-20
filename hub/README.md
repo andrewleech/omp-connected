@@ -1,11 +1,8 @@
 # omp-hub
 
-Standalone OMP Collab fleet dashboard, host broker, and private relay.
-Inspired by [claude-net](https://github.com/apium/claude-net)'s semantics
-(fleet presence, capability-safe session brokering), but a fresh
-implementation with no source dependency on it — see
-[ARCHITECTURE.md](./ARCHITECTURE.md) for the full module layout, wire
-protocol, and security model.
+Standalone OMP Collab fleet dashboard, host broker, and private relay —
+see [ARCHITECTURE.md](./ARCHITECTURE.md) for the full module layout,
+wire protocol, and security model.
 
 ## What this is
 
@@ -34,11 +31,9 @@ register that session's native agent-messaging identity over
 server is configured with; the extension is a graceful no-op when
 either variable is unset.
 
-This project has no coupling of any kind to claude-net — no source
-dependency, and no runtime/network dependency either. Agent-to-agent
-messaging used to be deferred to a separate claude-net hub; it is now
-implemented natively by this server (`AgentRegistry`, `/ws/agent`) with
-no such coupling remaining anywhere in this repo.
+Agent-to-agent messaging is implemented natively by this server
+(`AgentRegistry`, `/ws/agent`) — see [ARCHITECTURE.md](./ARCHITECTURE.md)
+for the wire protocol.
 
 ## Local development
 
@@ -69,7 +64,7 @@ Deploy units live in [`deploy/`](./deploy):
   this design fixes — see ARCHITECTURE.md).
 - `omp-hub-relay.service` — the private relay.
 - `omp-hub-cert-renew.service` / `.timer` — weekly Tailscale cert renewal,
-  restarting both services above. Never touches claude-net's deployment.
+  restarting both services above.
 
 Copy `deploy/omp-hub.env.example` → `~/.config/omp-hub/omp-hub.env` and
 `deploy/omp-hub-relay.env.example` → `~/.config/omp-hub/omp-hub-relay.env`,
