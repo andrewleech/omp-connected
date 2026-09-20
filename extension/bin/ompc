@@ -11,6 +11,17 @@ case ${1:-} in
 	-d|--detach) detach=true; shift ;;
 esac
 
+# Source hub connection env (OMP_HUB_URL, OMP_HUB_HOST_TOKEN) so the
+# omp-connected extension can register with the hub.  The env file is
+# managed by deploy; if absent, the extension runs without hub features.
+OMP_HOST_ENV="${OMP_HOST_ENV:-${XDG_CONFIG_HOME:-$HOME/.config}/omp-connected/omp-host.env}"
+if [[ -f "$OMP_HOST_ENV" ]]; then
+	set -a
+	# shellcheck source=/dev/null
+	source "$OMP_HOST_ENV"
+	set +a
+fi
+
 # CLI resolution: use the global `omp` binary from PATH by default (the
 # official installer places it at ~/.local/bin/omp).  OMP_BIN overrides
 # this for hosts with a non-standard install location.
@@ -20,9 +31,8 @@ else
 	omp_command=(omp)
 fi
 
-# The Collab CLI is not a session name, and automation -- in particular
-# bin/omp-host, which invokes the configured OMP_COLLAB_BIN with
-# `collab ...` -- must never attach a TUI.
+# The Collab CLI is not a session name, and automation (e.g. `ompc collab
+# list --json`) must never attach a TUI.
 if [[ ${1:-} == collab ]]; then
 	exec "${omp_command[@]}" "$@"
 fi
