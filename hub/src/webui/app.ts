@@ -33,6 +33,20 @@ interface HostSummary {
   hostId: string;
 }
 
+// Minimal local mirror of omp-hub's server-side AgentSummary wire type —
+// matches the existing convention of HostSummary above rather than
+// importing across the webui/server module boundary.
+interface AgentSummary {
+  id: string;
+  hostId: string;
+  instanceId: string;
+  label: string;
+  cwd: string;
+  pid: number;
+  connectedAt: string;
+  teams: string[];
+}
+
 function el(
   name: string,
   options: {
@@ -156,8 +170,13 @@ function createDashboard(root: HTMLElement): void {
     sessions: [] as CollabSession[],
     selectedSession: null as CollabSession | null,
     selectedAccess: null as "view" | "control" | null,
+    agents: [] as AgentSummary[],
+    agentsLoaded: false,
+    agentsError: null as string | null,
+    composeTargetId: null as string | null,
   };
   let lastWorkspaceSignature: string | null | undefined;
+  let agentsFetchInFlight = false;
 
   function persist(): void {
     writeWorkspace(localStorage, {
@@ -452,6 +471,134 @@ function createDashboard(root: HTMLElement): void {
     collabFrame.referrerPolicy = "no-referrer";
   }
 
+  async function loadAgents(): Promise<void> {
+    try {
+      const result = await json<{ agents: AgentSummary[] }>("/api/agents");
+      state.agents = result.agents;
+      state.agentsError = null;
+    } catch (error) {
+      state.agentsError = (error as Error).message;
+    } finally {
+      state.agentsLoaded = true;
+    }
+  }
+
+  async function sendAgentMessage(
+    agentId: string,
+    content: string,
+    onSent: () => void,
+  ): Promise<void> {
+    showStatus(`Sending message to ${agentId}…`);
+    try {
+      await json(`/api/agents/${encodeURIComponent(agentId)}/send`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content, idempotencyKey: crypto.randomUUID() }),
+      });
+      showStatus("Message sent", "ok");
+      onSent();
+    } catch (error) {
+      showStatus((error as Error).message, "warning");
+    }
+  }
+
+  function renderComposeForm(target: AgentSummary): HTMLElement {
+    const form = el("form", { className: "agent-compose" });
+    form.append(el("h3", { text: `Message ${target.label}` }));
+    const textarea = document.createElement("textarea");
+    textarea.className = "agent-compose-input";
+    textarea.placeholder = "Message content…";
+    form.append(textarea);
+    form.append(el("button", { type: "submit", text: "Send" }));
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const content = textarea.value.trim();
+      if (!content) return;
+      void sendAgentMessage(target.id, content, () => {
+        textarea.value = "";
+      });
+    });
+    return form;
+  }
+
+  // Roster + compose UI backed natively by omp-hub's own AgentRegistry via
+  // GET/POST /api/agents — no claude-net RosterProxy, no HTTP-proxying to
+  // another server. Display label collisions (two agents sharing the same
+  // basename(cwd)) are disambiguated by showing each candidate's hostId,
+  // matching the resolve() ambiguity data the server itself returns.
+  function renderAgentsBody(body: HTMLElement): void {
+    body.append(el("h2", { text: "Agents" }));
+    if (!state.agentsLoaded && !agentsFetchInFlight) {
+      agentsFetchInFlight = true;
+      void loadAgents().then(() => {
+        agentsFetchInFlight = false;
+        render();
+      });
+    }
+    if (state.agentsError) {
+      body.append(el("p", { className: "empty", text: state.agentsError }));
+      return;
+    }
+    if (!state.agentsLoaded) {
+      body.append(el("p", { className: "empty", text: "Loading agents…" }));
+      return;
+    }
+    if (state.agents.length === 0) {
+      body.append(
+        el("p", {
+          className: "empty",
+          text: "No agents registered. Set OMP_HUB_URL/OMP_HUB_HOST_TOKEN in an interactive OMP session to register one.",
+        }),
+      );
+      return;
+    }
+    if (
+      state.composeTargetId &&
+      !state.agents.some((agent) => agent.id === state.composeTargetId)
+    ) {
+      state.composeTargetId = null;
+    }
+
+    const labelCounts = new Map<string, number>();
+    for (const agent of state.agents) {
+      labelCounts.set(agent.label, (labelCounts.get(agent.label) ?? 0) + 1);
+    }
+
+    const list = el("div", { className: "agent-roster" });
+    for (const agent of state.agents) {
+      const ambiguous = (labelCounts.get(agent.label) ?? 0) > 1;
+      const row = el("button", {
+        type: "button",
+        className: `agent-row${agent.id === state.composeTargetId ? " selected" : ""}`,
+        title: agent.id,
+      }) as HTMLButtonElement;
+      row.append(el("span", { className: "agent-label", text: agent.label }));
+      if (ambiguous) {
+        row.append(el("span", { className: "badge", text: agent.hostId }));
+      }
+      row.onclick = () => {
+        state.composeTargetId = agent.id;
+        render();
+      };
+      list.append(row);
+    }
+    body.append(list);
+
+    const target = state.agents.find(
+      (agent) => agent.id === state.composeTargetId,
+    );
+    if (!target) {
+      body.append(
+        el("p", {
+          className: "empty",
+          text: "Select an agent to compose a message.",
+        }),
+      );
+      return;
+    }
+    body.append(renderComposeForm(target));
+  }
+
   function renderInspector(container: Element): void {
     container.replaceChildren();
     const tabs = el("div", { className: "tabs" });
@@ -489,6 +636,8 @@ function createDashboard(root: HTMLElement): void {
             : "Select a room.",
         }),
       );
+    } else if (state.inspector === "agents") {
+      renderAgentsBody(body);
     } else {
       body.append(el("h2", { text: "Files & tools" }));
       body.append(
@@ -520,8 +669,19 @@ function createDashboard(root: HTMLElement): void {
   socket.onmessage = (event) => {
     try {
       const data = JSON.parse(String(event.data)) as { event?: string };
-      if (data.event === "host.connected" || data.event === "host.disconnected")
+      if (
+        data.event === "host.connected" ||
+        data.event === "host.disconnected"
+      ) {
         void refresh().catch(() => {});
+      } else if (
+        data.event === "agent.registered" ||
+        data.event === "agent.disconnected"
+      ) {
+        void loadAgents()
+          .then(() => render())
+          .catch(() => {});
+      }
     } catch {
       // ignore malformed frames
     }
