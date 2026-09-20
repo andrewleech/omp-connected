@@ -1,9 +1,13 @@
+import { hostname as osHostname } from "node:os";
 import { staticPlugin } from "@elysiajs/static";
 import { Elysia } from "elysia";
+import { AgentRegistry } from "./agent-registry";
+import { agentRpcRoutes } from "./agent-rpc-routes";
 import { loadConfig } from "./config";
 import { dashboardEventsPlugin } from "./dashboard-events";
 import { HostRegistry } from "./host-registry";
 import { hostRpcRoutes } from "./host-rpc-routes";
+import { wsAgentPlugin } from "./ws-agent";
 import { wsHostPlugin } from "./ws-host";
 
 export interface CreateHubOptions {
@@ -20,6 +24,7 @@ export interface CreateHubOptions {
 
 export interface Hub {
   registry: HostRegistry;
+  agentRegistry: AgentRegistry;
   stop(): void;
 }
 
@@ -31,12 +36,14 @@ export function createHub(options: CreateHubOptions = {}): Hub {
   const webuiRoot = options.webuiRoot ?? `${import.meta.dir}/../../dist/webui`;
 
   const registry = new HostRegistry();
+  const agentRegistry = new AgentRegistry();
 
   const app = new Elysia()
     .get("/health", () => ({
       status: "ok",
       version: "0.1.0",
       hosts: registry.list().length,
+      agents: agentRegistry.listAgents().length,
     }))
     .get(
       "/collab/",
@@ -47,7 +54,9 @@ export function createHub(options: CreateHubOptions = {}): Hub {
     )
     .use(hostRpcRoutes(registry))
     .use(wsHostPlugin(registry, hostToken))
-    .use(dashboardEventsPlugin(registry))
+    .use(agentRpcRoutes(agentRegistry, osHostname()))
+    .use(wsAgentPlugin(agentRegistry, registry, hostToken))
+    .use(dashboardEventsPlugin(registry, agentRegistry))
     .use(
       staticPlugin({
         assets: webuiRoot,
@@ -77,6 +86,7 @@ export function createHub(options: CreateHubOptions = {}): Hub {
 
   return {
     registry,
+    agentRegistry,
     stop: () => app.stop(),
   };
 }
