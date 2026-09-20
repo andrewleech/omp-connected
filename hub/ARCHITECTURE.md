@@ -5,7 +5,8 @@
 ```
 src/
   server/   Elysia HTTP + WebSocket server: REST routes, /ws/host host
-            registry, serves webui/ at "/" and webui/collab at "/collab/".
+            registry, /ws/agent native agent-message registry, serves
+            webui/ at "/" and webui/collab at "/collab/".
   relay/    src/relay/relay.ts — the Collab terminal-byte relay (port 7466),
             copied verbatim from claude-net's collab-relay.ts. Unchanged
             protocol, unchanged behavior.
@@ -62,6 +63,61 @@ REST routes built on top of the same live registry:
 - `GET /` — the fleet dashboard webui.
 - `/collab/` — the vendored Collab guest client.
 
+## Agent protocol: `/ws/agent`
+
+One WebSocket connection per `omp-connected` extension instance,
+JSON-RPC 2.0 framed — native to omp-hub, no claude-net lineage. The
+extension always speaks first with `agent.register`; after that the
+server dispatches `agent.*` calls from the extension (this is the
+inverse of `/ws/host`: the agent, not the server, drives most calls),
+and the server may itself push a server-initiated `agent.message`
+request when another agent sends to a currently-connected recipient.
+
+```ts
+// Extension -> Server, once per connection, must be the first message
+interface AgentRegisterParams { hostId: string; instanceId: string; pid: number; token: string; }
+interface AgentRegisterResult { ok: true; agent: AgentSummary }
+
+// Extension -> Server
+interface AgentSendParams { to: string; content: string; replyTo?: string; idempotencyKey: string; }
+interface AgentSendResult { ok: true; messageId: string; to: string; recipientOnline: boolean }
+interface AgentSendTeamParams { team: string; content: string; replyTo?: string; idempotencyKey: string; }
+interface AgentJoinTeamParams { team: string; }
+interface AgentLeaveTeamParams { team: string; }
+// agent.list_agents, agent.list_teams take no params
+interface AgentGetMailboxParams { agent?: string; } // defaults to caller
+interface AgentQueryEventsParams { event?: string; since?: number; limit?: number; agent?: string; }
+
+// Server -> Extension (server-initiated push; the extension's {result: ...}
+// reply is its delivery receipt, matched on the message's own id)
+interface AgentMessagePush { messageId: string; from: string; to: string; content: string; replyTo?: string; }
+
+interface AgentSummary {
+  id: string; // canonical: `${hostId}:${instanceId}`
+  hostId: string; instanceId: string; label: string; // basename(cwd), disambiguated on collision
+  status: "online" | "offline";
+}
+```
+
+**Cross-validation.** `agent.register` is never trusted at face value.
+The server calls `HostRegistry.call(hostId, "collab.list", ...)` over
+that host's already-open `/ws/host` connection and only admits the
+registration if a session with the claimed `instanceId` is live on
+that host right now — the same trust boundary `GET
+/api/hosts/:id/collab` already crosses. `cwd` (used for the agent's
+display label) comes from that server-confirmed `collab.list` result,
+never from the extension's own claim.
+
+REST routes built on top of the same live registry (dashboard-only;
+the dashboard is never a registered agent connection, so it can only
+send as the reserved `operator@<hub-host>` principal, never spoof a
+real agent's identity):
+
+- `GET /api/agents` → `{ agents: AgentSummary[] }`.
+- `POST /api/agents/:id/send` `{ content, replyTo?, idempotencyKey }` →
+  sends as `operator@<hub-host>`; `:id` accepts a canonical ID or an
+  unambiguous display label.
+
 ## Security model
 
 - **Shared-secret host registration.** `HostRegisterParams.token` must match
@@ -88,9 +144,12 @@ REST routes built on top of the same live registry:
 - It does not launch, mirror, or otherwise manage Claude Code sessions.
   `bin/omp-host` and the local `omp` CLI own that; this server only ever
   talks to a *registered* host's existing sessions through `/ws/host`.
-- It has no concept of "teams" or a mailbox, and no coupling of any kind —
-  source or runtime — to claude-net. Agent-to-agent messaging is entirely
-  claude-net's job and this server neither implements it nor proxies to it.
+- It does not depend on claude-net for anything, including agent
+  messaging. That used to be deferred entirely to a separate
+  claude-net hub; it is now implemented natively (`AgentRegistry`,
+  `/ws/agent`, teams, mailbox — see "Agent protocol" above), and no
+  claude-net coupling of any kind — source or runtime — remains
+  anywhere in this repo.
 - Its own registry (hosts, Collab sessions, brokered links) is fully
   independent and does not merge with, read, or depend on any other
   service's state.
