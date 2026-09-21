@@ -528,7 +528,11 @@ export class CollabTailViewer {
     ws.addEventListener("message", (event) => {
       // Chain every message onto a serial queue so decryption order is
       // preserved and we never race snapshot-chunk accumulation.
-      this.#msgQueue = this.#msgQueue.then(() => this.#onMessage(event));
+      // The catch prevents one bad frame from killing the entire chain.
+      this.#msgQueue = this.#msgQueue.then(
+        () => this.#onMessage(event),
+        () => {},  // recover from prior rejection
+      ).catch(() => {}); // recover if this handler throws
     });
 
     ws.addEventListener("close", () => {
@@ -547,28 +551,32 @@ export class CollabTailViewer {
   }
 
   async #onMessage(event: MessageEvent): Promise<void> {
-    if (this.#destroyed || !this.#key) return;
-    const raw = event.data;
-    if (typeof raw === "string") {
-      try {
-        const ctrl = JSON.parse(raw);
-        if (ctrl.t === "room-closed") {
-          this.#statusEl.textContent = "Session ended";
-          this.#statusEl.className = "tail-status warning";
-        }
-      } catch { /* ignore */ }
-      return;
-    }
-    const data = new Uint8Array(raw as ArrayBuffer);
-    if (data.byteLength <= ENVELOPE_HEADER) return;
-    const payload = data.subarray(ENVELOPE_HEADER);
-    let frame: Record<string, unknown>;
     try {
-      frame = await unseal(this.#key, payload);
+      if (this.#destroyed || !this.#key) return;
+      const raw = event.data;
+      if (typeof raw === "string") {
+        try {
+          const ctrl = JSON.parse(raw);
+          if (ctrl.t === "room-closed") {
+            this.#statusEl.textContent = "Session ended";
+            this.#statusEl.className = "tail-status warning";
+          }
+        } catch { /* ignore malformed control frame */ }
+        return;
+      }
+      const data = new Uint8Array(raw as ArrayBuffer);
+      if (data.byteLength <= ENVELOPE_HEADER) return;
+      const payload = data.subarray(ENVELOPE_HEADER);
+      let frame: Record<string, unknown>;
+      try {
+        frame = await unseal(this.#key, payload);
+      } catch {
+        return; // decrypt failure — skip this frame
+      }
+      this.#handleFrame(frame);
     } catch {
-      return;
+      // Never let a single bad frame kill the processing pipeline.
     }
-    this.#handleFrame(frame);
   }
 
   destroy(): void {
