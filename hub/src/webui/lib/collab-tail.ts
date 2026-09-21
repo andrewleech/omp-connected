@@ -110,6 +110,16 @@ export function parseCollabLink(link: string): ParsedLink | null {
 
 // ─── Entry rendering ─────────────────────────────────────────────────────
 
+interface ContentBlock {
+  type?: string;
+  text?: string;
+  name?: string;
+  input?: unknown;
+  id?: string;
+  content?: unknown;
+  [key: string]: unknown;
+}
+
 interface SessionEntry {
   type: string;
   message?: {
@@ -119,20 +129,74 @@ interface SessionEntry {
   [key: string]: unknown;
 }
 
-/** Flatten content blocks into a single text string. */
+/** True when this entry is a tool call or tool result — collapsed by default. */
+function isToolEntry(entry: SessionEntry): boolean {
+  const role = entry.message?.role;
+  if (role === "tool") return true;
+  // Assistant messages containing only tool_use blocks (no text)
+  if (role === "assistant" && Array.isArray(entry.message?.content)) {
+    const blocks = entry.message!.content as ContentBlock[];
+    return blocks.length > 0 && blocks.every((b) => b.type === "tool_use");
+  }
+  return false;
+}
+
+/** One-line summary for a collapsed tool entry. */
+function toolSummary(entry: SessionEntry): string {
+  const content = entry.message?.content;
+  const role = entry.message?.role;
+  if (role === "assistant" && Array.isArray(content)) {
+    const names = (content as ContentBlock[])
+      .filter((b) => b.type === "tool_use")
+      .map((b) => b.name ?? "tool");
+    return names.length === 1
+      ? `▶ ${names[0]}`
+      : `▶ ${names.length} tool calls: ${names.join(", ")}`;
+  }
+  // Tool result — show truncated content
+  if (typeof content === "string") {
+    return content.length > 120 ? content.slice(0, 120) + "…" : content;
+  }
+  if (Array.isArray(content)) {
+    const text = (content as ContentBlock[])
+      .map((b) => (b.type === "text" ? (b.text ?? "") : ""))
+      .join("")
+      .trim();
+    return text.length > 120 ? text.slice(0, 120) + "…" : text || "[tool result]";
+  }
+  return "[tool result]";
+}
+
+/** Full text for expanded view. */
 function entryText(entry: SessionEntry): string {
   const msg = entry.message;
   if (!msg) return `[${entry.type}]`;
   const content = msg.content;
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
-    return content
-      .map((block: { type?: string; text?: string }) =>
-        block.type === "text" ? (block.text ?? "") : `[${block.type ?? "block"}]`,
-      )
-      .join("");
+    return (content as ContentBlock[])
+      .map((block) => {
+        if (block.type === "text") return block.text ?? "";
+        if (block.type === "tool_use")
+          return `[${block.name}] ${JSON.stringify(block.input, null, 2)}`;
+        if (block.type === "tool_result")
+          return typeof block.content === "string"
+            ? block.content
+            : JSON.stringify(block.content);
+        return `[${block.type ?? "block"}]`;
+      })
+      .join("\n");
   }
   return JSON.stringify(content);
+}
+
+function roleLabel(entry: SessionEntry): string {
+  const role = entry.message?.role;
+  if (role === "assistant") return "π";
+  if (role === "user") return "▸";
+  if (role === "tool") return "⚙";
+  if (entry.type === "compaction_summary") return "⋯";
+  return "·";
 }
 
 function roleClass(role: string | undefined): string {
@@ -148,31 +212,37 @@ function roleClass(role: string | undefined): string {
   }
 }
 
-function roleLabel(entry: SessionEntry): string {
-  const role = entry.message?.role;
-  if (role === "assistant") return "π";
-  if (role === "user") return "▸";
-  if (role === "tool") return "⚙";
-  if (entry.type === "compaction_summary") return "⋯";
-  return "·";
-}
-
 function renderEntry(entry: SessionEntry): HTMLElement {
   const role = entry.message?.role;
+  const collapsed = isToolEntry(entry);
   const div = document.createElement("div");
-  div.className = `tail-entry ${roleClass(role)}`;
+  div.className = `tail-entry ${roleClass(role)}${collapsed ? " collapsed" : ""}`;
 
   const label = document.createElement("span");
   label.className = "tail-role";
   label.textContent = roleLabel(entry);
   div.appendChild(label);
 
-  const body = document.createElement("span");
-  body.className = "tail-body";
-  const text = entryText(entry);
-  // Show first 2000 chars; tool results and long outputs get truncated.
-  body.textContent = text.length > 2000 ? text.slice(0, 2000) + " …" : text;
-  div.appendChild(body);
+  if (collapsed) {
+    // Summary line (always visible)
+    const summary = document.createElement("span");
+    summary.className = "tail-body tail-summary";
+    summary.textContent = toolSummary(entry);
+    div.appendChild(summary);
+    // Full content (hidden until expanded)
+    const full = document.createElement("span");
+    full.className = "tail-body tail-full";
+    const text = entryText(entry);
+    full.textContent = text.length > 4000 ? text.slice(0, 4000) + " …" : text;
+    div.appendChild(full);
+    div.addEventListener("click", () => div.classList.toggle("collapsed"));
+  } else {
+    const body = document.createElement("span");
+    body.className = "tail-body";
+    const text = entryText(entry);
+    body.textContent = text.length > 2000 ? text.slice(0, 2000) + " …" : text;
+    div.appendChild(body);
+  }
 
   return div;
 }
@@ -390,8 +460,12 @@ export class CollabTailViewer {
   }
 
   #scrollToBottom(): void {
+    // Double rAF: first fires before paint, second fires after layout
+    // has been computed — ensures content height is finalized.
     requestAnimationFrame(() => {
-      this.#scrollEl.scrollTop = this.#scrollEl.scrollHeight;
+      requestAnimationFrame(() => {
+        this.#scrollEl.scrollTop = this.#scrollEl.scrollHeight;
+      });
     });
   }
 
