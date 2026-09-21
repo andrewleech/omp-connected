@@ -6,6 +6,8 @@
 // mode to avoid replaying the entire session history (which kills the
 // browser tab for long sessions).
 
+import { OrderedWorkQueue } from "./ordered-work-queue";
+
 const IV_LENGTH = 12;
 const ENVELOPE_HEADER = 4;
 const ROOM_KEY_BYTES = 32;
@@ -460,7 +462,7 @@ export class CollabTailViewer {
   #renderedCount = 0;
   #snapshotDone = false;
   #finalSeen = false;
-  #pendingDecrypts = 0;
+  #decrypts: OrderedWorkQueue<Uint8Array, Record<string, unknown>> | null = null;
   #header: Record<string, unknown> | null = null;
   #state: Record<string, unknown> | null = null;
   #statusEl: HTMLElement;
@@ -510,6 +512,15 @@ export class CollabTailViewer {
       return;
     }
     this.#key = await importKey(parsed.key);
+    this.#decrypts = new OrderedWorkQueue(
+      2,
+      (payload) => this.#decrypt(payload),
+      (result) => {
+        if (this.#destroyed) return;
+        if (result.status === "fulfilled") this.#handleFrame(result.value);
+        this.#checkSnapshotComplete();
+      },
+    );
     this.#statusEl.textContent = "Connecting to relay…";
 
     const ws = new WebSocket(`${parsed.wsUrl}?role=guest`);
@@ -527,8 +538,9 @@ export class CollabTailViewer {
       ws.send(packEnvelope(0, hello));
     });
 
-    // Each message decrypts independently — no serial queue.
-    // This way a single slow/hung decrypt can't block the rest.
+    // Keep WebCrypto bounded on mobile while committing decrypted frames in
+    // socket order. A timed-out decrypt retires its slot instead of blocking
+    // later chunks forever.
     ws.addEventListener("message", (event) => {
       this.#processMessage(event);
     });
@@ -555,7 +567,7 @@ export class CollabTailViewer {
     });
   }
 
-  async #processMessage(event: MessageEvent): Promise<void> {
+  #processMessage(event: MessageEvent): void {
     try {
       if (this.#destroyed || !this.#key) return;
       const raw = event.data;
@@ -574,33 +586,32 @@ export class CollabTailViewer {
 
       const data = new Uint8Array(raw as ArrayBuffer);
       if (data.byteLength <= ENVELOPE_HEADER) return;
-      const payload = data.subarray(ENVELOPE_HEADER);
-
-      // Decrypt with a timeout — mobile WebCrypto can hang
-      this.#pendingDecrypts++;
-      let frame: Record<string, unknown>;
-      try {
-        frame = await Promise.race([
-          unseal(this.#key, payload),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error("decrypt timeout")), 5000),
-          ),
-        ]);
-      } catch {
-        this.#pendingDecrypts--;
-        this.#checkSnapshotComplete();
-        return;
-      }
-      this.#pendingDecrypts--;
-
-      this.#handleFrame(frame);
+      this.#decrypts?.enqueue(data.subarray(ENVELOPE_HEADER));
     } catch {
       // Never crash on a bad frame
     }
   }
 
+  async #decrypt(payload: Uint8Array): Promise<Record<string, unknown>> {
+    let timeout!: number;
+    try {
+      return await Promise.race([
+        unseal(this.#key!, payload),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error("decrypt timeout")),
+            5000,
+          ) as unknown as number;
+        }),
+      ]);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   destroy(): void {
     this.#destroyed = true;
+    this.#decrypts?.close();
     clearTimeout(this.#watchdog!);
     this.#ws?.close();
     this.#ws = null;
@@ -673,7 +684,12 @@ export class CollabTailViewer {
 
   /** Render once when the final chunk has been seen and all decrypts are done. */
   #checkSnapshotComplete(): void {
-    if (this.#snapshotDone || !this.#finalSeen || this.#pendingDecrypts > 0) return;
+    if (
+      this.#snapshotDone ||
+      !this.#finalSeen ||
+      (this.#decrypts !== null && !this.#decrypts.idle)
+    )
+      return;
     this.#snapshotDone = true;
     clearTimeout(this.#watchdog!);
     this.#renderTail();
