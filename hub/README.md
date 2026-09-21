@@ -6,9 +6,8 @@ wire protocol, and security model.
 
 ## What this is
 
-- The `omp-connected` extension (lives in
-  [`cc-pi-bridge/trial-omp/marketplace/plugins/omp-connected`](https://github.com/)
-  as `src/index.ts`) registers each OMP session with this server over
+- The `omp-connected` extension ([`../extension/`](../extension/))
+  registers each OMP session with this server over
   `/ws/agent`, giving it a native, hub-stamped agent-to-agent messaging
   identity — see [ARCHITECTURE.md](./ARCHITECTURE.md) for the wire
   protocol.
@@ -55,11 +54,10 @@ bun run lint
 `bun run build` runs two steps:
 - `build:webui` — bundles `src/webui/app.ts` + `src/webui/index.html` into
   `dist/webui/`.
-- `build:collab` — builds the vendored OMP Collab guest client from
-  `cc-pi-bridge/trial-omp/webui/collab-web` (set `COLLAB_WEB_SRC` to
-  override that path) into `dist/webui/collab/`. See
-  `scripts/build-vendor-collab.sh` for why that source isn't vendored
-  directly into this repo yet.
+- `build:collab` — builds the vendored OMP Collab guest client (set
+  `COLLAB_WEB_SRC` to point at an OMP source checkout's
+  `packages/collab-web`) into `dist/webui/collab/`. See
+  `scripts/build-vendor-collab.sh` for details.
 
 ## Deploying
 

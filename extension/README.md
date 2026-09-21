@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="../../../../OMPC.png" alt="OMPC logo" width="128">
+  <img src="../OMPC.png" alt="OMPC logo" width="128">
 </p>
 
 # omp-connected
