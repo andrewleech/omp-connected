@@ -52,6 +52,14 @@ export function createHub(options: CreateHubOptions = {}): Hub {
     .use(agentRpcRoutes(agentRegistry, osHostname()))
     .use(wsAgentPlugin(agentRegistry, hostToken))
     .use(dashboardEventsPlugin(agentRegistry))
+    .onBeforeHandle(({ request, set }) => {
+      // index.html must always revalidate so the browser picks up
+      // new hashed JS filenames on deploy.
+      const url = new URL(request.url);
+      if (url.pathname === "/" || url.pathname.endsWith(".html")) {
+        set.headers["cache-control"] = "no-cache";
+      }
+    })
     .use(
       staticPlugin({
         assets: webuiRoot,
@@ -59,7 +67,7 @@ export function createHub(options: CreateHubOptions = {}): Hub {
         alwaysStatic: true,
         indexHTML: true,
         directive: "public",
-      maxAge: 60,
+        maxAge: 86400,
       }),
     );
 
