@@ -129,11 +129,16 @@ interface SessionEntry {
   [key: string]: unknown;
 }
 
+/** Collapsed preview line count for tool entries. */
+const PREVIEW_LINES = 8;
+
+/** Tool names whose input is file content — show no preview at all. */
+const CONTENT_TOOLS: Record<string, true> = { edit: true, write: true, ast_edit: true, create: true };
+
 /** True when this entry is a tool call or tool result — collapsed by default. */
 function isToolEntry(entry: SessionEntry): boolean {
   const role = entry.message?.role;
   if (role === "tool") return true;
-  // Assistant messages containing only tool_use blocks (no text)
   if (role === "assistant" && Array.isArray(entry.message?.content)) {
     const blocks = entry.message!.content as ContentBlock[];
     return blocks.length > 0 && blocks.every((b) => b.type === "tool_use");
@@ -141,30 +146,38 @@ function isToolEntry(entry: SessionEntry): boolean {
   return false;
 }
 
-/** One-line summary for a collapsed tool entry. */
-function toolSummary(entry: SessionEntry): string {
+/** Extract tool names from an assistant tool_use message. */
+function toolNames(entry: SessionEntry): string[] {
   const content = entry.message?.content;
+  if (!Array.isArray(content)) return [];
+  return (content as ContentBlock[])
+    .filter((b) => b.type === "tool_use")
+    .map((b) => b.name ?? "tool");
+}
+
+/** True when every tool_use block in this entry is a content-editing tool. */
+function isEditEntry(entry: SessionEntry): boolean {
+  const names = toolNames(entry);
+  return names.length > 0 && names.every((n) => n in CONTENT_TOOLS);
+}
+
+/** One-line header for collapsed tool entries. */
+function toolHeader(entry: SessionEntry): string {
   const role = entry.message?.role;
-  if (role === "assistant" && Array.isArray(content)) {
-    const names = (content as ContentBlock[])
-      .filter((b) => b.type === "tool_use")
-      .map((b) => b.name ?? "tool");
+  if (role === "assistant") {
+    const names = toolNames(entry);
     return names.length === 1
       ? `▶ ${names[0]}`
       : `▶ ${names.length} tool calls: ${names.join(", ")}`;
   }
-  // Tool result — show truncated content
-  if (typeof content === "string") {
-    return content.length > 120 ? content.slice(0, 120) + "…" : content;
-  }
-  if (Array.isArray(content)) {
-    const text = (content as ContentBlock[])
-      .map((b) => (b.type === "text" ? (b.text ?? "") : ""))
-      .join("")
-      .trim();
-    return text.length > 120 ? text.slice(0, 120) + "…" : text || "[tool result]";
-  }
-  return "[tool result]";
+  return "⚙ result";
+}
+
+/** Truncate text to N lines. */
+function truncLines(text: string, n: number): string {
+  const lines = text.split("\n");
+  if (lines.length <= n) return text;
+  return lines.slice(0, n).join("\n") + `\n… ${lines.length - n} more lines`;
 }
 
 /** Full text for expanded view. */
@@ -188,6 +201,35 @@ function entryText(entry: SessionEntry): string {
       .join("\n");
   }
   return JSON.stringify(content);
+}
+
+/** Preview text for a collapsed (non-edit) tool entry: first N lines. */
+function toolPreview(entry: SessionEntry): string {
+  const role = entry.message?.role;
+  const content = entry.message?.content;
+  if (role === "tool") {
+    // Tool result: show first few lines of the result body
+    if (typeof content === "string") return truncLines(content, PREVIEW_LINES);
+    if (Array.isArray(content)) {
+      const text = (content as ContentBlock[])
+        .map((b) => (b.type === "text" ? (b.text ?? "") : ""))
+        .join("")
+        .trim();
+      return truncLines(text || "[tool result]", PREVIEW_LINES);
+    }
+    return "[tool result]";
+  }
+  // Assistant tool_use: show first few lines of each tool's input
+  if (Array.isArray(content)) {
+    return (content as ContentBlock[])
+      .filter((b) => b.type === "tool_use")
+      .map((b) => {
+        const input = JSON.stringify(b.input, null, 2);
+        return `[${b.name}] ${truncLines(input, PREVIEW_LINES)}`;
+      })
+      .join("\n");
+  }
+  return "";
 }
 
 function roleLabel(entry: SessionEntry): string {
@@ -214,27 +256,38 @@ function roleClass(role: string | undefined): string {
 
 function renderEntry(entry: SessionEntry): HTMLElement {
   const role = entry.message?.role;
-  const collapsed = isToolEntry(entry);
+  const tool = isToolEntry(entry);
+  const edit = tool && (role === "assistant") && isEditEntry(entry);
   const div = document.createElement("div");
-  div.className = `tail-entry ${roleClass(role)}${collapsed ? " collapsed" : ""}`;
+  div.className = `tail-entry ${roleClass(role)}${tool ? " collapsed" : ""}`;
 
   const label = document.createElement("span");
   label.className = "tail-role";
   label.textContent = roleLabel(entry);
   div.appendChild(label);
 
-  if (collapsed) {
-    // Summary line (always visible)
-    const summary = document.createElement("span");
-    summary.className = "tail-body tail-summary";
-    summary.textContent = toolSummary(entry);
-    div.appendChild(summary);
-    // Full content (hidden until expanded)
+  if (tool) {
+    // Header line (always visible)
+    const header = document.createElement("span");
+    header.className = "tail-body tail-header";
+    header.textContent = toolHeader(entry);
+    div.appendChild(header);
+
+    // Preview (visible when collapsed, unless it's an edit tool)
+    if (!edit) {
+      const preview = document.createElement("span");
+      preview.className = "tail-body tail-preview";
+      preview.textContent = toolPreview(entry);
+      div.appendChild(preview);
+    }
+
+    // Full content (visible when expanded)
     const full = document.createElement("span");
     full.className = "tail-body tail-full";
     const text = entryText(entry);
     full.textContent = text.length > 4000 ? text.slice(0, 4000) + " …" : text;
     div.appendChild(full);
+
     div.addEventListener("click", () => div.classList.toggle("collapsed"));
   } else {
     const body = document.createElement("span");
