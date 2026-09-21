@@ -459,6 +459,8 @@ export class CollabTailViewer {
   #totalReceived = 0;
   #renderedCount = 0;
   #snapshotDone = false;
+  #finalSeen = false;
+  #pendingDecrypts = 0;
   #header: Record<string, unknown> | null = null;
   #state: Record<string, unknown> | null = null;
   #statusEl: HTMLElement;
@@ -466,10 +468,8 @@ export class CollabTailViewer {
   #contentEl: HTMLElement;
   #loadMoreEl: HTMLElement;
   #destroyed = false;
-  /** Serializes async message processing so frames are handled in order. */
-  #msgQueue: Promise<void> = Promise.resolve();
-  /** Throttle progressive renders during snapshot loading. */
-  #renderTimer: number | null = null;
+  /** Watchdog: fires if no entries arrive for 15s during snapshot. */
+  #watchdog: number | null = null;
 
   constructor(container: HTMLElement) {
     this.#container = container;
@@ -527,19 +527,22 @@ export class CollabTailViewer {
       ws.send(packEnvelope(0, hello));
     });
 
+    // Each message decrypts independently — no serial queue.
+    // This way a single slow/hung decrypt can't block the rest.
     ws.addEventListener("message", (event) => {
-      // Chain every message onto a serial queue so decryption order is
-      // preserved and we never race snapshot-chunk accumulation.
-      // The catch prevents one bad frame from killing the entire chain.
-      this.#msgQueue = this.#msgQueue.then(
-        () => this.#onMessage(event),
-        () => {},  // recover from prior rejection
-      ).catch(() => {}); // recover if this handler throws
+      this.#processMessage(event);
     });
 
     ws.addEventListener("close", () => {
       if (!this.#destroyed) {
-        this.#statusEl.textContent = "Disconnected";
+        // If we have entries but never finished, render what we got
+        if (!this.#snapshotDone && this.#allEntries.length > 0) {
+          this.#snapshotDone = true;
+          this.#renderTail();
+          this.#statusEl.textContent = `Disconnected (${this.#totalReceived} entries loaded)`;
+        } else if (!this.#snapshotDone) {
+          this.#statusEl.textContent = "Disconnected";
+        }
         this.#statusEl.className = "tail-status warning";
       }
     });
@@ -552,10 +555,12 @@ export class CollabTailViewer {
     });
   }
 
-  async #onMessage(event: MessageEvent): Promise<void> {
+  async #processMessage(event: MessageEvent): Promise<void> {
     try {
       if (this.#destroyed || !this.#key) return;
       const raw = event.data;
+
+      // Text frames are relay control messages (no decryption needed)
       if (typeof raw === "string") {
         try {
           const ctrl = JSON.parse(raw);
@@ -563,32 +568,57 @@ export class CollabTailViewer {
             this.#statusEl.textContent = "Session ended";
             this.#statusEl.className = "tail-status warning";
           }
-        } catch { /* ignore malformed control frame */ }
+        } catch { /* ignore */ }
         return;
       }
+
       const data = new Uint8Array(raw as ArrayBuffer);
       if (data.byteLength <= ENVELOPE_HEADER) return;
       const payload = data.subarray(ENVELOPE_HEADER);
+
+      // Decrypt with a timeout — mobile WebCrypto can hang
+      this.#pendingDecrypts++;
       let frame: Record<string, unknown>;
       try {
-        frame = await unseal(this.#key, payload);
+        frame = await Promise.race([
+          unseal(this.#key, payload),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("decrypt timeout")), 5000),
+          ),
+        ]);
       } catch {
-        return; // decrypt failure — skip this frame
+        this.#pendingDecrypts--;
+        this.#checkSnapshotComplete();
+        return;
       }
+      this.#pendingDecrypts--;
+
       this.#handleFrame(frame);
     } catch {
-      // Never let a single bad frame kill the processing pipeline.
+      // Never crash on a bad frame
     }
   }
 
   destroy(): void {
     this.#destroyed = true;
-    clearTimeout(this.#renderTimer!);
-    this.#renderTimer = null;
+    clearTimeout(this.#watchdog!);
     this.#ws?.close();
     this.#ws = null;
     this.#allEntries = [];
     this.#renderedCount = 0;
+  }
+
+  #resetWatchdog(): void {
+    clearTimeout(this.#watchdog!);
+    if (this.#snapshotDone) return;
+    this.#watchdog = setTimeout(() => {
+      if (this.#destroyed || this.#snapshotDone) return;
+      // Stalled — render whatever we have
+      this.#snapshotDone = true;
+      this.#renderTail();
+      this.#statusEl.textContent = `Stalled (${this.#totalReceived} of ${this.#totalReceived}+ entries)`;
+      this.#statusEl.className = "tail-status warning";
+    }, 15000) as unknown as number;
   }
 
   #handleFrame(frame: Record<string, unknown>): void {
@@ -608,17 +638,10 @@ export class CollabTailViewer {
             this.#allEntries = this.#allEntries.slice(-MAX_BUFFERED);
           }
         }
-        if (frame.final) {
-          this.#snapshotDone = true;
-          clearTimeout(this.#renderTimer!);
-          this.#renderTimer = null;
-          this.#renderTail();
-        } else {
-          // Progressive render: show the tail of whatever we have so far,
-          // throttled to avoid DOM thrashing during rapid chunk arrival.
-          this.#scheduleProgressiveRender();
-        }
+        if (frame.final) this.#finalSeen = true;
+        this.#resetWatchdog();
         this.#updateStatus();
+        this.#checkSnapshotComplete();
         break;
       }
       case "entry": {
@@ -651,13 +674,13 @@ export class CollabTailViewer {
     }
   }
 
-  /** Schedule a throttled re-render during snapshot loading. */
-  #scheduleProgressiveRender(): void {
-    if (this.#renderTimer !== null) return; // already scheduled
-    this.#renderTimer = setTimeout(() => {
-      this.#renderTimer = null;
-      if (!this.#snapshotDone) this.#renderTail();
-    }, 300) as unknown as number;
+  /** Render once when the final chunk has been seen and all decrypts are done. */
+  #checkSnapshotComplete(): void {
+    if (this.#snapshotDone || !this.#finalSeen || this.#pendingDecrypts > 0) return;
+    this.#snapshotDone = true;
+    clearTimeout(this.#watchdog!);
+    this.#renderTail();
+    this.#updateStatus();
   }
 
   #renderTail(): void {
@@ -670,7 +693,6 @@ export class CollabTailViewer {
     }
     this.#updateLoadMore();
     this.#forceScrollBottom();
-    // First render: ensure scroll works even if container has no dimensions yet.
     const obs = new ResizeObserver(() => {
       this.#forceScrollBottom();
       obs.disconnect();
