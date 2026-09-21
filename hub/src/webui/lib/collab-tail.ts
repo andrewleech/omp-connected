@@ -113,10 +113,14 @@ export function parseCollabLink(link: string): ParsedLink | null {
 interface ContentBlock {
   type?: string;
   text?: string;
+  thinking?: string;
   name?: string;
+  /** toolCall uses `arguments`, tool_use (Anthropic raw) uses `input`. */
+  arguments?: Record<string, unknown>;
   input?: unknown;
   id?: string;
   content?: unknown;
+  isError?: boolean;
   [key: string]: unknown;
 }
 
@@ -125,179 +129,233 @@ interface SessionEntry {
   message?: {
     role?: string;
     content?: unknown;
+    stopReason?: string;
+    errorMessage?: string;
+    /** toolResult message fields */
+    toolName?: string;
+    isError?: boolean;
   };
+  summary?: string;
+  tokensBefore?: number;
+  model?: string;
   [key: string]: unknown;
 }
 
-/** Collapsed preview line count for tool entries. */
 const PREVIEW_LINES = 8;
-
-/** Tool names whose input is file content — show no preview at all. */
 const CONTENT_TOOLS: Record<string, true> = { edit: true, write: true, ast_edit: true, create: true };
 
-/** True when this entry is a tool call or tool result — collapsed by default. */
-function isToolEntry(entry: SessionEntry): boolean {
-  const role = entry.message?.role;
-  if (role === "tool") return true;
-  if (role === "assistant" && Array.isArray(entry.message?.content)) {
-    const blocks = entry.message!.content as ContentBlock[];
-    return blocks.length > 0 && blocks.every((b) => b.type === "tool_use");
-  }
-  return false;
-}
-
-/** Extract tool names from an assistant tool_use message. */
-function toolNames(entry: SessionEntry): string[] {
-  const content = entry.message?.content;
-  if (!Array.isArray(content)) return [];
-  return (content as ContentBlock[])
-    .filter((b) => b.type === "tool_use")
-    .map((b) => b.name ?? "tool");
-}
-
-/** True when every tool_use block in this entry is a content-editing tool. */
-function isEditEntry(entry: SessionEntry): boolean {
-  const names = toolNames(entry);
-  return names.length > 0 && names.every((n) => n in CONTENT_TOOLS);
-}
-
-/** One-line header for collapsed tool entries. */
-function toolHeader(entry: SessionEntry): string {
-  const role = entry.message?.role;
-  if (role === "assistant") {
-    const names = toolNames(entry);
-    return names.length === 1
-      ? `▶ ${names[0]}`
-      : `▶ ${names.length} tool calls: ${names.join(", ")}`;
-  }
-  return "⚙ result";
-}
-
-/** Truncate text to N lines. */
 function truncLines(text: string, n: number): string {
   const lines = text.split("\n");
   if (lines.length <= n) return text;
   return lines.slice(0, n).join("\n") + `\n… ${lines.length - n} more lines`;
 }
 
-/** Full text for expanded view. */
-function entryText(entry: SessionEntry): string {
-  const msg = entry.message;
-  if (!msg) return `[${entry.type}]`;
-  const content = msg.content;
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return (content as ContentBlock[])
-      .map((block) => {
-        if (block.type === "text") return block.text ?? "";
-        if (block.type === "tool_use")
-          return `[${block.name}] ${JSON.stringify(block.input, null, 2)}`;
-        if (block.type === "tool_result")
-          return typeof block.content === "string"
-            ? block.content
-            : JSON.stringify(block.content);
-        return `[${block.type ?? "block"}]`;
-      })
-      .join("\n");
-  }
-  return JSON.stringify(content);
+/** Get the args object from a toolCall/tool_use block (handles both wire formats). */
+function blockArgs(block: ContentBlock): unknown {
+  return block.arguments ?? block.input;
 }
 
-/** Preview text for a collapsed (non-edit) tool entry: first N lines. */
-function toolPreview(entry: SessionEntry): string {
-  const role = entry.message?.role;
-  const content = entry.message?.content;
-  if (role === "tool") {
-    // Tool result: show first few lines of the result body
-    if (typeof content === "string") return truncLines(content, PREVIEW_LINES);
-    if (Array.isArray(content)) {
-      const text = (content as ContentBlock[])
-        .map((b) => (b.type === "text" ? (b.text ?? "") : ""))
-        .join("")
-        .trim();
-      return truncLines(text || "[tool result]", PREVIEW_LINES);
-    }
-    return "[tool result]";
-  }
-  // Assistant tool_use: show first few lines of each tool's input
-  if (Array.isArray(content)) {
-    return (content as ContentBlock[])
-      .filter((b) => b.type === "tool_use")
-      .map((b) => {
-        const input = JSON.stringify(b.input, null, 2);
-        return `[${b.name}] ${truncLines(input, PREVIEW_LINES)}`;
-      })
-      .join("\n");
-  }
-  return "";
+/** Check if a content block is a tool call (handles both wire format names). */
+function isToolCall(block: ContentBlock): boolean {
+  return block.type === "toolCall" || block.type === "tool_use";
 }
 
-function roleLabel(entry: SessionEntry): string {
-  const role = entry.message?.role;
-  if (role === "assistant") return "π";
-  if (role === "user") return "▸";
-  if (role === "tool") return "⚙";
-  if (entry.type === "compaction_summary") return "⋯";
-  return "·";
-}
+// ── Assistant message ───────────────────────────────────────────────────
 
-function roleClass(role: string | undefined): string {
-  switch (role) {
-    case "assistant":
-      return "entry-assistant";
-    case "user":
-      return "entry-user";
-    case "tool":
-      return "entry-tool";
-    default:
-      return "entry-other";
+function renderAssistantEntry(entry: SessionEntry): HTMLElement {
+  const content = entry.message!.content;
+  const blocks = Array.isArray(content) ? (content as ContentBlock[]) : [];
+  const hasText = blocks.some((b) => b.type === "text" && b.text?.trim());
+  const hasThinking = blocks.some((b) => b.type === "thinking" && b.thinking?.trim());
+  const toolCalls = blocks.filter(isToolCall);
+
+  // Pure tool-call message (no text) → render as tool card(s)
+  if (!hasText && !hasThinking && toolCalls.length > 0) {
+    return renderToolCallEntry(toolCalls);
   }
-}
 
-function renderEntry(entry: SessionEntry): HTMLElement {
-  const role = entry.message?.role;
-  const tool = isToolEntry(entry);
-  const edit = tool && (role === "assistant") && isEditEntry(entry);
   const div = document.createElement("div");
-  div.className = `tail-entry ${roleClass(role)}${tool ? " collapsed" : ""}`;
+  div.className = "tail-entry entry-assistant";
 
-  const label = document.createElement("span");
-  label.className = "tail-role";
-  label.textContent = roleLabel(entry);
+  const label = document.createElement("div");
+  label.className = "tail-label";
+  label.textContent = "assistant";
   div.appendChild(label);
 
-  if (tool) {
-    // Header line (always visible)
-    const header = document.createElement("span");
-    header.className = "tail-body tail-header";
-    header.textContent = toolHeader(entry);
-    div.appendChild(header);
-
-    // Preview (visible when collapsed, unless it's an edit tool)
-    if (!edit) {
-      const preview = document.createElement("span");
-      preview.className = "tail-body tail-preview";
-      preview.textContent = toolPreview(entry);
-      div.appendChild(preview);
+  for (const block of blocks) {
+    if (block.type === "thinking" && block.thinking?.trim()) {
+      const el = document.createElement("div");
+      el.className = "entry-thinking";
+      const text = block.thinking!;
+      el.textContent = text.length > 500 ? text.slice(0, 500) + " …" : text;
+      div.appendChild(el);
+    } else if (block.type === "text" && block.text?.trim()) {
+      const el = document.createElement("div");
+      el.className = "tail-body";
+      const text = block.text!;
+      el.textContent = text.length > 2000 ? text.slice(0, 2000) + " …" : text;
+      div.appendChild(el);
     }
+    // Mixed text+toolCall entries: tool cards rendered inline after text
+  }
 
-    // Full content (visible when expanded)
-    const full = document.createElement("span");
-    full.className = "tail-body tail-full";
-    const text = entryText(entry);
-    full.textContent = text.length > 4000 ? text.slice(0, 4000) + " …" : text;
-    div.appendChild(full);
+  // Inline tool calls when mixed with text
+  if (toolCalls.length > 0) {
+    div.appendChild(renderToolCallEntry(toolCalls));
+  }
 
-    div.addEventListener("click", () => div.classList.toggle("collapsed"));
-  } else {
-    const body = document.createElement("span");
-    body.className = "tail-body";
-    const text = entryText(entry);
-    body.textContent = text.length > 2000 ? text.slice(0, 2000) + " …" : text;
-    div.appendChild(body);
+  if (entry.message?.stopReason === "aborted" || entry.message?.stopReason === "error") {
+    const err = document.createElement("div");
+    err.style.color = "#fc3a4b";
+    err.textContent = entry.message.stopReason === "aborted"
+      ? "Aborted"
+      : `Error: ${entry.message.errorMessage ?? "unknown"}`;
+    div.appendChild(err);
   }
 
   return div;
+}
+
+// ── Tool call card(s) ──────────────────────────────────────────────────
+
+function renderToolCallEntry(toolCalls: ContentBlock[]): HTMLElement {
+  const frag = document.createElement("div");
+  for (const block of toolCalls) {
+    const name = block.name ?? "tool";
+    const isEdit = name in CONTENT_TOOLS;
+    const args = blockArgs(block);
+
+    const card = document.createElement("div");
+    card.className = "tail-entry entry-tool collapsed";
+
+    const label = document.createElement("div");
+    label.className = "tail-label";
+    label.innerHTML = `<span class="tool-icon"></span>${escapeHtml(name)}`;
+    card.appendChild(label);
+
+    if (!isEdit && args !== undefined) {
+      const preview = document.createElement("div");
+      preview.className = "tail-preview";
+      preview.textContent = truncLines(JSON.stringify(args, null, 2), PREVIEW_LINES);
+      card.appendChild(preview);
+    }
+
+    const full = document.createElement("div");
+    full.className = "tail-body tail-full";
+    const fullText = args !== undefined ? JSON.stringify(args, null, 2) : "";
+    full.textContent = fullText.length > 4000 ? fullText.slice(0, 4000) + " …" : fullText;
+    card.appendChild(full);
+
+    card.addEventListener("click", () => card.classList.toggle("collapsed"));
+    frag.appendChild(card);
+  }
+  return frag.children.length === 1 ? frag.children[0] as HTMLElement : frag;
+}
+
+// ── Tool result ─────────────────────────────────────────────────────────
+
+function renderToolResultEntry(entry: SessionEntry): HTMLElement {
+  const msg = entry.message!;
+  const content = msg.content;
+  const isError = msg.isError === true;
+  const toolName = msg.toolName ?? "result";
+
+  const card = document.createElement("div");
+  card.className = `tail-entry entry-tool collapsed${isError ? " error" : ""}`;
+
+  const label = document.createElement("div");
+  label.className = "tail-label";
+  label.innerHTML = `<span class="tool-icon"></span>${escapeHtml(toolName)}`;
+  card.appendChild(label);
+
+  let text: string;
+  if (typeof content === "string") {
+    text = content;
+  } else if (Array.isArray(content)) {
+    text = (content as ContentBlock[])
+      .map((b) => (b.type === "text" ? (b.text ?? "") : ""))
+      .join("")
+      .trim() || "[tool result]";
+  } else {
+    text = "[tool result]";
+  }
+
+  const preview = document.createElement("div");
+  preview.className = "tail-preview";
+  preview.textContent = truncLines(text, PREVIEW_LINES);
+  card.appendChild(preview);
+
+  const full = document.createElement("div");
+  full.className = "tail-body tail-full";
+  full.textContent = text.length > 4000 ? text.slice(0, 4000) + " …" : text;
+  card.appendChild(full);
+
+  card.addEventListener("click", () => card.classList.toggle("collapsed"));
+  return card;
+}
+
+// ── User message ────────────────────────────────────────────────────────
+
+function renderUserEntry(entry: SessionEntry): HTMLElement {
+  const div = document.createElement("div");
+  div.className = "tail-entry entry-user";
+
+  const label = document.createElement("div");
+  label.className = "tail-label";
+  label.textContent = "user";
+  div.appendChild(label);
+
+  const content = entry.message!.content;
+  const text = typeof content === "string"
+    ? content
+    : Array.isArray(content)
+      ? (content as ContentBlock[]).filter((b) => b.type === "text").map((b) => b.text ?? "").join("\n")
+      : "";
+  if (text.trim()) {
+    const body = document.createElement("div");
+    body.className = "tail-body";
+    body.textContent = text.length > 2000 ? text.slice(0, 2000) + " …" : text;
+    div.appendChild(body);
+  }
+  return div;
+}
+
+// ── System / meta entries ───────────────────────────────────────────────
+
+function renderSystemEntry(entry: SessionEntry): HTMLElement {
+  const div = document.createElement("div");
+  div.className = "tail-entry entry-system";
+
+  if (entry.type === "compaction") {
+    const tokens = entry.tokensBefore ? ` from ${Number(entry.tokensBefore).toLocaleString()} tokens` : "";
+    div.textContent = `[compaction${tokens}]`;
+  } else if (entry.type === "model_change") {
+    div.textContent = `Switched to model: ${entry.model ?? "unknown"}`;
+  } else if (entry.type === "thinking_level_change") {
+    div.textContent = `Thinking level: ${(entry as Record<string, unknown>).thinkingLevel ?? "default"}`;
+  } else if (entry.type === "custom_message") {
+    const ct = (entry as Record<string, unknown>).customType as string | undefined;
+    div.textContent = ct ? `[${ct}]` : "[custom message]";
+  } else {
+    div.textContent = `[${entry.type}]`;
+  }
+  return div;
+}
+
+// ── Dispatch ────────────────────────────────────────────────────────────
+
+function renderEntry(entry: SessionEntry): HTMLElement {
+  if (entry.type === "message" && entry.message) {
+    const role = entry.message.role;
+    if (role === "user" || role === "developer") return renderUserEntry(entry);
+    if (role === "assistant") return renderAssistantEntry(entry);
+    if (role === "toolResult") return renderToolResultEntry(entry);
+  }
+  return renderSystemEntry(entry);
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 // ─── Viewer ──────────────────────────────────────────────────────────────
