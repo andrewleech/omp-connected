@@ -59,7 +59,7 @@ export function createHub(options: CreateHubOptions = {}): Hub {
         alwaysStatic: true,
         indexHTML: true,
         directive: "public",
-        maxAge: 3600,
+      maxAge: 60,
       }),
     );
 
