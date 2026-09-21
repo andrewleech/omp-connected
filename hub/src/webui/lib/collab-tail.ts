@@ -249,11 +249,15 @@ function renderEntry(entry: SessionEntry): HTMLElement {
 
 // ─── Viewer ──────────────────────────────────────────────────────────────
 
+/** Max entries retained in memory (tail window for scroll-back). */
+const MAX_BUFFERED = INITIAL_TAIL + PAGE_SIZE * 20; // 880
+
 export class CollabTailViewer {
   #container: HTMLElement;
   #key: CryptoKey | null = null;
   #ws: WebSocket | null = null;
   #allEntries: SessionEntry[] = [];
+  #totalReceived = 0;
   #renderedCount = 0;
   #snapshotDone = false;
   #header: Record<string, unknown> | null = null;
@@ -263,6 +267,8 @@ export class CollabTailViewer {
   #contentEl: HTMLElement;
   #loadMoreEl: HTMLElement;
   #destroyed = false;
+  /** Serializes async message processing so frames are handled in order. */
+  #msgQueue: Promise<void> = Promise.resolve();
 
   constructor(container: HTMLElement) {
     this.#container = container;
@@ -289,7 +295,6 @@ export class CollabTailViewer {
     this.#contentEl.className = "tail-content";
     this.#scrollEl.appendChild(this.#contentEl);
 
-    // Lazy-load on scroll to top
     this.#scrollEl.addEventListener("scroll", () => {
       if (this.#scrollEl.scrollTop < 50 && this.#renderedCount < this.#allEntries.length) {
         this.#loadMore();
@@ -321,30 +326,10 @@ export class CollabTailViewer {
       ws.send(packEnvelope(0, hello));
     });
 
-    ws.addEventListener("message", async (event) => {
-      if (this.#destroyed || !this.#key) return;
-      const raw = event.data;
-      if (typeof raw === "string") {
-        // Control frame from relay (JSON text)
-        try {
-          const ctrl = JSON.parse(raw);
-          if (ctrl.t === "room-closed") {
-            this.#statusEl.textContent = "Session ended";
-            this.#statusEl.className = "tail-status warning";
-          }
-        } catch { /* ignore */ }
-        return;
-      }
-      const data = new Uint8Array(raw as ArrayBuffer);
-      if (data.byteLength <= ENVELOPE_HEADER) return;
-      const payload = data.subarray(ENVELOPE_HEADER);
-      let frame: Record<string, unknown>;
-      try {
-        frame = await unseal(this.#key, payload);
-      } catch {
-        return; // decrypt failure — skip
-      }
-      this.#handleFrame(frame);
+    ws.addEventListener("message", (event) => {
+      // Chain every message onto a serial queue so decryption order is
+      // preserved and we never race snapshot-chunk accumulation.
+      this.#msgQueue = this.#msgQueue.then(() => this.#onMessage(event));
     });
 
     ws.addEventListener("close", () => {
@@ -360,6 +345,31 @@ export class CollabTailViewer {
         this.#statusEl.className = "tail-status warning";
       }
     });
+  }
+
+  async #onMessage(event: MessageEvent): Promise<void> {
+    if (this.#destroyed || !this.#key) return;
+    const raw = event.data;
+    if (typeof raw === "string") {
+      try {
+        const ctrl = JSON.parse(raw);
+        if (ctrl.t === "room-closed") {
+          this.#statusEl.textContent = "Session ended";
+          this.#statusEl.className = "tail-status warning";
+        }
+      } catch { /* ignore */ }
+      return;
+    }
+    const data = new Uint8Array(raw as ArrayBuffer);
+    if (data.byteLength <= ENVELOPE_HEADER) return;
+    const payload = data.subarray(ENVELOPE_HEADER);
+    let frame: Record<string, unknown>;
+    try {
+      frame = await unseal(this.#key, payload);
+    } catch {
+      return;
+    }
+    this.#handleFrame(frame);
   }
 
   destroy(): void {
@@ -380,7 +390,16 @@ export class CollabTailViewer {
         break;
       case "snapshot-chunk": {
         const entries = frame.entries as SessionEntry[] | undefined;
-        if (entries) this.#allEntries.push(...entries);
+        if (entries) {
+          // Append without spread to avoid blowing the stack on huge chunks.
+          for (let i = 0; i < entries.length; i++) this.#allEntries.push(entries[i]);
+          this.#totalReceived += entries.length;
+          // Trim head if buffer exceeds cap — we only need the tail.
+          if (this.#allEntries.length > MAX_BUFFERED * 1.5) {
+            this.#allEntries = this.#allEntries.slice(-MAX_BUFFERED);
+          }
+        }
+        this.#updateStatus();
         if (frame.final) {
           this.#snapshotDone = true;
           this.#renderTail();
@@ -392,7 +411,7 @@ export class CollabTailViewer {
         const entry = frame.entry as SessionEntry | undefined;
         if (entry) {
           this.#allEntries.push(entry);
-          // Append live entry directly
+          this.#totalReceived++;
           if (this.#snapshotDone) {
             this.#renderedCount++;
             this.#contentEl.appendChild(renderEntry(entry));
@@ -444,7 +463,6 @@ export class CollabTailViewer {
     }
     this.#contentEl.prepend(frag);
     this.#renderedCount += page;
-    // Preserve scroll position after prepending
     this.#scrollEl.scrollTop += this.#scrollEl.scrollHeight - saveScrollHeight;
     this.#updateLoadMore();
   }
@@ -460,18 +478,18 @@ export class CollabTailViewer {
   }
 
   #scrollToBottom(): void {
-    // Double rAF: first fires before paint, second fires after layout
-    // has been computed — ensures content height is finalized.
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        this.#scrollEl.scrollTop = this.#scrollEl.scrollHeight;
-      });
-    });
+    // Synchronous set handles the common case where the container is
+    // already laid out. The delayed fallback catches the first render
+    // where the element was just inserted and has no dimensions yet.
+    this.#scrollEl.scrollTop = this.#scrollEl.scrollHeight;
+    setTimeout(() => {
+      this.#scrollEl.scrollTop = this.#scrollEl.scrollHeight;
+    }, 50);
   }
 
   #updateStatus(): void {
     if (!this.#snapshotDone) {
-      this.#statusEl.textContent = `Loading session (${this.#allEntries.length} entries)…`;
+      this.#statusEl.textContent = `Loading session (${this.#totalReceived} entries)…`;
       return;
     }
     const parts: string[] = [];
@@ -485,7 +503,7 @@ export class CollabTailViewer {
       if (this.#state.inputRequired) parts.push("⏸ awaiting input");
       else if (this.#state.streaming) parts.push("▶ streaming");
     }
-    parts.push(`${this.#allEntries.length} entries`);
+    parts.push(`${this.#totalReceived} entries`);
     this.#statusEl.textContent = parts.join(" · ");
     this.#statusEl.className = "tail-status ok";
   }
