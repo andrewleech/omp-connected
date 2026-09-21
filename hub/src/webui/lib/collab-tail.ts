@@ -452,6 +452,10 @@ function escapeHtml(s: string): string {
 
 /** Max entries retained in memory (tail window for scroll-back). */
 const MAX_BUFFERED = INITIAL_TAIL + PAGE_SIZE * 20; // 880
+/** One retry covers transient mobile WebCrypto stalls without corrupting a snapshot. */
+const MAX_DECRYPT_ATTEMPTS = 2;
+const DECRYPT_TIMEOUT_MS = 5_000;
+
 
 export class CollabTailViewer {
   #container: HTMLElement;
@@ -462,6 +466,7 @@ export class CollabTailViewer {
   #renderedCount = 0;
   #snapshotDone = false;
   #finalSeen = false;
+  #snapshotFailed = false;
   #decrypts: OrderedWorkQueue<Uint8Array, Record<string, unknown>> | null = null;
   #header: Record<string, unknown> | null = null;
   #state: Record<string, unknown> | null = null;
@@ -516,9 +521,13 @@ export class CollabTailViewer {
       2,
       (payload) => this.#decrypt(payload),
       (result) => {
-        if (this.#destroyed) return;
-        if (result.status === "fulfilled") this.#handleFrame(result.value);
-        this.#checkSnapshotComplete();
+        if (this.#destroyed || this.#snapshotFailed) return;
+        if (result.status === "fulfilled") {
+          this.#handleFrame(result.value);
+          this.#checkSnapshotComplete();
+          return;
+        }
+        if (!this.#snapshotDone) this.#failSnapshotDecrypt();
       },
     );
     this.#statusEl.textContent = "Connecting to relay…";
@@ -539,14 +548,14 @@ export class CollabTailViewer {
     });
 
     // Keep WebCrypto bounded on mobile while committing decrypted frames in
-    // socket order. A timed-out decrypt retires its slot instead of blocking
-    // later chunks forever.
+    // socket order. A timed-out decrypt is retried once; a second timeout
+    // closes the incomplete snapshot rather than silently omitting a chunk.
     ws.addEventListener("message", (event) => {
       this.#processMessage(event);
     });
 
     ws.addEventListener("close", () => {
-      if (!this.#destroyed) {
+      if (!this.#destroyed && !this.#snapshotFailed) {
         // If we have entries but never finished, render what we got
         if (!this.#snapshotDone && this.#allEntries.length > 0) {
           this.#snapshotDone = true;
@@ -593,20 +602,45 @@ export class CollabTailViewer {
   }
 
   async #decrypt(payload: Uint8Array): Promise<Record<string, unknown>> {
-    let timeout!: number;
-    try {
-      return await Promise.race([
-        unseal(this.#key!, payload),
-        new Promise<never>((_, reject) => {
-          timeout = setTimeout(
-            () => reject(new Error("decrypt timeout")),
-            5000,
-          ) as unknown as number;
-        }),
-      ]);
-    } finally {
-      clearTimeout(timeout);
+    let lastError: unknown;
+    for (let attempt = 0; attempt < MAX_DECRYPT_ATTEMPTS; attempt++) {
+      try {
+        let timeout!: number;
+        try {
+          return await Promise.race([
+            unseal(this.#key!, payload),
+            new Promise<never>((_, reject) => {
+              timeout = setTimeout(
+                () => reject(new Error("decrypt timeout")),
+                DECRYPT_TIMEOUT_MS,
+              ) as unknown as number;
+            }),
+          ]);
+        } finally {
+          clearTimeout(timeout);
+        }
+      } catch (error) {
+        lastError = error;
+        if (!(error instanceof Error) || error.message !== "decrypt timeout")
+          throw error;
+      }
     }
+    throw lastError;
+  }
+
+  #failSnapshotDecrypt(): void {
+    this.#snapshotFailed = true;
+    this.#decrypts?.close();
+    clearTimeout(this.#watchdog!);
+    // The watchdog may already have shown an incomplete oldest-first prefix.
+    // Never leave it visible after a failed snapshot.
+    this.#allEntries = [];
+    this.#renderedCount = 0;
+    this.#contentEl.innerHTML = "";
+    this.#loadMoreEl.style.display = "none";
+    this.#statusEl.textContent = "Snapshot decryption timed out. Reload to retry.";
+    this.#statusEl.className = "tail-status warning";
+    this.#ws?.close();
   }
 
   destroy(): void {
