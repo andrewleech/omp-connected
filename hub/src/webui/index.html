@@ -48,6 +48,9 @@ form { display: grid; gap: .55rem; }
 .entry-assistant .tail-role { color: #a5d6ff; }.entry-assistant .tail-body { color: #e6edf3; }
 .entry-user .tail-role { color: #7ee787; }.entry-user .tail-body { color: #adbac7; }
 .entry-tool .tail-role { color: #d2a8ff; }.entry-tool .tail-body { color: #8b949e; font-size: .78rem; }
+.tail-entry.collapsed { cursor: pointer; }.tail-entry.collapsed .tail-summary { display: inline; }.tail-entry.collapsed .tail-full { display: none; }
+.tail-entry:not(.collapsed) .tail-summary { display: none; }.tail-entry:not(.collapsed) .tail-full { display: inline; }
+.tail-summary { color: #8b949e; font-style: italic; }
 </style>
 </head>
 <body>
