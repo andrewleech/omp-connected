@@ -613,12 +613,9 @@ export class CollabTailViewer {
     if (this.#snapshotDone) return;
     this.#watchdog = setTimeout(() => {
       if (this.#destroyed || this.#snapshotDone) return;
-      // Stalled — render whatever we have
-      this.#snapshotDone = true;
       this.#renderTail();
-      this.#statusEl.textContent = `Stalled (${this.#totalReceived} of ${this.#totalReceived}+ entries)`;
-      this.#statusEl.className = "tail-status warning";
-    }, 15000) as unknown as number;
+      this.#updateStatus();
+    }, 2000) as unknown as number;
   }
 
   #handleFrame(frame: Record<string, unknown>): void {
