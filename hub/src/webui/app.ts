@@ -8,6 +8,7 @@
 // it by RPC-polling a host itself.
 
 import { collabFrameUrl } from "./lib/collab-link";
+import { CollabTailViewer } from "./lib/collab-tail";
 import {
   type CollabSession,
   INSPECTOR_PANES,
@@ -171,7 +172,7 @@ function createDashboard(root: HTMLElement): void {
     composeTargetId: null as string | null,
   };
   let lastWorkspaceSignature: string | null | undefined;
-  let agentsFetchInFlight = false;
+  let tailViewer: CollabTailViewer | null = null;
 
   function persist(): void {
     writeWorkspace(localStorage, {
@@ -256,6 +257,9 @@ function createDashboard(root: HTMLElement): void {
   }
 
   function selectSession(session: CollabSession): void {
+    // Tear down any active tail viewer or iframe
+    tailViewer?.destroy();
+    tailViewer = null;
     const frame = root.querySelector<HTMLIFrameElement>("[data-collab-frame]");
     if (frame) frame.src = "about:blank";
     state.selected = sessionKey(session);
@@ -291,11 +295,33 @@ function createDashboard(root: HTMLElement): void {
       );
       if (result.access !== access || typeof result.url !== "string")
         throw new Error("Broker returned an unexpected Collab capability");
-      const collabUrl = collabFrameUrl(result.url, location.origin);
-      const frame = root.querySelector<HTMLIFrameElement>(
-        "[data-collab-frame]",
-      );
-      if (frame) frame.src = collabUrl;
+
+      // View mode: use the lightweight tail viewer (no full-history replay).
+      // Control mode: use the full Collab iframe (needs the composer UI).
+      if (access === "view") {
+        tailViewer?.destroy();
+        const frame = root.querySelector<HTMLIFrameElement>("[data-collab-frame]");
+        if (frame) frame.style.display = "none";
+        const workspace = root.querySelector("[data-workspace]");
+        let viewerEl = workspace?.querySelector<HTMLElement>(".tail-viewer");
+        if (!viewerEl) {
+          viewerEl = document.createElement("div");
+          workspace?.appendChild(viewerEl);
+        }
+        tailViewer = new CollabTailViewer(viewerEl);
+        void tailViewer.connect(result.url);
+      } else {
+        tailViewer?.destroy();
+        tailViewer = null;
+        // Remove tail viewer element and show iframe
+        root.querySelector(".tail-viewer")?.remove();
+        const frame = root.querySelector<HTMLIFrameElement>("[data-collab-frame]");
+        if (frame) {
+          frame.style.display = "";
+          frame.src = collabFrameUrl(result.url, location.origin);
+        }
+      }
+
       state.selectedAccess = access;
       render();
       showStatus(
@@ -414,9 +440,13 @@ function createDashboard(root: HTMLElement): void {
     const signature = workspaceSignature(session, state.selectedAccess);
     if (signature === lastWorkspaceSignature) return;
     lastWorkspaceSignature = signature;
-    const frame = container.querySelector("[data-collab-frame]");
+    // Preserve live elements from being destroyed by replaceChildren
+    const frame = container.querySelector<HTMLIFrameElement>("[data-collab-frame]");
+    const viewerEl = container.querySelector<HTMLElement>(".tail-viewer");
     container.replaceChildren();
     if (!session) {
+      tailViewer?.destroy();
+      tailViewer = null;
       container.append(
         el("div", {
           className: "empty workspace-empty",
@@ -451,19 +481,26 @@ function createDashboard(root: HTMLElement): void {
         state.selectedAccess === "control"
           ? "Prompt this session in the Collab composer below."
           : canRequestAccess(session, "control")
-            ? "Viewing read-only. Send a message in the composer below to switch this room to control."
-            : "This room is view-only on its host; session prompting isn't available here.",
+            ? "Viewing read-only. Click a session to switch."
+            : "This room is view-only on its host.",
     });
-    container.append(
-      header,
-      hint,
-      frame ?? el("iframe", { className: "collab-frame" }),
-    );
-    const collabFrame = (container.querySelector("[data-collab-frame]") ??
-      container.lastElementChild) as HTMLIFrameElement;
-    collabFrame.dataset.collabFrame = "";
-    collabFrame.title = "OMP Collab session";
-    collabFrame.referrerPolicy = "no-referrer";
+    container.append(header, hint);
+    // Tail viewer active → show it; otherwise show the collab iframe.
+    if (tailViewer && viewerEl) {
+      viewerEl.style.display = "";
+      container.append(viewerEl);
+      if (frame) {
+        frame.style.display = "none";
+        container.append(frame);
+      }
+    } else {
+      const iframeEl = frame ?? document.createElement("iframe");
+      iframeEl.className = "collab-frame";
+      iframeEl.dataset.collabFrame = "";
+      iframeEl.title = "OMP Collab session";
+      iframeEl.referrerPolicy = "no-referrer";
+      container.append(iframeEl);
+    }
   }
 
   async function loadAgents(): Promise<void> {
