@@ -468,6 +468,8 @@ export class CollabTailViewer {
   #destroyed = false;
   /** Serializes async message processing so frames are handled in order. */
   #msgQueue: Promise<void> = Promise.resolve();
+  /** Throttle progressive renders during snapshot loading. */
+  #renderTimer: number | null = null;
 
   constructor(container: HTMLElement) {
     this.#container = container;
@@ -581,6 +583,8 @@ export class CollabTailViewer {
 
   destroy(): void {
     this.#destroyed = true;
+    clearTimeout(this.#renderTimer!);
+    this.#renderTimer = null;
     this.#ws?.close();
     this.#ws = null;
     this.#allEntries = [];
@@ -598,20 +602,23 @@ export class CollabTailViewer {
       case "snapshot-chunk": {
         const entries = frame.entries as SessionEntry[] | undefined;
         if (entries) {
-          // Append without spread to avoid blowing the stack on huge chunks.
           for (let i = 0; i < entries.length; i++) this.#allEntries.push(entries[i]);
           this.#totalReceived += entries.length;
-          // Trim head if buffer exceeds cap — we only need the tail.
           if (this.#allEntries.length > MAX_BUFFERED * 1.5) {
             this.#allEntries = this.#allEntries.slice(-MAX_BUFFERED);
           }
         }
-        this.#updateStatus();
         if (frame.final) {
           this.#snapshotDone = true;
+          clearTimeout(this.#renderTimer!);
+          this.#renderTimer = null;
           this.#renderTail();
-          this.#updateStatus();
+        } else {
+          // Progressive render: show the tail of whatever we have so far,
+          // throttled to avoid DOM thrashing during rapid chunk arrival.
+          this.#scheduleProgressiveRender();
         }
+        this.#updateStatus();
         break;
       }
       case "entry": {
@@ -644,6 +651,15 @@ export class CollabTailViewer {
     }
   }
 
+  /** Schedule a throttled re-render during snapshot loading. */
+  #scheduleProgressiveRender(): void {
+    if (this.#renderTimer !== null) return; // already scheduled
+    this.#renderTimer = setTimeout(() => {
+      this.#renderTimer = null;
+      if (!this.#snapshotDone) this.#renderTail();
+    }, 300) as unknown as number;
+  }
+
   #renderTail(): void {
     this.#contentEl.innerHTML = "";
     const total = this.#allEntries.length;
@@ -653,11 +669,8 @@ export class CollabTailViewer {
       this.#contentEl.appendChild(renderEntry(this.#allEntries[i]));
     }
     this.#updateLoadMore();
-    // Scroll to bottom once the container actually has layout dimensions.
-    // ResizeObserver fires when the element first gets a non-zero size
-    // (covers insertion into DOM, CSS resolution, reflow). Timeouts are
-    // belts-and-suspenders for edge cases.
     this.#forceScrollBottom();
+    // First render: ensure scroll works even if container has no dimensions yet.
     const obs = new ResizeObserver(() => {
       this.#forceScrollBottom();
       obs.disconnect();
@@ -706,10 +719,6 @@ export class CollabTailViewer {
   }
 
   #updateStatus(): void {
-    if (!this.#snapshotDone) {
-      this.#statusEl.textContent = `Loading session (${this.#totalReceived} entries)…`;
-      return;
-    }
     const parts: string[] = [];
     if (this.#header) {
       const name = this.#header.sessionName ?? this.#header.name;
@@ -720,6 +729,11 @@ export class CollabTailViewer {
       if (model?.id) parts.push(model.id);
       if (this.#state.inputRequired) parts.push("⏸ awaiting input");
       else if (this.#state.streaming) parts.push("▶ streaming");
+    }
+    if (!this.#snapshotDone) {
+      parts.push(`loading… ${this.#totalReceived} entries`);
+      this.#statusEl.textContent = parts.join(" · ");
+      return;
     }
     parts.push(`${this.#totalReceived} entries`);
     this.#statusEl.textContent = parts.join(" · ");
