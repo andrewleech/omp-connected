@@ -466,9 +466,10 @@ export class CollabTailViewer {
           this.#allEntries.push(entry);
           this.#totalReceived++;
           if (this.#snapshotDone) {
+            const wasAtBottom = this.#isNearBottom();
             this.#renderedCount++;
             this.#contentEl.appendChild(renderEntry(entry));
-            this.#scrollToBottom();
+            if (wasAtBottom) this.#forceScrollBottom();
             this.#updateLoadMore();
           }
         }
@@ -498,7 +499,17 @@ export class CollabTailViewer {
       this.#contentEl.appendChild(renderEntry(this.#allEntries[i]));
     }
     this.#updateLoadMore();
-    this.#scrollToBottom();
+    // Scroll to bottom once the container actually has layout dimensions.
+    // ResizeObserver fires when the element first gets a non-zero size
+    // (covers insertion into DOM, CSS resolution, reflow). Timeouts are
+    // belts-and-suspenders for edge cases.
+    this.#forceScrollBottom();
+    const obs = new ResizeObserver(() => {
+      this.#forceScrollBottom();
+      obs.disconnect();
+    });
+    obs.observe(this.#scrollEl);
+    setTimeout(() => { this.#forceScrollBottom(); obs.disconnect(); }, 500);
   }
 
   #loadMore(): void {
@@ -530,14 +541,14 @@ export class CollabTailViewer {
     }
   }
 
-  #scrollToBottom(): void {
-    // Synchronous set handles the common case where the container is
-    // already laid out. The delayed fallback catches the first render
-    // where the element was just inserted and has no dimensions yet.
+  /** True when the scroll position is within 80px of the bottom. */
+  #isNearBottom(): boolean {
+    const el = this.#scrollEl;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  }
+
+  #forceScrollBottom(): void {
     this.#scrollEl.scrollTop = this.#scrollEl.scrollHeight;
-    setTimeout(() => {
-      this.#scrollEl.scrollTop = this.#scrollEl.scrollHeight;
-    }, 50);
   }
 
   #updateStatus(): void {
