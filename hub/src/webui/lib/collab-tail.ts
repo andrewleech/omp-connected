@@ -452,8 +452,8 @@ function escapeHtml(s: string): string {
 
 /** Max entries retained in memory (tail window for scroll-back). */
 const MAX_BUFFERED = INITIAL_TAIL + PAGE_SIZE * 20; // 880
-/** One retry covers transient mobile WebCrypto stalls without corrupting a snapshot. */
-const MAX_DECRYPT_ATTEMPTS = 2;
+/** Three retries cover transient mobile WebCrypto stalls without corrupting a snapshot. */
+const MAX_DECRYPT_ATTEMPTS = 4;
 const DECRYPT_TIMEOUT_MS = 5_000;
 
 
