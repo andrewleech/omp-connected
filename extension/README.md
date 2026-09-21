@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="../../../../OMPC.png" alt="OMPC logo" width="128">
+</p>
+
 # omp-connected
 
 `omp-connected` connects an interactive OMP session to omp-hub's native agent-messaging service. Inbound messages are stored as OMP custom agent messages, marked as untrusted, and delivered at the next agent-step boundary.
