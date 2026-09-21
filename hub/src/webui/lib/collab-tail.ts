@@ -108,6 +108,102 @@ export function parseCollabLink(link: string): ParsedLink | null {
   return { wsUrl, key };
 }
 
+// ─── Markdown rendering ──────────────────────────────────────────────────
+// Lightweight markdown → HTML that matches the TUI's dark theme colors.
+// Handles the visual elements users see colored in the terminal: headings,
+// bold, inline code, fenced code blocks, links, bullets, and blockquotes.
+
+function renderMarkdown(src: string): string {
+  const lines = src.split("\n");
+  const out: string[] = [];
+  let inCode = false;
+  let codeLang = "";
+
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+
+    // Fenced code block toggle
+    if (raw.trimStart().startsWith("```")) {
+      if (!inCode) {
+        inCode = true;
+        codeLang = raw.trimStart().slice(3).trim();
+        out.push(`<div class="md-codeblock">`);
+        continue;
+      } else {
+        inCode = false;
+        out.push(`</div>`);
+        continue;
+      }
+    }
+    if (inCode) {
+      out.push(escapeHtml(raw));
+      if (i < lines.length - 1) out.push("\n");
+      continue;
+    }
+
+    const escaped = escapeHtml(raw);
+
+    // Heading
+    const hm = /^(#{1,4})\s+(.+)/.exec(escaped);
+    if (hm) {
+      out.push(`<span class="md-heading">${hm[1]} ${inlineMarkdown(hm[2])}</span>\n`);
+      continue;
+    }
+
+    // Blockquote
+    if (escaped.startsWith("&gt; ") || escaped === "&gt;") {
+      const qtext = escaped.startsWith("&gt; ") ? escaped.slice(5) : "";
+      out.push(`<span class="md-quote">${inlineMarkdown(qtext)}</span>\n`);
+      continue;
+    }
+
+    // Bullet list
+    const bm = /^(\s*)([-*])\s+(.*)/.exec(escaped);
+    if (bm) {
+      out.push(`${bm[1]}<span class="md-bullet">${bm[2]}</span> ${inlineMarkdown(bm[3])}\n`);
+      continue;
+    }
+
+    // Numbered list
+    const nm = /^(\s*)(\d+\.)\s+(.*)/.exec(escaped);
+    if (nm) {
+      out.push(`${nm[1]}<span class="md-bullet">${nm[2]}</span> ${inlineMarkdown(nm[3])}\n`);
+      continue;
+    }
+
+    // Regular line
+    out.push(inlineMarkdown(escaped) + "\n");
+  }
+
+  // Close unclosed code block
+  if (inCode) out.push("</div>");
+
+  return out.join("");
+}
+
+/** Render inline markdown: bold, inline code, links. Input is already HTML-escaped. */
+function inlineMarkdown(s: string): string {
+  // Inline code (backtick) — must come first so code content isn't processed
+  s = s.replace(/`([^`]+)`/g, '<span class="md-code">$1</span>');
+  // Bold (**text** or __text__)
+  s = s.replace(/\*\*([^*]+)\*\*/g, '<span class="md-bold">$1</span>');
+  s = s.replace(/__([^_]+)__/g, '<span class="md-bold">$1</span>');
+  // Links [text](url)
+  s = s.replace(
+    /\[([^\]]+)\]\(([^)]+)\)/g,
+    '<span class="md-link">$1</span><span class="md-link-url"> $2</span>',
+  );
+  return s;
+}
+
+/** Render a text block as a div with markdown formatting. */
+function renderTextBlock(text: string, className: string, maxLen = 2000): HTMLElement {
+  const el = document.createElement("div");
+  el.className = className;
+  const trimmed = text.length > maxLen ? text.slice(0, maxLen) + " …" : text;
+  el.innerHTML = renderMarkdown(trimmed);
+  return el;
+}
 // ─── Entry rendering ─────────────────────────────────────────────────────
 
 interface ContentBlock {
@@ -190,13 +286,8 @@ function renderAssistantEntry(entry: SessionEntry): HTMLElement {
       el.textContent = text.length > 500 ? text.slice(0, 500) + " …" : text;
       div.appendChild(el);
     } else if (block.type === "text" && block.text?.trim()) {
-      const el = document.createElement("div");
-      el.className = "tail-body";
-      const text = block.text!;
-      el.textContent = text.length > 2000 ? text.slice(0, 2000) + " …" : text;
-      div.appendChild(el);
+      div.appendChild(renderTextBlock(block.text!, "tail-body"));
     }
-    // Mixed text+toolCall entries: tool cards rendered inline after text
   }
 
   // Inline tool calls when mixed with text
@@ -312,10 +403,7 @@ function renderUserEntry(entry: SessionEntry): HTMLElement {
       ? (content as ContentBlock[]).filter((b) => b.type === "text").map((b) => b.text ?? "").join("\n")
       : "";
   if (text.trim()) {
-    const body = document.createElement("div");
-    body.className = "tail-body";
-    body.textContent = text.length > 2000 ? text.slice(0, 2000) + " …" : text;
-    div.appendChild(body);
+    div.appendChild(renderTextBlock(text, "tail-body"));
   }
   return div;
 }
