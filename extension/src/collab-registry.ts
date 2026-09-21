@@ -9,19 +9,18 @@ export interface CollabHost {
 }
 
 export interface CollabLinkResult {
-	version: number;
 	instanceId: string;
 	generation: number;
 	access: string;
 	url: string;
-	expiresAt?: string;
 }
 
 interface CollabRegistryModule {
 	listCollabHosts(): Promise<CollabHost[]>;
 	resolveCollabHostLink(
-		instanceId: string,
-		options?: { access?: "view" | "control" },
+		selector: string,
+		access: "view" | "control",
+		options?: { timeoutMs?: number },
 	): Promise<CollabLinkResult>;
 }
 

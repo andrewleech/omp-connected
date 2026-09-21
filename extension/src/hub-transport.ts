@@ -197,7 +197,7 @@ export class HubTransport {
 				return;
 			}
 
-			// collab.link — replicate bin/omp-host:92-101 validation.
+			// collab.link — forward to OMP's local Collab host IPC.
 			const p = params as Record<string, unknown> | undefined;
 			if (
 				typeof p?.instanceId !== "string" ||
@@ -207,18 +207,16 @@ export class HubTransport {
 
 			const result = await registry.resolveCollabHostLink(
 				p.instanceId,
-				{ access: p.access as "view" | "control" },
+				p.access as "view" | "control",
 			);
 
 			if (
-				result.version !== 1 ||
 				result.instanceId !== p.instanceId ||
-				result.generation !== p.generation ||
 				result.access !== p.access ||
 				typeof result.url !== "string"
 			) return replyError("stale or invalid Collab link response");
 
-			reply({ access: result.access, url: result.url, expiresAt: result.expiresAt });
+			reply({ access: result.access, url: result.url });
 		} catch (error) {
 			replyError(error instanceof Error ? error.message : String(error));
 		}
