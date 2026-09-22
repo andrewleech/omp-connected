@@ -239,25 +239,3 @@ function contentType(path: string): string {
   if (path.endsWith(".ico")) return "image/x-icon";
   return "application/octet-stream";
 }
-
-if (import.meta.main) {
-  const cert = process.env.COLLAB_RELAY_TLS_CERT;
-  const key = process.env.COLLAB_RELAY_TLS_KEY;
-  if (!cert || !key)
-    throw new Error(
-      "COLLAB_RELAY_TLS_CERT and COLLAB_RELAY_TLS_KEY are required",
-    );
-
-  const origins = (process.env.COLLAB_RELAY_ALLOWED_ORIGINS ?? "")
-    .split(",")
-    .map((origin) => origin.trim())
-    .filter(Boolean);
-  const relay = startCollabRelay({
-    hostname: process.env.COLLAB_RELAY_HOST ?? "0.0.0.0",
-    port: Number(process.env.COLLAB_RELAY_PORT) || 7466,
-    webRoot: process.env.COLLAB_RELAY_WEB_ROOT,
-    allowedOrigins: origins,
-    tls: { cert, key },
-  });
-  console.log(`collab relay listening on ${relay.url}`);
-}

@@ -133,17 +133,15 @@ Add `~/omp-connected/extension/bin` to your `PATH` for convenience.
 
 ## Collab relay
 
-The hub includes a private Collab relay for routing encrypted session traffic
-between hosts and browser/terminal guests. It runs as a separate port alongside
-the hub server.
-
-For local development, the relay starts with the hub. For production, deploy
-it as a separate service:
+The hub process also runs a private Collab relay that routes encrypted
+session traffic between hosts and browser/terminal guests. It listens on its
+own port, shares the hub's bind address and TLS certificate, and starts when
+`OMP_HUB_RELAY_PORT` is set in `omp-hub.env`:
 
 ```sh
-cp ~/omp-connected/hub/deploy/omp-hub-relay.service ~/.config/systemd/user/
-# Create ~/.config/omp-hub/omp-hub-relay.env (see hub/deploy/omp-hub-relay.env.example)
-systemctl --user enable --now omp-hub-relay.service
+OMP_HUB_RELAY_PORT=7466
+# Browser origins allowed to open relay WebSockets (comma-separated)
+OMP_HUB_RELAY_ALLOWED_ORIGINS=https://<hub-host>:4816
 ```
 
 Configure OMP to use your relay:

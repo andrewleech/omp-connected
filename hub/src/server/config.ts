@@ -10,6 +10,10 @@ export interface HubConfig {
   hostToken: string;
   tlsCert: string | undefined;
   tlsKey: string | undefined;
+  /** Collab relay listener port. Unset means the relay does not start. */
+  relayPort: number | undefined;
+  /** Browser origins allowed to open relay WebSockets. Empty allows any. */
+  relayAllowedOrigins: string[];
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): HubConfig {
@@ -21,5 +25,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): HubConfig {
     hostToken,
     tlsCert: env.OMP_HUB_TLS_CERT,
     tlsKey: env.OMP_HUB_TLS_KEY,
+    relayPort: Number(env.OMP_HUB_RELAY_PORT) || undefined,
+    relayAllowedOrigins: (env.OMP_HUB_RELAY_ALLOWED_ORIGINS ?? "")
+      .split(",")
+      .map((origin) => origin.trim())
+      .filter(Boolean),
   };
 }
