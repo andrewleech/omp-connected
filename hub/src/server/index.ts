@@ -1,6 +1,7 @@
 import { hostname as osHostname } from "node:os";
 import { staticPlugin } from "@elysiajs/static";
 import { Elysia } from "elysia";
+import { type CollabRelay, startCollabRelay } from "../relay/relay";
 import { AgentRegistry } from "./agent-registry";
 import { agentRpcRoutes } from "./agent-rpc-routes";
 import { collabRpcRoutes } from "./collab-rpc-routes";
@@ -18,6 +19,9 @@ export interface CreateHubOptions {
    *  built server, produced by `scripts/build-webui.ts` /
    *  `scripts/build-vendor-collab.sh`. */
   webuiRoot?: string;
+  /** Collab relay listener. Defaults to `OMP_HUB_RELAY_PORT`; `false`
+   *  disables it. Shares the hub's bind host and TLS. */
+  relay?: { port: number; allowedOrigins?: readonly string[] } | false;
 }
 
 export interface Hub {
@@ -87,9 +91,29 @@ export function createHub(options: CreateHubOptions = {}): Hub {
     `omp-hub listening on ${host ?? "0.0.0.0"}:${port}${tls ? " (TLS enabled)" : ""}`,
   );
 
+  const relayOptions =
+    options.relay ??
+    (env.relayPort
+      ? { port: env.relayPort, allowedOrigins: env.relayAllowedOrigins }
+      : false);
+  let relay: CollabRelay | undefined;
+  if (relayOptions) {
+    relay = startCollabRelay({
+      hostname: host,
+      port: relayOptions.port,
+      webRoot: `${webuiRoot}/collab`,
+      allowedOrigins: relayOptions.allowedOrigins,
+      tls,
+    });
+    console.log(`collab relay listening on ${relay.url}`);
+  }
+
   return {
     agentRegistry,
-    stop: () => app.stop(),
+    stop: () => {
+      relay?.stop();
+      app.stop();
+    },
   };
 }
 

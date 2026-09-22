@@ -21,7 +21,8 @@ wire protocol, and security model.
   `/api/agents/:id/send`) and serves a small fleet dashboard webui at
   `/` plus the vendored OMP Collab guest client at `/collab/`.
 - A private relay (`src/relay/relay.ts`) carries the actual encrypted
-  Collab terminal bytes between a host and its guests, on its own port.
+  Collab terminal bytes between a host and its guests. It runs in the hub
+  process on its own port when `OMP_HUB_RELAY_PORT` is set.
 
 ## `OMP_HUB_URL` and `OMP_HUB_HOST_TOKEN`
 
@@ -63,20 +64,19 @@ bun run lint
 
 Deploy units live in [`deploy/`](./deploy):
 
-- `omp-hub.service` — the main server. Orders after `tailscaled.service`
-  and blocks on `tailscale ip -4` before starting, so it never races
-  Tailscale interface readiness at boot (the root cause of a real outage
-  this design fixes — see ARCHITECTURE.md).
-- `omp-hub-relay.service` — the private relay.
+- `omp-hub.service` — the hub server and its Collab relay listener.
+  Orders after `tailscaled.service` and blocks on `tailscale ip -4` before
+  starting, so it never races Tailscale interface readiness at boot (the
+  root cause of a real outage this design fixes — see ARCHITECTURE.md).
 - `omp-hub-cert-renew.service` / `.timer` — weekly Tailscale cert renewal,
-  restarting both services above.
+  restarting the service above.
 
-Copy `deploy/omp-hub.env.example` → `~/.config/omp-hub/omp-hub.env` and
-`deploy/omp-hub-relay.env.example` → `~/.config/omp-hub/omp-hub-relay.env`,
-fill in a real `OMP_HUB_HOST_TOKEN` and TLS cert paths, then:
+Copy `deploy/omp-hub.env.example` → `~/.config/omp-hub/omp-hub.env`,
+fill in a real `OMP_HUB_HOST_TOKEN`, TLS cert paths, and relay settings,
+then:
 
 ```sh
-systemctl --user enable --now omp-hub.service omp-hub-relay.service
+systemctl --user enable --now omp-hub.service
 systemctl --user enable --now omp-hub-cert-renew.timer
 ```
 

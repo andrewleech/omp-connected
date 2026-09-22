@@ -8,16 +8,18 @@ src/
             agent-message registry (also the only channel host-level
             Collab discovery has), serves webui/ at "/" and webui/collab
             at "/collab/".
-  relay/    src/relay/relay.ts — the Collab terminal-byte relay (port 7466).
+  relay/    src/relay/relay.ts — the Collab terminal-byte relay, started by
+            the server on its own port (OMP_HUB_RELAY_PORT, e.g. 7466).
 webui/
   (dashboard)   fleet dashboard served at "/".
   collab/       vendored Collab guest client, served at "/collab/".
 ```
 
-`src/server` and `src/relay` never import from each other; the relay is a
-standalone TCP/TLS process the server never talks to directly — the server
-only ever hands out relay connection URLs (`wss://hub-host.your-tailnet.ts.net:7466/...`)
-inside `CollabLinkResult.url`, which the browser guest then connects to.
+The relay shares the hub process but no state: `src/server/index.ts`
+starts it as a separate `Bun.serve()` listener and stops it on shutdown,
+and nothing else crosses the boundary. The server only ever hands out
+relay connection URLs (`wss://hub-host.your-tailnet.ts.net:7466/...`) inside
+`CollabLinkResult.url`, which the browser guest then connects to.
 
 ## Agent protocol: `/ws/agent`
 
