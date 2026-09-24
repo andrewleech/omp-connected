@@ -10,6 +10,8 @@
 
 Run `bin/ompc [session-suffix] [omp arguments...]` as the everyday entry point for interactive use: it creates a persistent OMP TUI inside a tmux session when no matching one exists, or reattaches to one when it does, forwarding any other arguments straight into the wrapped OMP process. By default, the session name is `basename "$PWD"`; supplying a suffix produces `basename "$PWD".<session-suffix>`.
 
+When other live sessions extend the requested name (bare `ompc` matches `<dir>` and `<dir>.*`; `ompc feat` matches `<dir>.feat*`), an interactive `ompc` shows an arrow-key picker (↑/↓ or j/k, Enter, q/Esc) of those sessions with attached state and last activity. The highlighted default is the exact name, attaching or creating it. Without a terminal, with `-d`, or when the only live match is the exact name, it attaches or creates directly.
+
 Each OMP session gets its own tmux server (`tmux -L <session-name>`), so `ps`, `top`, and `htop` attribute CPU and memory use to the individual OMP session, and one crashed server affects only its own session.
 
 `ompc -d [session-suffix] [omp arguments...]` (or `--detach`) starts the session without attaching a terminal and prints the session name. If the session already exists, the name is printed and nothing new is created. This is useful for agents spawning side-quest sessions — a full new OMP session in its own working directory.

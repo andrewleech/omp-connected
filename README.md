@@ -151,6 +151,13 @@ ompc feature-branch
 ompc -d worker
 ```
 
+When other live sessions extend the requested name (bare `ompc` matches
+`<dir>` and `<dir>.*`; `ompc feat` matches `<dir>.feat*`), an interactive
+`ompc` lists them with attached/idle state: move with ↑/↓ (or j/k), Enter
+selects, q/Esc quits. The highlighted default is the exact name, attaching
+to it or creating it if it isn't running. A lone exact match or no match
+skips the menu. So does `-d`, or running without a terminal.
+
 ### Updating
 
 ```sh
