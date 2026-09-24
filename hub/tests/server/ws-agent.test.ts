@@ -107,6 +107,7 @@ function registerParams(
     pid: number;
     cwd: string;
     token: string;
+    label: string;
   }> = {},
 ) {
   return {
@@ -115,6 +116,7 @@ function registerParams(
     pid: overrides.pid ?? 4242,
     cwd: overrides.cwd ?? "/home/user/api",
     token: overrides.token ?? HOST_TOKEN,
+    ...(overrides.label === undefined ? {} : { label: overrides.label }),
   };
 }
 
@@ -221,6 +223,42 @@ describe("wsAgentPlugin — registration", () => {
     const result = await reply;
     expect(result.error?.code).toBe(-32602);
     await closed;
+    expect(agentRegistry.listAgents()).toHaveLength(0);
+  });
+
+  test("a reported ompc label replaces basename(cwd) and is addressable", async () => {
+    const agentRegistry = new AgentRegistry();
+    const { url } = start(agentRegistry);
+
+    const socket = await connectAndRegister(
+      url,
+      registerParams({ cwd: "/home/user/api", label: "api.install" }),
+    );
+
+    expect(agentRegistry.listAgents()[0]?.label).toBe("api.install");
+    expect(agentRegistry.resolve("api.install").kind).toBe("found");
+    expect(agentRegistry.resolve("api").kind).toBe("not_found");
+    socket.close();
+  });
+
+  test("a label that could pass for a canonical id is rejected with -32602", async () => {
+    const agentRegistry = new AgentRegistry();
+    const { url } = start(agentRegistry);
+
+    const socket = new WebSocket(url);
+    await waitOpen(socket);
+    const reply = waitForMessage(socket);
+    socket.send(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: "1",
+        method: "agent.register",
+        params: registerParams({ label: "user@worker-host:inst-9" }),
+      }),
+    );
+
+    const result = await reply;
+    expect(result.error?.code).toBe(-32602);
     expect(agentRegistry.listAgents()).toHaveLength(0);
   });
 

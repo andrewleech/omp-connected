@@ -40,7 +40,13 @@ export class HubTransport {
 
 	/** Sends `agent.register`, injecting the shared-secret token so callers
 	 *  never have to remember to attach it themselves. */
-	async register(params: { hostId: string; instanceId: string; pid: number; cwd: string }): Promise<AgentRegisterResult> {
+	async register(params: {
+		hostId: string;
+		instanceId: string;
+		pid: number;
+		cwd: string;
+		label?: string;
+	}): Promise<AgentRegisterResult> {
 		return (await this.request("agent.register", { ...params, token: this.token })) as AgentRegisterResult;
 	}
 

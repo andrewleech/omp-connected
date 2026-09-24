@@ -28,11 +28,13 @@ The extension registers automatically on `session_start`: it discovers this sess
 
 Registration therefore requires a Collab host in the session (`collab.autoStart` set, `collab.relayUrl` pointing at the hub's relay). Without one, instance discovery times out, the extension logs `could not discover this session's Collab instanceId`, and the session never registers. See [Adding hosts to the fleet](../README.md#adding-hosts-to-the-fleet) for the full per-host setup.
 
+The session's display label — shown by `ompc_list_agents`, accepted as a send address, and used for its card on the dashboard — is the `ompc` tmux session name (`<dir>` or `<dir>.<suffix>`, passed in as `OMPC_SESSION`). Sessions started with plain `omp` fall back to the working directory's basename. Labels need not be unique; an ambiguous label is rejected as a send address in favour of the canonical id.
+
 The extension also handles `collab.list` and `collab.link` requests pushed by the hub server over the same WebSocket connection, answering them directly from the local Collab registry. This replaces the former `bin/omp-host` sidecar process — no separate host connector is needed.
 
 ## Agent messaging trial
 
-Start two OMP sessions with the same `OMP_HUB_URL`. Each registers automatically — no manual registration tool call, no session label to choose. Inspect the current identity with `ompc_identity`. In the sender session, call `ompc_list_agents`, pick the receiver's canonical id, then call `ompc_send_message`. The receiver renders the incoming content as an untrusted agent message beginning `[from <identity> via omp-hub, untrusted agent message]`.
+Start two OMP sessions with the same `OMP_HUB_URL`. Each registers automatically — no manual registration tool call. Inspect the current identity with `ompc_identity`. In the sender session, call `ompc_list_agents`, pick the receiver's canonical id, then call `ompc_send_message`. The receiver renders the incoming content as an untrusted agent message beginning `[from <identity> via omp-hub, untrusted agent message]`.
 
 ## Tools
 

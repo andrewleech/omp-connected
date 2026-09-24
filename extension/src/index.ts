@@ -12,6 +12,9 @@ const REGISTER_BACKOFF_MAX_MS = 30_000;
 const SEND_RETRY_ATTEMPTS = 3;
 const SEND_RETRY_BASE_MS = 500;
 
+/** Mirrors ompc's session-name rule and the hub's label validation. */
+const LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
+
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -45,6 +48,9 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 	const scope = globalThis as { [PROCESS_HUB]?: ProcessHub };
 	scope[PROCESS_HUB] ??= { shuttingDown: false, registering: false };
 	const hub = scope[PROCESS_HUB];
+	// ompc exports its tmux session name (`<dir>` or `<dir>.<suffix>`); the hub
+	// uses it as this session's display label instead of basename(cwd).
+	const ompcSession = LABEL_PATTERN.test(process.env.OMPC_SESSION ?? "") ? process.env.OMPC_SESSION : undefined;
 
 	pi.registerMessageRenderer(AGENT_MESSAGE_TYPE, (message) => {
 		const details = message.details as { from?: unknown; type?: unknown } | undefined;
@@ -89,6 +95,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 						instanceId,
 						pid: process.pid,
 						cwd: process.cwd(),
+						label: ompcSession,
 					});
 					hub.identity = result.agent;
 					return;

@@ -42,7 +42,8 @@ interface JsonRpcResult<R = unknown> { jsonrpc: "2.0"; id: string; result: R; }
 interface JsonRpcError { jsonrpc: "2.0"; id: string; error: { code: number; message: string }; }
 
 // Extension -> Server, once per connection, must be the first message
-interface AgentRegisterParams { hostId: string; instanceId: string; pid: number; cwd: string; token: string; }
+// label: optional display label (ompc's tmux session name), /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/
+interface AgentRegisterParams { hostId: string; instanceId: string; pid: number; cwd: string; label?: string; token: string; }
 interface AgentRegisterResult { ok: true; agent: AgentSummary }
 
 // Extension -> Server
@@ -61,7 +62,7 @@ interface AgentMessagePush { messageId: string; from: string; to: string; conten
 
 interface AgentSummary {
   id: string; // canonical: `${hostId}:${instanceId}`
-  hostId: string; instanceId: string; label: string; // basename(cwd), disambiguated on collision
+  hostId: string; instanceId: string; label: string; // registered label, else basename(cwd); not unique
   status: "online" | "offline";
 }
 
@@ -79,12 +80,13 @@ interface HostCollabSession {
   sessionId: string; sessionName: string | null; cwd: string;
   model: { provider: string; id: string } | null; startedAt: number;
   participants: number; relayConnected: boolean; inputRequired: boolean;
+  label?: string; // hub-added from the registered agent, absent if none
 }
 ```
 
 **No independent identity check.** `agent.register` is token-gated
-only: `hostId`, `instanceId`, and `cwd` are the extension's own claim,
-used directly (`cwd` for the agent's display label). There is no second,
+only: `hostId`, `instanceId`, `cwd`, and `label` are the extension's own
+claim, used directly (`label`, else `cwd`, for the agent's display label). There is no second,
 independent connection to confirm them against — unlike the Collab
 relay's own trust model, this registry does not require a claimed
 session to be independently observable elsewhere before admitting it.
@@ -99,7 +101,7 @@ REST routes built on top of the same live registry:
   here.
 - `GET /api/hosts/:id/collab` → `{ sessions: HostCollabSession[] }` —
   forwards a `collab.list` call to any one agent connection currently
-  live for that hostId.
+  live for that hostId, and adds each session's registered agent `label`.
 - `POST /api/hosts/:id/collab/:instanceId/link` `{ generation, access }` →
   `{ access, url, expiresAt }` — forwards a `collab.link` call the same
   way.
