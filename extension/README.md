@@ -22,9 +22,11 @@ The launcher uses the global `omp` binary from PATH by default (the official ins
 
 ## Hub registration
 
-Set `OMP_HUB_URL` and `OMP_HUB_HOST_TOKEN` in every interactive OMP terminal before agent messaging becomes available. The extension is a graceful no-op when either is unset: no tools fail, agent registration simply never starts.
+Set `OMP_HUB_URL` and `OMP_HUB_HOST_TOKEN` in every interactive OMP terminal before agent messaging becomes available. `ompc` sources them from `~/.config/omp-connected/omp-host.env` (or `$OMP_HOST_ENV`) on every launch; sessions started with plain `omp` need them exported from the shell. The extension is a graceful no-op when either is unset: no tools fail, agent registration simply never starts.
 
 The extension registers automatically on `session_start`: it discovers this session's Collab instance ID by polling the local Collab registry (up to 10 seconds for the PID to appear), then registers with omp-hub over a WebSocket connection to `/ws/agent`. Registration retries with exponential backoff (1s–30s, jittered) on failure or disconnect.
+
+Registration therefore requires a Collab host in the session (`collab.autoStart` set, `collab.relayUrl` pointing at the hub's relay). Without one, instance discovery times out, the extension logs `could not discover this session's Collab instanceId`, and the session never registers. See [Adding hosts to the fleet](../README.md#adding-hosts-to-the-fleet) for the full per-host setup.
 
 The extension also handles `collab.list` and `collab.link` requests pushed by the hub server over the same WebSocket connection, answering them directly from the local Collab registry. This replaces the former `bin/omp-host` sidecar process — no separate host connector is needed.
 
