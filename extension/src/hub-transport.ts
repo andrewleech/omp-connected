@@ -210,10 +210,12 @@ export class HubTransport {
 				p.access as "view" | "control",
 			);
 
+			// omp binds the link to the generation it listed just now; a room that
+			// rotated since the dashboard listed it must not hand out its successor.
 			if (
 				result.instanceId !== p.instanceId ||
-				result.access !== p.access ||
-				typeof result.url !== "string"
+				result.generation !== p.generation ||
+				result.access !== p.access
 			) return replyError("stale or invalid Collab link response");
 
 			reply({ access: result.access, url: result.url });

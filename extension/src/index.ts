@@ -112,7 +112,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 	async function discoverInstanceId(): Promise<string | undefined> {
 		const registry = await getCollabRegistry();
 		if (!registry) {
-			pi.logger.warn("omp-connected: could not import the Collab registry; agent messaging disabled");
+			pi.logger.warn("omp-connected: could not load omp's Collab CLI module; agent messaging disabled");
 			return undefined;
 		}
 		for (let attempt = 0; attempt < DISCOVERY_ATTEMPTS; attempt += 1) {
