@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#17212b">
+<title>OMP Connected - hub unreachable</title>
+<style>
+:root { color-scheme: dark; font-family: ui-sans-serif, system-ui, sans-serif; background: #101317; color: #e8edf2; }
+body { align-items: center; display: flex; justify-content: center; margin: 0; min-height: 100vh; min-height: 100dvh; padding: 1.5rem; box-sizing: border-box; }
+main { max-width: 26rem; text-align: center; }
+h1 { font-size: 1.2rem; margin: 0 0 .8rem; }
+p { color: #acbac7; line-height: 1.45; margin: 0 0 1.2rem; }
+button { background: #1d2a36; border: 1px solid #3c4b59; border-radius: .45rem; color: inherit; cursor: pointer; font: inherit; padding: .55rem 1.1rem; }
+button:hover { background: #2a5d79; }
+</style>
+</head>
+<body>
+<main>
+<h1>Can't reach the OMP Connected hub</h1>
+<p>The hub didn't answer. Check this device is connected to the tailnet and that the hub service is running, then retry.</p>
+<button type="button" onclick="location.reload()">Retry</button>
+</main>
+<script>addEventListener("online", () => location.reload());</script>
+</body>
+</html>

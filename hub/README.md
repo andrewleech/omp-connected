@@ -54,11 +54,29 @@ bun run lint
 
 `bun run build` runs two steps:
 - `build:webui` — bundles `src/webui/app.ts` + `src/webui/index.html` into
-  `dist/webui/`.
+  `dist/webui/`, along with the PWA files (manifest, icons, offline page,
+  service worker).
 - `build:collab` — builds the vendored OMP Collab guest client (set
   `COLLAB_WEB_SRC` to point at an OMP source checkout's
   `packages/collab-web`) into `dist/webui/collab/`. See
   `scripts/build-vendor-collab.sh` for details.
+
+### Installing as an app (PWA)
+
+The dashboard is an installable web app: Chrome on Android offers **Add to
+Home screen → Install** (desktop Chrome shows the install icon in the
+address bar). It needs the hub's valid HTTPS certificate. On Android the
+phone needs internet access at install time so Google can mint the WebAPK;
+`about://webapks` on the phone lists it when that worked (otherwise you get
+a plain shortcut).
+
+The service worker only handles top-level page loads: when the hub can't be
+reached (device off the tailnet, hub stopped) it shows a cached "can't
+reach the hub" page instead of the browser error. Everything else, including
+the API, WebSockets and the Collab frame, always goes to the network.
+
+App icons are rendered from `src/webui/icon.svg`; after editing it, run
+`bun run scripts/render-icons.ts` and commit the regenerated PNGs.
 
 ## Deploying
 
