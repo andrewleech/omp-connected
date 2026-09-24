@@ -1,0 +1,33 @@
+name: Hub browser tests
+
+on:
+  pull_request:
+    paths:
+      - "hub/**"
+      - ".github/workflows/hub-browser.yml"
+  push:
+    paths:
+      - "hub/**"
+      - ".github/workflows/hub-browser.yml"
+
+jobs:
+  chromium:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: hub
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install --with-deps chromium
+      - run: bun run test:e2e
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hub-playwright-report
+          path: |
+            hub/playwright-report
+            hub/test-results
+          if-no-files-found: ignore
+          retention-days: 7
