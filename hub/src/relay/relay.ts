@@ -5,6 +5,15 @@ const ROOM_PATH_RE = /^\/r\/([A-Za-z0-9_-]{10,64})$/;
 const ENVELOPE_HEADER_LENGTH = 4;
 const ROOM_CLOSED = JSON.stringify({ t: "room-closed" });
 const MAX_FRAME_BYTES = 1_048_576;
+/** Host frames are handed to a guest's socket only while its send buffer is
+ *  below this; the rest wait in the relay's own per-guest queue. Bun drops
+ *  (not queues) sends once a socket passes its `backpressureLimit`, and a
+ *  host on the relay's LAN outpaces a remote guest by orders of magnitude, so
+ *  forwarding blindly silently loses the tail of a multi-MB snapshot. */
+const GUEST_SEND_HIGH_WATER_BYTES = 4 * 1_048_576;
+/** A guest whose queued backlog exceeds this is disconnected rather than
+ *  allowed to grow relay memory without bound. */
+const MAX_GUEST_QUEUE_BYTES = 128 * 1_048_576;
 const DEFAULT_MAX_GUESTS_PER_ROOM = 32;
 const DEFAULT_MAX_ROOMS = 256;
 
@@ -12,6 +21,9 @@ interface SocketData {
   roomId: string;
   role: "host" | "guest";
   peerId: number;
+  /** Host frames awaiting room in this guest's send buffer, in order. */
+  queue: Uint8Array[];
+  queuedBytes: number;
 }
 
 type RelaySocket = ServerWebSocket<SocketData>;
@@ -77,7 +89,7 @@ export function startCollabRelay(
       }
       if (
         server.upgrade(request, {
-          data: { roomId, role, peerId: 0 },
+          data: { roomId, role, peerId: 0, queue: [], queuedBytes: 0 },
         })
       )
         return;
@@ -138,9 +150,11 @@ export function startCollabRelay(
           ENVELOPE_HEADER_LENGTH,
         ).getUint32(0, false);
         if (peerId === 0) {
-          for (const guest of room.guests.values()) guest.send(message);
+          for (const guest of room.guests.values())
+            forwardToGuest(guest, message);
         } else {
-          room.guests.get(peerId)?.send(message);
+          const guest = room.guests.get(peerId);
+          if (guest) forwardToGuest(guest, message);
         }
         return;
       }
@@ -152,7 +166,12 @@ export function startCollabRelay(
       ).setUint32(0, ws.data.peerId, false);
       room.host.send(message);
     },
+    drain(ws: RelaySocket): void {
+      if (ws.data.role === "guest") flushGuestQueue(ws);
+    },
     close(ws: RelaySocket): void {
+      ws.data.queue = [];
+      ws.data.queuedBytes = 0;
       const room = rooms.get(ws.data.roomId);
       if (!room) return;
 
@@ -210,6 +229,42 @@ export function startCollabRelay(
       server.stop(true);
     },
   };
+}
+
+/** Deliver a host frame to one guest in order, parking it in the relay's
+ *  queue while the guest's socket buffer is past the high-water mark. */
+function forwardToGuest(guest: RelaySocket, message: Uint8Array): void {
+  const data = guest.data;
+  if (
+    data.queue.length === 0 &&
+    guest.getBufferedAmount() < GUEST_SEND_HIGH_WATER_BYTES
+  ) {
+    guest.send(message);
+    return;
+  }
+  if (data.queuedBytes + message.byteLength > MAX_GUEST_QUEUE_BYTES) {
+    data.queue = [];
+    data.queuedBytes = 0;
+    guest.close(1013, "guest cannot keep up with the room");
+    return;
+  }
+  // Bun does not promise the message buffer outlives the handler.
+  data.queue.push(message.slice());
+  data.queuedBytes += message.byteLength;
+}
+
+function flushGuestQueue(guest: RelaySocket): void {
+  const data = guest.data;
+  let sent = 0;
+  while (
+    sent < data.queue.length &&
+    guest.getBufferedAmount() < GUEST_SEND_HIGH_WATER_BYTES
+  ) {
+    const frame = data.queue[sent++] as Uint8Array;
+    data.queuedBytes -= frame.byteLength;
+    guest.send(frame);
+  }
+  if (sent > 0) data.queue.splice(0, sent);
 }
 
 async function serveStatic(

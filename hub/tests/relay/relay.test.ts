@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { type Socket, connect } from "node:net";
 import { type CollabRelay, startCollabRelay } from "../../src/relay/relay";
 
 const ROOM = "RelayRoom_12345";
@@ -46,6 +47,70 @@ function envelope(peerId: number, payload: readonly number[]): Uint8Array {
 
 function peerId(data: Uint8Array): number {
   return new DataView(data.buffer, data.byteOffset, 4).getUint32(0, false);
+}
+
+/** A guest over a raw TCP socket so the test can stop reading, the way a
+ *  guest on a slow remote link does while a local host pushes a snapshot. */
+async function rawGuest(path: string): Promise<{
+  socket: Socket;
+  frames(count: number): Promise<Uint8Array[]>;
+}> {
+  const url = new URL(relayUrl());
+  const socket = connect(Number(url.port), url.hostname);
+  await new Promise<void>((resolve) => socket.once("connect", resolve));
+  socket.write(
+    [
+      `GET ${path} HTTP/1.1`,
+      `Host: ${url.host}`,
+      "Upgrade: websocket",
+      "Connection: Upgrade",
+      "Sec-WebSocket-Version: 13",
+      "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+      "\r\n",
+    ].join("\r\n"),
+  );
+  let buffer = Buffer.alloc(0);
+  let wake: (() => void) | undefined;
+  socket.on("data", (chunk: Buffer) => {
+    buffer = Buffer.concat([buffer, chunk]);
+    wake?.();
+  });
+  const more = () =>
+    new Promise<void>((resolve) => {
+      wake = resolve;
+    });
+  while (buffer.indexOf("\r\n\r\n") < 0) await more();
+  expect(buffer.toString("latin1")).toStartWith("HTTP/1.1 101");
+  buffer = buffer.subarray(buffer.indexOf("\r\n\r\n") + 4);
+  return {
+    socket,
+    async frames(count) {
+      const out: Uint8Array[] = [];
+      while (out.length < count) {
+        // Server frames are unmasked: opcode byte, 7/16/64-bit length.
+        if (buffer.length >= 2) {
+          let length = (buffer[1] ?? 0) & 0x7f;
+          let offset = 2;
+          if (length === 126 && buffer.length >= 4) {
+            length = buffer.readUInt16BE(2);
+            offset = 4;
+          } else if (length === 127 && buffer.length >= 10) {
+            length = Number(buffer.readBigUInt64BE(2));
+            offset = 10;
+          }
+          if (length < 126 || offset > 2) {
+            if (buffer.length >= offset + length) {
+              out.push(buffer.subarray(offset, offset + length));
+              buffer = buffer.subarray(offset + length);
+              continue;
+            }
+          }
+        }
+        await more();
+      }
+      return out;
+    },
+  };
 }
 
 afterEach(() => {
@@ -140,4 +205,35 @@ describe("private Collab relay", () => {
     const overflowing = socket(`/r/${ROOM}?role=guest`);
     expect((await waitEvent<CloseEvent>(overflowing, "close")).code).toBe(4029);
   });
+
+  it("delivers every host frame in order to a guest that falls behind", async () => {
+    relay = startCollabRelay();
+    const host = socket(`/r/${ROOM}?role=host`);
+    await waitOpen(host);
+    const joined = waitText(host);
+    const guest = await rawGuest(`/r/${ROOM}?role=guest`);
+    expect(JSON.parse(await joined)).toEqual({ t: "peer-joined", peer: 1 });
+
+    // 36 MiB, well past Bun's 16 MiB per-socket send buffer, while the guest
+    // reads nothing — a multi-MB snapshot to a guest on a slow link.
+    guest.socket.pause();
+    const frameCount = 40;
+    const payload = new Array<number>(900 * 1024).fill(7);
+    for (let i = 0; i < frameCount; i++) {
+      const frame = envelope(1, payload);
+      frame[4] = i;
+      host.send(frame);
+    }
+    while (host.bufferedAmount > 0) await Bun.sleep(10);
+    // The relay exposes no signal for "host frames forwarded"; give its event
+    // loop a beat to hand the flushed frames to the paused guest's socket.
+    await Bun.sleep(200);
+
+    guest.socket.resume();
+    const received = await guest.frames(frameCount);
+    expect(received.map((frame) => frame[4])).toEqual(
+      Array.from({ length: frameCount }, (_, i) => i),
+    );
+    guest.socket.destroy();
+  }, 30_000);
 });
