@@ -1,0 +1,3 @@
+[submodule "hub/vendor/collab-web"]
+	path = hub/vendor/collab-web
+	url = https://github.com/can1357/oh-my-pi.git

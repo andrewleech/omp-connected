@@ -12,7 +12,7 @@
     "dev": "bun --watch src/server/index.ts",
     "start": "bun run src/server/index.ts",
     "build:webui": "bun run scripts/build-webui.ts",
-    "build:collab": "scripts/build-vendor-collab.sh",
+    "build:collab": "bash scripts/build-vendor-collab.sh",
     "build": "bun run build:webui && bun run build:collab",
     "test": "bun test",
     "lint": "biome check .",
