@@ -205,7 +205,9 @@ On each additional host:
    before that.
 
 The hub's `OMP_HUB_RELAY_ALLOWED_ORIGINS` needs no change for new hosts: it
-lists browser origins, and the only browser page is the hub's own dashboard.
+lists browser origins, and the only browser pages are the hub's own dashboard
+(at `https://<hub-host>:4816` and, if set up, its own app hostname; see
+[hub/README.md](hub/README.md#installing-as-an-app-pwa)).
 
 ### Identity
 
