@@ -964,3 +964,9 @@ function createDashboard(root: HTMLElement): void {
 
 const root = document.querySelector<HTMLElement>("[data-omp-dashboard]");
 if (root) createDashboard(root);
+
+// Offline fallback page for the installed app (see sw.js). Installability
+// itself only needs the manifest, so a failed registration is harmless.
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
+}

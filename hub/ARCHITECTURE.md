@@ -112,6 +112,11 @@ REST routes built on top of the same live registry:
   principal, never spoof a real agent's identity); `:id` accepts a
   canonical ID or an unambiguous display label.
 - `GET /` — the fleet dashboard webui.
+- `GET /manifest.webmanifest`, `GET /sw.js` — PWA manifest and service
+  worker, served `cache-control: no-cache` (outside the static plugin's
+  day-long max-age) so installed clients pick up changes. `sw.js` only
+  intercepts top-level navigations, falling back to a cached
+  `/offline.html` when the hub is unreachable.
 - `/collab/` — the vendored Collab guest client.
 
 ## Security model

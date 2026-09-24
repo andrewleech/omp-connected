@@ -1,4 +1,5 @@
 import { hostname as osHostname } from "node:os";
+import { resolve as resolvePath } from "node:path";
 import { staticPlugin } from "@elysiajs/static";
 import { Elysia } from "elysia";
 import { type CollabRelay, startCollabRelay } from "../relay/relay";
@@ -52,6 +53,13 @@ export function createHub(options: CreateHubOptions = {}): Hub {
           headers: { "content-type": "text/html" },
         }),
     )
+    // Fixed-name PWA files must revalidate on every load so installed
+    // clients see updates, so they're served here and excluded from the
+    // static plugin below, which stamps its day-long max-age on them.
+    .get("/sw.js", () => revalidatedFile(`${webuiRoot}/sw.js`))
+    .get("/manifest.webmanifest", () =>
+      revalidatedFile(`${webuiRoot}/manifest.webmanifest`),
+    )
     .use(collabRpcRoutes(agentRegistry))
     .use(agentRpcRoutes(agentRegistry, osHostname()))
     .use(wsAgentPlugin(agentRegistry, hostToken))
@@ -72,6 +80,10 @@ export function createHub(options: CreateHubOptions = {}): Hub {
         indexHTML: true,
         directive: "public",
         maxAge: 86400,
+        // String patterns match when they contain the file's absolute path.
+        ignorePatterns: REVALIDATED_FILES.map((file) =>
+          resolvePath(webuiRoot, file),
+        ),
       }),
     );
 
@@ -115,6 +127,16 @@ export function createHub(options: CreateHubOptions = {}): Hub {
       app.stop();
     },
   };
+}
+
+const REVALIDATED_FILES = ["sw.js", "manifest.webmanifest"];
+
+function revalidatedFile(path: string): Response {
+  // Bun.file infers content-type from the extension (sw.js ->
+  // text/javascript, .webmanifest -> application/manifest+json).
+  return new Response(Bun.file(path), {
+    headers: { "cache-control": "no-cache" },
+  });
 }
 
 if (import.meta.main) {
