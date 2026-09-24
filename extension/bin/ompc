@@ -50,7 +50,9 @@ command -v tmux >/dev/null 2>&1 || {
 	exit 69
 }
 
-tmux_config="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/omp-tmux.conf"
+# Resolve through symlinks: install.sh links ompc into ~/.local/bin, and the
+# bundled tmux config lives next to the real script, not the link.
+tmux_config="$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/omp-tmux.conf"
 
 # Each OMP session gets its own tmux server via -L for per-session process
 # isolation (independent CPU/memory attribution in ps/top/htop, independent
