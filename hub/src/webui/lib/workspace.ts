@@ -183,6 +183,13 @@ export function canRequestAccess(
   );
 }
 
+/** The most capable mode a host advertises for a newly selected room. */
+export function defaultRequestedAccess(
+  session: CollabSession,
+): "view" | "control" {
+  return session.access === "control" ? "control" : "view";
+}
+
 export function resolveRememberedSession(
   sessions: CollabSession[],
   selected: string | null,

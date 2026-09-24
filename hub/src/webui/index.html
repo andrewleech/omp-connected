@@ -2,40 +2,62 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="referrer" content="same-origin">
 <link rel="icon" type="image/x-icon" href="/favicon.ico">
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
 <link rel="apple-touch-icon" sizes="180x180" href="/favicon-180x180.png">
-<title>OMP fleet</title>
+<title>OMP Connected</title>
 <style>
 :root { color-scheme: dark; font-family: ui-sans-serif, system-ui, sans-serif; background: #101317; color: #e8edf2; }
 * { box-sizing: border-box; }
-body { margin: 0; min-height: 100vh; }
+body { margin: 0; }
 button, select, textarea { font: inherit; }
 button { border: 1px solid #3c4b59; border-radius: .45rem; background: #1d2a36; color: inherit; cursor: pointer; padding: .45rem .65rem; }
 button:hover:not(:disabled), button.active { background: #2a5d79; }
 button:disabled { cursor: not-allowed; opacity: .45; }
 select, textarea { border: 1px solid #3c4b59; border-radius: .4rem; background: #111920; color: inherit; padding: .5rem; width: 100%; }
 textarea { min-height: 7rem; resize: vertical; }
-.omp-shell { display: grid; grid-template-columns: minmax(14rem, 19rem) minmax(0, 1fr) minmax(17rem, 24rem); grid-template-rows: auto 1fr; height: 100vh; overflow: hidden; }
+.omp-shell { display: grid; grid-template-columns: minmax(14rem, 19rem) minmax(0, 1fr) minmax(17rem, 24rem); grid-template-rows: auto minmax(0, 1fr); height: 100vh; height: 100dvh; overflow: hidden; }
 .topbar { align-items: center; background: #17212b; border-bottom: 1px solid #344453; display: flex; gap: 1rem; grid-column: 1 / -1; justify-content: space-between; padding: .7rem 1rem; }
-.brand { font-weight: 700; letter-spacing: .03em; }
+.brand { font-weight: 700; letter-spacing: .03em; }.brand-compact { display: none; }
 .status { color: #b7c4cf; font-size: .9rem; margin-left: auto; }
 .status.ok { color: #91d9b3; }.status.warning { color: #ffc776; }
+.drawer-actions { display: none; gap: .4rem; }
+.drawer-header { align-items: center; display: none; justify-content: space-between; margin-bottom: .8rem; }
 .session-rail, .inspector { background: #131a21; overflow: auto; padding: .8rem; }
 .session-rail { border-right: 1px solid #344453; }.inspector { border-left: 1px solid #344453; }
 .quiet { background: transparent; border-style: dashed; margin-bottom: .8rem; width: 100%; }
 .session-group { border-top: 1px solid #2b3945; margin-top: .65rem; padding-top: .65rem; min-height: 2.2rem; }
 .session-group h2, .inspector h2 { font-size: .86rem; letter-spacing: .06em; margin: 0 0 .45rem; text-transform: uppercase; }
-.session-card { -webkit-touch-callout: none; -webkit-user-select: none; align-items: center; background: transparent; border-color: transparent; display: flex; gap: .5rem; justify-content: space-between; margin: .1rem 0; padding: .4rem .55rem; text-align: left; touch-action: manipulation; user-select: none; width: 100%; }.session-card:hover:not(:disabled) { background: #1d2a36; }.session-card.selected { background: #1d2a36; border-color: #65b9e8; box-shadow: inset .2rem 0 #65b9e8; }.session-label { color: #e8edf2; flex: 1; font-size: .84rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.badge { border: 1px solid currentColor; border-radius: .3rem; flex-shrink: 0; font-size: .68rem; letter-spacing: .03em; padding: .08rem .35rem; text-transform: uppercase; }.badge.control { color: #9be5bd; }.badge.view { color: #8bcdf7; }.badge.connecting { color: #b7c4cf; }
+.session-card { -webkit-touch-callout: none; -webkit-user-select: none; align-items: center; background: transparent; border-color: transparent; display: flex; gap: .5rem; justify-content: space-between; margin: .1rem 0; padding: .4rem .55rem; text-align: left; touch-action: manipulation; user-select: none; width: 100%; }.session-card:hover:not(:disabled) { background: #1d2a36; }.session-card.selected { background: #1d2a36; border-color: #65b9e8; box-shadow: inset .2rem 0 #65b9e8; }.session-label { color: #e8edf2; flex: 1; font-size: .84rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.badge { border: 1px solid currentColor; border-radius: .3rem; flex-shrink: 0; font-size: .68rem; letter-spacing: .03em; padding: .08rem .35rem; text-transform: uppercase; }.badge.control { color: #91d9b3; }.badge.view { color: #ffc776; }.badge.connecting { color: #b7c4cf; }
 .ctx-menu { background: #1a232c; border: 1px solid #3c4b59; border-radius: .5rem; box-shadow: 0 .4rem 1.2rem rgba(0,0,0,.45); list-style: none; margin: 0; min-width: 10rem; padding: .3rem; position: fixed; z-index: 20; }.ctx-menu li { margin: 0; }.ctx-menu button { background: transparent; border: 0; border-radius: .35rem; display: block; font-size: .85rem; padding: .4rem .55rem; text-align: left; white-space: nowrap; width: 100%; }.ctx-menu button:hover:not(:disabled) { background: #2a5d79; }
-.workspace { display: flex; flex-direction: column; min-width: 0; overflow: hidden; padding: .9rem; }.workspace-header { align-items: center; display: flex; flex-shrink: 0; }.workspace-title { align-items: center; display: flex; gap: .6rem; min-width: 0; }.workspace-title-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.channel-hint, .inspector-body p { color: #acbac7; font-size: .9rem; line-height: 1.4; flex-shrink: 0; }.empty { color: #a7b6c4; font-size: .86rem; }.workspace-empty { align-self: center; justify-self: center; max-width: 34rem; text-align: center; }.collab-frame { border: 1px solid #344453; border-radius: .55rem; flex: 1; min-height: 0; width: 100%; }
+.workspace { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; padding: .9rem; }.workspace-header { align-items: center; display: flex; flex-shrink: 0; gap: .6rem; justify-content: space-between; }.workspace-title { align-items: center; display: flex; gap: .6rem; min-width: 0; }.workspace-title-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.channel-hint, .inspector-body p { color: #acbac7; font-size: .9rem; line-height: 1.4; flex-shrink: 0; }.empty { color: #a7b6c4; font-size: .86rem; }.workspace-empty { align-self: center; justify-self: center; max-width: 34rem; text-align: center; }.collab-frame { border: 1px solid #344453; border-radius: .55rem; flex: 1; min-height: 0; width: 100%; }
 .tabs { display: flex; flex-wrap: wrap; gap: .35rem; margin-bottom: .8rem; }.tabs button { background: transparent; border: 0; border-bottom: .15rem solid transparent; border-radius: 0; padding: .35rem .2rem; }.tabs button.active { border-bottom-color: #65b9e8; }
 .agent-roster { display: flex; flex-direction: column; gap: .2rem; margin-bottom: .8rem; }.agent-row { align-items: center; background: transparent; border-color: transparent; display: flex; gap: .4rem; justify-content: space-between; padding: .4rem .55rem; text-align: left; width: 100%; }.agent-row:hover:not(:disabled) { background: #1d2a36; }.agent-row.selected { background: #1d2a36; border-color: #65b9e8; box-shadow: inset .2rem 0 #65b9e8; }.agent-label { color: #e8edf2; flex: 1; font-size: .84rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.agent-compose h3 { font-size: .86rem; margin: .4rem 0; }
 form { display: grid; gap: .55rem; }
-@media (max-width: 900px) { .omp-shell { grid-template-columns: minmax(12rem, 15rem) minmax(0, 1fr); }.inspector { border-left: 0; border-top: 1px solid #344453; grid-column: 1 / -1; }.workspace { min-height: 66vh; } }
-@media (max-width: 620px) { .omp-shell { display: flex; flex-direction: column; }.topbar { position: sticky; top: 0; z-index: 1; }.session-rail { border-bottom: 1px solid #344453; border-right: 0; max-height: 35vh; }.workspace { min-height: 64vh; }.workspace-header { align-items: start; flex-direction: column; }.collab-frame { min-height: 52vh; }.status { margin-left: 0; } }
+@media (max-width: 768px) {
+  html { overscroll-behavior-x: none; } /* horizontal swipes drive the drawers, not history navigation */
+  .omp-shell { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); isolation: isolate; position: relative; }
+  .topbar { grid-column: 1; gap: .5rem; padding: calc(.55rem + env(safe-area-inset-top)) max(.7rem, env(safe-area-inset-right)) .55rem max(.7rem, env(safe-area-inset-left)); }
+  .status { display: none; }
+  .brand-wide { display: none; }
+  .brand-compact { display: inline; }
+  .drawer-actions { display: flex; }
+  .drawer-actions button { padding: .35rem .5rem; }
+  .workspace { grid-column: 1; grid-row: 2; padding: .65rem max(.65rem, env(safe-area-inset-right)) calc(.65rem + env(safe-area-inset-bottom)) max(.65rem, env(safe-area-inset-left)); }
+  .workspace-header { align-items: flex-start; }
+  .workspace-title { min-width: 0; }
+  .session-rail, .inspector { border: 0; bottom: 0; box-shadow: .3rem 0 1.5rem rgba(0,0,0,.45); max-width: min(84vw, 22rem); padding: max(.8rem, env(safe-area-inset-top)) .8rem max(.8rem, env(safe-area-inset-bottom)); position: fixed; top: 0; transition: transform .18s ease-out; width: 84vw; z-index: 10; }
+  .session-rail { left: 0; transform: translateX(-105%); }
+  .inspector { right: 0; transform: translateX(105%); }
+  .omp-shell[data-left-drawer-open="true"] .session-rail { transform: translateX(0); }
+  .omp-shell[data-right-drawer-open="true"] .inspector { transform: translateX(0); }
+  .drawer-header { display: flex; }
+  .drawer-backdrop { background: rgba(0,0,0,.58); border: 0; inset: 0; margin: 0; padding: 0; position: fixed; width: 100%; z-index: 5; }
+  .drawer-backdrop[hidden] { display: none; }
+}
+@media (max-width: 380px) { .brand { font-size: .9rem; }.drawer-actions button { padding: .3rem .4rem; } }
 .tail-viewer { display: flex; flex-direction: column; flex: 1; min-height: 0; border: 1px solid #178fb9; border-radius: .4rem; background: #101317; overflow: hidden; font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace; font-size: 12px; line-height: 18px; }
 .tail-status { padding: .4rem .7rem; font-size: 11px; color: #777d88; border-bottom: 1px solid rgba(255,255,255,.07); flex-shrink: 0; }.tail-status.ok { color: #89d281; }.tail-status.warning { color: #e4c00f; }
 .tail-scroll { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.15) transparent; }
@@ -51,7 +73,6 @@ form { display: grid; gap: .55rem; }
 .entry-tool { background: #161a1f; border-radius: .3rem; margin: 2px 0; padding: .3rem .6rem; }.entry-tool.error { background: #291d1d; }
 .entry-tool .tail-label { color: #e8edf2; font-weight: 600; text-transform: none; letter-spacing: 0; }
 .entry-tool .tool-icon { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #89d281; margin-right: 6px; vertical-align: middle; }.entry-tool.error .tool-icon { background: #fc3a4b; }
-.entry-tool .tail-body { color: #777d88; font-size: 11.5px; }
 .entry-tool.collapsed { cursor: pointer; }.entry-tool.collapsed .tail-full { display: none; }
 .entry-tool:not(.collapsed) .tail-preview { display: none; }
 .tail-preview { color: #5f6673; font-size: 11px; margin-top: 3px; }
@@ -66,11 +87,12 @@ form { display: grid; gap: .55rem; }
 </style>
 </head>
 <body>
-<main class="omp-shell" data-omp-dashboard>
-<header class="topbar"><span class="brand">OMP fleet</span><span class="status" data-status>Loading fleet…</span><button type="button" data-refresh>Refresh</button></header>
-<aside class="session-rail" aria-label="Sessions" data-session-rail></aside>
+<main class="omp-shell" data-omp-dashboard data-left-drawer-open="false" data-right-drawer-open="false">
+<header class="topbar"><span class="brand"><span class="brand-wide">OMP Connected</span><span class="brand-compact">OMPC</span></span><span class="status" data-status>Loading fleet…</span><div class="drawer-actions"><button type="button" data-session-drawer-toggle aria-controls="session-drawer" aria-expanded="false">Sessions</button><button type="button" data-inspector-drawer-toggle aria-controls="inspector-drawer" aria-expanded="false">Inspector</button></div><button type="button" data-refresh>Refresh</button></header>
+<aside id="session-drawer" class="session-rail" aria-label="Sessions" data-session-rail></aside>
 <section class="workspace" aria-label="Selected OMP session" data-workspace><iframe class="collab-frame" data-collab-frame title="OMP Collab session" referrerpolicy="no-referrer"></iframe></section>
-<aside class="inspector" aria-label="Inspector" data-inspector></aside>
+<aside id="inspector-drawer" class="inspector" aria-label="Inspector" data-inspector></aside>
+<button type="button" class="drawer-backdrop" data-drawer-backdrop aria-label="Close open panel" hidden></button>
 </main>
 <script type="module" src="/app.js"></script>
 </body>
