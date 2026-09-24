@@ -63,7 +63,7 @@ afterEach(() => {
 describe("private Collab relay", () => {
   it("serves the guest client and an unauthenticated liveness endpoint", async () => {
     relay = startCollabRelay({
-      webRoot: `${import.meta.dir}/../../dist/webui/collab`,
+      webRoot: `${import.meta.dir}/../fixtures/collab-web`,
     });
 
     const [index, health, traversal] = await Promise.all([
