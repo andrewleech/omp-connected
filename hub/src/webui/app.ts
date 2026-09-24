@@ -341,6 +341,9 @@ function createDashboard(root: HTMLElement): void {
     );
   }
   async function pollSessions(): Promise<void> {
+    // Re-fetch hosts too: a host that registers after page load must appear
+    // without a manual Refresh.
+    state.hosts = await json<HostSummary[]>("/api/hosts");
     await loadSessions();
     render();
   }
