@@ -146,7 +146,13 @@ export class AgentRegistry {
    *  not-yet-purged entry (preserving and redelivering its queued
    *  mailbox). Rejects the reserved `operator@*` hostId namespace. */
   register(
-    params: { hostId: string; instanceId: string; pid: number; cwd: string },
+    params: {
+      hostId: string;
+      instanceId: string;
+      pid: number;
+      cwd: string;
+      label?: string;
+    },
     conn: AgentConn,
   ): AgentSummary {
     this.pruneExpired();
@@ -169,7 +175,7 @@ export class AgentRegistry {
       id,
       hostId: params.hostId,
       instanceId: params.instanceId,
-      label: basename(params.cwd),
+      label: params.label ?? basename(params.cwd),
       cwd: params.cwd,
       pid: params.pid,
       connectedAt: new Date(this.now()),

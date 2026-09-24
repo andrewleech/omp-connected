@@ -149,6 +149,16 @@ describe("fleet dashboard workspace", () => {
     );
   });
 
+  test("prefers the hub-registered ompc label over the directory basename", () => {
+    expect(
+      sessionLabel({
+        ...alpha,
+        cwd: "/home/andrew/studio/mesh",
+        label: "mesh.install",
+      }),
+    ).toBe("mesh.install");
+  });
+
   test("falls back to verbose name then instance id without a cwd", () => {
     expect(
       sessionLabel({ ...alpha, sessionName: "Support multiple providers" }),

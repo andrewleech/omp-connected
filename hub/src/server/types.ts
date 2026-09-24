@@ -50,6 +50,10 @@ export interface HostCollabSession {
   participants: number;
   relayConnected: boolean;
   inputRequired: boolean;
+  /** Hub-added: the registered agent's display label (ompc session name,
+   *  else basename(cwd)). Absent for Collab sessions with no registered
+   *  omp-connected agent. */
+  label?: string;
 }
 
 export type CollabListParams = Record<string, never>;
@@ -97,7 +101,7 @@ export type DashboardEvent =
 // ---------------------------------------------------------------------------
 // Agent-to-agent messaging.
 // Canonical agent identity is `${hostId}:${instanceId}`; the display label
-// (`basename(cwd)`) is a convenience address that resolves only when
+// (the ompc session name, else `basename(cwd)`) is a convenience address that resolves only when
 // unambiguous across all currently-known agents. See
 // cc-pi-bridge/planning/20260920_research_wire-protocol-spec.md.
 // ---------------------------------------------------------------------------
@@ -106,7 +110,7 @@ export interface AgentSummary {
   id: string; // canonical: `${hostId}:${instanceId}`
   hostId: string;
   instanceId: string;
-  label: string; // basename(cwd), server-derived, never self-reported
+  label: string; // extension-reported ompc session name, else basename(cwd)
   cwd: string; // from the host's collab.list, confirmed at registration
   pid: number;
   connectedAt: string;
@@ -160,18 +164,25 @@ export interface AgentAddressAmbiguousErrorData {
 }
 
 /** Extension -> server, once per connection, must be the first message.
- *  `cwd` is the extension's own claim, used directly for the display
- *  label — the server has no independent way to confirm it corresponds
- *  to a real session, so a session's display identity is only as
- *  trustworthy as the extension reporting it. */
+ *  `cwd` and `label` are the extension's own claims, used directly for the
+ *  display label — the server has no independent way to confirm they
+ *  correspond to a real session, so a session's display identity is only
+ *  as trustworthy as the extension reporting it. */
 export interface AgentRegisterParams {
   hostId: string;
   instanceId: string;
   pid: number;
   cwd: string;
+  /** Display label (the ompc tmux session name); must match
+   *  AGENT_LABEL_PATTERN. Absent → basename(cwd). */
+  label?: string;
   /** Shared secret, checked against OMP_HUB_HOST_TOKEN. */
   token: string;
 }
+
+/** ompc's session-name rule. Excludes `@` and `:`, so a label can never be
+ *  mistaken for a canonical `${hostId}:${instanceId}` address. */
+export const AGENT_LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 
 export interface AgentRegisterResult {
   ok: true;

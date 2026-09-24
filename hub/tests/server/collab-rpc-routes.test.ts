@@ -15,7 +15,13 @@ function registerFakeAgent(registry: AgentRegistry, hostId: string): void {
       // Reply on the next microtask, mimicking a real round trip.
       queueMicrotask(() => {
         if (frame.method === "collab.list") {
-          registry.resolveHostCall(frame.id, { sessions: [] }, undefined);
+          // inst-1 is this agent's own session; "other" is a Collab session
+          // on the same host with no registered omp-connected agent.
+          registry.resolveHostCall(
+            frame.id,
+            { sessions: [{ instanceId: "inst-1" }, { instanceId: "other" }] },
+            undefined,
+          );
         } else if (frame.method === "collab.link") {
           registry.resolveHostCall(
             frame.id,
@@ -32,7 +38,7 @@ function registerFakeAgent(registry: AgentRegistry, hostId: string): void {
     close: () => {},
   };
   registry.register(
-    { hostId, instanceId: "inst-1", pid: 111, cwd: "/x" },
+    { hostId, instanceId: "inst-1", pid: 111, cwd: "/x", label: "x.install" },
     conn,
   );
 }
@@ -57,7 +63,7 @@ describe("collab-rpc-routes", () => {
     expect(await response.json()).toEqual([{ hostId: "user@hub-host" }]);
   });
 
-  test("GET /:id/collab relays a connected host's session list", async () => {
+  test("GET /:id/collab relays the host's sessions, labelling registered ones", async () => {
     const registry = new AgentRegistry();
     registerFakeAgent(registry, "user@hub-host");
     const app = collabRpcRoutes(registry);
@@ -65,7 +71,12 @@ describe("collab-rpc-routes", () => {
       new Request("http://localhost/api/hosts/user@hub-host/collab"),
     );
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ sessions: [] });
+    expect(await response.json()).toEqual({
+      sessions: [
+        { instanceId: "inst-1", label: "x.install" },
+        { instanceId: "other" },
+      ],
+    });
   });
 
   test("POST /:id/collab/:instanceId/link rejects an invalid instance id before touching the host", async () => {

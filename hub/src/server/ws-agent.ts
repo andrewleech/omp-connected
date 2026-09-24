@@ -22,7 +22,11 @@ import {
   AgentRegistryError,
 } from "./agent-registry";
 import { RateLimiter } from "./rate-limit";
-import { AGENT_RPC_ERRORS, type AgentRegisterParams } from "./types";
+import {
+  AGENT_LABEL_PATTERN,
+  AGENT_RPC_ERRORS,
+  type AgentRegisterParams,
+} from "./types";
 
 interface AgentWs {
   send(data: string): void;
@@ -57,7 +61,11 @@ function isAgentRegisterParams(value: unknown): value is AgentRegisterParams {
     "cwd" in value &&
     typeof value.cwd === "string" &&
     "token" in value &&
-    typeof value.token === "string"
+    typeof value.token === "string" &&
+    (!("label" in value) ||
+      value.label === undefined ||
+      (typeof value.label === "string" &&
+        AGENT_LABEL_PATTERN.test(value.label)))
   );
 }
 
@@ -191,7 +199,7 @@ export function wsAgentPlugin(agentRegistry: AgentRegistry, hostToken: string) {
     params: unknown,
   ): Promise<void> {
     if (!isAgentRegisterParams(params)) {
-      sendError(ws, id, -32602, "agent.register missing required params");
+      sendError(ws, id, -32602, "agent.register missing or invalid params");
       ws.close();
       return;
     }
@@ -212,6 +220,7 @@ export function wsAgentPlugin(agentRegistry: AgentRegistry, hostToken: string) {
           instanceId: params.instanceId,
           pid: params.pid,
           cwd: params.cwd,
+          label: params.label,
         },
         conn,
       );

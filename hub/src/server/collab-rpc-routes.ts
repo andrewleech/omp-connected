@@ -37,7 +37,20 @@ export function collabRpcRoutes(agentRegistry: AgentRegistry) {
           {},
           COLLAB_TIMEOUT_MS,
         );
-        return { sessions: result.sessions };
+        // Attach each session's registered label (the ompc session name)
+        // so the dashboard shows the same name as the agent tools.
+        const labels = new Map(
+          agentRegistry
+            .listAgents()
+            .filter((agent) => agent.hostId === hostId)
+            .map((agent) => [agent.instanceId, agent.label]),
+        );
+        return {
+          sessions: result.sessions.map((session) => {
+            const label = labels.get(session.instanceId);
+            return label === undefined ? session : { ...session, label };
+          }),
+        };
       } catch (err) {
         set.status = 504;
         return { error: (err as Error).message };

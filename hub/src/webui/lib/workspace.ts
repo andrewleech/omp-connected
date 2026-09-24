@@ -21,6 +21,8 @@ export interface CollabSession {
   sessionId?: string;
   cwd?: string;
   participants?: number;
+  /** Registered agent label from the hub (the ompc session name). */
+  label?: string;
 }
 
 export interface WorkspaceGroup {
@@ -53,13 +55,14 @@ export function sessionKey(session: CollabSession): string {
 }
 
 /**
- * Compact rail label: the project directory's basename (matching bin/ompc's
- * own default session-naming convention), falling back to the session's own
- * verbose name only when no cwd was reported. The verbose name remains
- * available via the session object for the central pane heading; this is
- * deliberately the short form.
+ * Compact rail label: the hub-registered agent label (bin/ompc's session
+ * name, `<dir>` or `<dir>.<suffix>`), else the project directory's basename,
+ * falling back to the session's own verbose name only when no cwd was
+ * reported. The verbose name remains available via the session object for
+ * the central pane heading; this is deliberately the short form.
  */
 export function sessionLabel(session: CollabSession): string {
+  if (session.label) return session.label;
   const base = session.cwd?.split("/").filter(Boolean).pop();
   return base || session.sessionName || session.sessionId || session.instanceId;
 }

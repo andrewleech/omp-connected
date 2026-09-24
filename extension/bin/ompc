@@ -57,6 +57,9 @@ tmux_config="$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/omp-tmux.conf
 # Each OMP session gets its own tmux server via -L for per-session process
 # isolation (independent CPU/memory attribution in ps/top/htop, independent
 # failure domains — one crashed server affects only its own session).
+#
+# OMPC_SESSION carries the tmux session name into OMP; the omp-connected
+# extension registers it as the session's hub label.
 
 if "$detach"; then
 	# Start detached — useful for agents spawning side-quest sessions.
@@ -69,7 +72,7 @@ if "$detach"; then
 		exit 0
 	fi
 	tmux -L "$session_name" -f "$tmux_config" new-session -d -s "$session_name" \
-		"${omp_command[@]}" "$@"
+		-e "OMPC_SESSION=$session_name" "${omp_command[@]}" "$@"
 	printf '%s\n' "$session_name"
 	exit 0
 fi
@@ -77,4 +80,4 @@ fi
 # Attach-or-create (interactive): -A attaches if session exists, creates
 # otherwise — same pattern as `tmux new -A -s <name>`.
 exec tmux -L "$session_name" -f "$tmux_config" new-session -A -s "$session_name" \
-	"${omp_command[@]}" "$@"
+	-e "OMPC_SESSION=$session_name" "${omp_command[@]}" "$@"
