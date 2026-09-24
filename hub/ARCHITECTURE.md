@@ -67,8 +67,8 @@ interface AgentSummary {
 
 // Server -> Extension (server-initiated call, forwarded to whichever
 // agent connection is currently live for the target hostId; the
-// extension answers directly against @oh-my-pi/pi-coding-agent's own
-// Collab registry — no CLI subprocess involved)
+// extension answers in-process from omp's `omp collab list|link --json`
+// implementation (@oh-my-pi/pi-coding-agent/cli/collab-cli) — no subprocess)
 interface CollabListParams {}
 interface CollabListResult { sessions: HostCollabSession[] }
 interface CollabLinkParams { instanceId: string; generation: number; access: "view" | "control"; }

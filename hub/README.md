@@ -13,8 +13,8 @@ wire protocol, and security model.
   protocol.
 - That same connection is also how this server reaches host-level Collab
   discovery: `collab.list`/`collab.link` calls are forwarded to whichever
-  agent connection is currently live for a hostId and answered directly
-  against `@oh-my-pi/pi-coding-agent`'s own Collab registry — there is no
+  agent connection is currently live for a hostId and answered in-process
+  from OMP's `omp collab list|link --json` implementation — there is no
   separate host-registration process or connection.
 - The server exposes both over REST (`/api/hosts/:id/collab`,
   `/api/hosts/:id/collab/:instanceId/link`, `/api/agents`,

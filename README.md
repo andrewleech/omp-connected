@@ -24,7 +24,8 @@ Two components, one repo:
 
 ## Prerequisites
 
-- [OMP](https://github.com/can1357/oh-my-pi) (the official CLI) — every host
+- [OMP](https://github.com/can1357/oh-my-pi) (the official CLI) — every
+  host; either the standalone binary or the Bun install works
 - [tmux](https://github.com/tmux/tmux) 3.5 or newer (session persistence for
   `ompc`) — every host. Older tmux works, without csi-u modified keys such as
   Shift+Enter (3.5+) or clipboard/image passthrough (3.3+).
@@ -218,6 +219,8 @@ doesn't appear, check the OMP log:
 
 - `registration attempt failed` — hub unreachable or token mismatch. The
   extension retries with backoff (1–30s).
+- `could not load omp's Collab CLI module` — the installed OMP predates
+  `omp collab list --json`; run `omp update`.
 - `could not discover this session's Collab instanceId` — Collab isn't
   running in the session (the Collab step above).
 
