@@ -23,12 +23,28 @@ function jitteredBackoff(attempt: number): number {
 	return base * (0.8 + Math.random() * 0.4);
 }
 
+/** Hub identity is per process: `discoverInstanceId` matches on `process.pid`,
+ *  and in-process subagents run this extension's `session_start` too. Were
+ *  each extension instance to register, every subagent would claim the
+ *  parent's identity, the hub would close the other socket on each claim,
+ *  and the two would reconnect into each other forever. So one connection is
+ *  shared across every instance in the process, owned by the first session
+ *  to start (the top-level one); subagents reuse it. */
+interface ProcessHub {
+	owner?: ExtensionAPI;
+	transport?: HubTransport;
+	identity?: AgentSummary;
+	instanceId?: string;
+	shuttingDown: boolean;
+	registering: boolean;
+}
+
+const PROCESS_HUB = Symbol.for("omp-connected.process-hub");
+
 export function registerOmpConnected(pi: ExtensionAPI): void {
-	let transport: HubTransport | undefined;
-	let identity: AgentSummary | undefined;
-	let discoveredInstanceId: string | undefined;
-	let shuttingDown = false;
-	let registering = false;
+	const scope = globalThis as { [PROCESS_HUB]?: ProcessHub };
+	scope[PROCESS_HUB] ??= { shuttingDown: false, registering: false };
+	const hub = scope[PROCESS_HUB];
 
 	pi.registerMessageRenderer(AGENT_MESSAGE_TYPE, (message) => {
 		const details = message.details as { from?: unknown; type?: unknown } | undefined;
@@ -43,30 +59,38 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 	}
 
 	function ensureTransport(hubUrl: string, token: string): HubTransport {
-		if (transport) return transport;
-		transport = new HubTransport(hubUrl, token, handleInbound, handleTransportClose);
-		return transport;
+		hub.transport ??= new HubTransport(hubUrl, token, handleInbound, handleTransportClose);
+		return hub.transport;
 	}
 
 	function handleTransportClose(): void {
-		identity = undefined;
-		transport = undefined;
-		if (shuttingDown || registering || !discoveredInstanceId) return;
+		hub.identity = undefined;
+		hub.transport = undefined;
+		const instanceId = hub.instanceId;
+		if (hub.shuttingDown || hub.registering || !instanceId) return;
 		const hubUrl = process.env.OMP_HUB_URL;
 		const token = process.env.OMP_HUB_HOST_TOKEN;
 		if (!hubUrl || !token) return;
 		const hostId = `${os.userInfo().username}@${os.hostname()}`;
-		void registerWithBackoff(hostId, discoveredInstanceId, hubUrl, token);
+		// Never reconnect instantly: if something else holds this identity, the
+		// hub closes whichever socket registered first, and two instant
+		// reconnectors would flood the hub (and every dashboard) with events.
+		void sleep(jitteredBackoff(0)).then(() => registerWithBackoff(hostId, instanceId, hubUrl, token));
 	}
 
 	async function registerWithBackoff(hostId: string, instanceId: string, hubUrl: string, token: string): Promise<void> {
-		if (registering) return;
-		registering = true;
+		if (hub.registering || hub.identity) return;
+		hub.registering = true;
 		try {
-			for (let attempt = 0; !shuttingDown; attempt += 1) {
+			for (let attempt = 0; !hub.shuttingDown; attempt += 1) {
 				try {
-					const result = await ensureTransport(hubUrl, token).register({ hostId, instanceId, pid: process.pid, cwd: process.cwd() });
-					identity = result.agent;
+					const result = await ensureTransport(hubUrl, token).register({
+						hostId,
+						instanceId,
+						pid: process.pid,
+						cwd: process.cwd(),
+					});
+					hub.identity = result.agent;
 					return;
 				} catch (error) {
 					pi.logger.warn("omp-connected: registration attempt failed, retrying", {
@@ -76,7 +100,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 				}
 			}
 		} finally {
-			registering = false;
+			hub.registering = false;
 		}
 	}
 
@@ -104,6 +128,11 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		const hubUrl = process.env.OMP_HUB_URL;
 		const token = process.env.OMP_HUB_HOST_TOKEN;
 		if (!hubUrl || !token) return; // graceful no-op if not configured
+		// A subagent (or any later session in this process) shares the owner's
+		// connection; see ProcessHub.
+		if (hub.owner && hub.owner !== pi) return;
+		hub.owner = pi;
+		hub.shuttingDown = false;
 
 		const hostId = `${os.userInfo().username}@${os.hostname()}`;
 		if (isReservedIdentity(hostId)) {
@@ -116,19 +145,22 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 			pi.logger.warn("omp-connected: could not discover this session's Collab instanceId; agent messaging disabled");
 			return;
 		}
-		discoveredInstanceId = instanceId;
+		hub.instanceId = instanceId;
 		await registerWithBackoff(hostId, instanceId, hubUrl, token);
 	});
 
 	pi.on("session_shutdown", () => {
-		shuttingDown = true;
-		transport?.close();
-		transport = undefined;
+		if (hub.owner !== pi) return;
+		hub.owner = undefined;
+		hub.shuttingDown = true;
+		hub.transport?.close();
+		hub.transport = undefined;
 	});
 
 	function requireTransport(): HubTransport {
-		if (!transport || !identity) throw new Error("omp-connected: not registered with the agent messaging hub yet");
-		return transport;
+		if (!hub.transport || !hub.identity)
+			throw new Error("omp-connected: not registered with the agent messaging hub yet");
+		return hub.transport;
 	}
 
 	/** `agent.send`/`agent.send_team` carry a client-supplied idempotency
@@ -159,8 +191,8 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		parameters: Type.Object({}),
 		approval: "read",
 		async execute() {
-			if (!identity) return { content: [{ type: "text", text: JSON.stringify({ registered: false }) }] };
-			return { content: [{ type: "text", text: JSON.stringify({ registered: true, ...identity }) }] };
+			if (!hub.identity) return { content: [{ type: "text", text: JSON.stringify({ registered: false }) }] };
+			return { content: [{ type: "text", text: JSON.stringify({ registered: true, ...hub.identity }) }] };
 		},
 	});
 

@@ -676,6 +676,39 @@ describe("AgentRegistry — host-level Collab calls", () => {
     await expect(call).rejects.toThrow("disconnected");
   });
 
+  test("callOnHost asks the longest-connected agent, not one that just reconnected", async () => {
+    let now = 0;
+    const registry = new AgentRegistry({ now: () => now });
+    const sentTo: string[] = [];
+    const conn = (name: string) => fakeConn(() => sentTo.push(name));
+    // `a` registers first, so it holds the front slot in insertion order...
+    registerAgent(
+      registry,
+      { hostId: "user@hub-host", instanceId: "a" },
+      conn("a-1"),
+    );
+    now = 1;
+    registerAgent(
+      registry,
+      { hostId: "user@hub-host", instanceId: "b" },
+      conn("b"),
+    );
+    // ...and keeps it when it reconnects, but it is now the newest connection.
+    now = 2;
+    registerAgent(
+      registry,
+      { hostId: "user@hub-host", instanceId: "a" },
+      conn("a-2"),
+    );
+
+    void registry
+      .callOnHost("user@hub-host", "collab.list", {}, 2000)
+      .catch(() => {});
+    await Promise.resolve();
+
+    expect(sentTo).toEqual(["b"]);
+  });
+
   test("resolveHostCall returns false for an id it doesn't recognize", () => {
     const registry = new AgentRegistry();
     expect(registry.resolveHostCall("unknown-id", {}, undefined)).toBe(false);

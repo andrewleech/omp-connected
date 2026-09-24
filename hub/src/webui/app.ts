@@ -27,6 +27,7 @@ import {
 } from "./lib/workspace";
 
 const SESSION_POLL_MS = 15_000;
+const AGENT_EVENT_REFRESH_MS = 1_000;
 
 interface HostSummary {
   hostId: string;
@@ -904,6 +905,30 @@ function createDashboard(root: HTMLElement): void {
   });
   setDrawer("left", false);
 
+  // A reconnecting agent can emit hundreds of these per second. Run one
+  // refresh at a time, then hold off for AGENT_EVENT_REFRESH_MS, folding
+  // every event that arrives meanwhile into a single follow-up.
+  let agentEventBusy = false;
+  let agentEventQueued = false;
+  function refreshForAgentEvent(): void {
+    if (agentEventBusy) {
+      agentEventQueued = true;
+      return;
+    }
+    agentEventBusy = true;
+    void Promise.all([refresh(), loadAgents()])
+      .then(() => render())
+      .catch(() => {})
+      .finally(() =>
+        setTimeout(() => {
+          agentEventBusy = false;
+          if (!agentEventQueued) return;
+          agentEventQueued = false;
+          refreshForAgentEvent();
+        }, AGENT_EVENT_REFRESH_MS),
+      );
+  }
+
   const socket = new WebSocket(
     `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/ws/dashboard`,
   );
@@ -918,9 +943,7 @@ function createDashboard(root: HTMLElement): void {
         // host's Collab visibility changed — host-level discovery is
         // served through the same /ws/agent connection now, so refresh
         // both the host/session list and the agent roster together.
-        void Promise.all([refresh(), loadAgents()])
-          .then(() => render())
-          .catch(() => {});
+        refreshForAgentEvent();
       }
     } catch {
       // ignore malformed frames
