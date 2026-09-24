@@ -4,6 +4,7 @@ import {
   type StorageLike,
   WORKSPACE_STORAGE_KEY,
   canRequestAccess,
+  defaultRequestedAccess,
   groupSessions,
   readWorkspace,
   resolveRememberedSession,
@@ -56,6 +57,11 @@ describe("fleet dashboard workspace", () => {
       alpha,
     );
     expect(resolveRememberedSession([beta], sessionKey(alpha))).toBeNull();
+  });
+
+  test("chooses the advertised maximum access for a new selection", () => {
+    expect(defaultRequestedAccess(alpha)).toBe("control");
+    expect(defaultRequestedAccess(beta)).toBe("view");
   });
 
   test("does not offer control for a view-only room", () => {

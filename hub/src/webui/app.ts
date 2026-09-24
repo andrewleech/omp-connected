@@ -7,13 +7,16 @@
 // interval instead of being pushed, since this server only ever learns
 // it by RPC-polling a host itself.
 
+import { customizeCollabFrame } from "./lib/collab-frame";
 import { collabFrameUrl } from "./lib/collab-link";
 import { CollabTailViewer } from "./lib/collab-tail";
+import { type EdgeSwipeOptions, attachEdgeSwipe } from "./lib/edge-swipe";
 import {
   type CollabSession,
   INSPECTOR_PANES,
   type InspectorPane,
   canRequestAccess,
+  defaultRequestedAccess,
   groupSessions,
   readWorkspace,
   resolveRememberedSession,
@@ -173,6 +176,91 @@ function createDashboard(root: HTMLElement): void {
   };
   let lastWorkspaceSignature: string | null | undefined;
   let tailViewer: CollabTailViewer | null = null;
+  let collabRequest = 0;
+  let agentsFetchInFlight = false;
+  let leftDrawerOpen = false;
+  let rightDrawerOpen = false;
+  let drawerTrigger: HTMLElement | null = null;
+
+  function isCompactLayout(): boolean {
+    return window.matchMedia("(max-width: 768px)").matches;
+  }
+
+  function setDrawer(
+    drawer: "left" | "right",
+    open: boolean,
+    trigger?: HTMLElement,
+  ): void {
+    if (drawer === "left") leftDrawerOpen = open;
+    else rightDrawerOpen = open;
+    if (open && trigger) drawerTrigger = trigger;
+    root.dataset.leftDrawerOpen = String(leftDrawerOpen);
+    root.dataset.rightDrawerOpen = String(rightDrawerOpen);
+    root
+      .querySelector<HTMLButtonElement>("[data-session-drawer-toggle]")
+      ?.setAttribute("aria-expanded", String(leftDrawerOpen));
+    root
+      .querySelector<HTMLButtonElement>("[data-inspector-drawer-toggle]")
+      ?.setAttribute("aria-expanded", String(rightDrawerOpen));
+    const compact = isCompactLayout();
+    for (const [selector, isOpen] of [
+      ["[data-session-rail]", leftDrawerOpen],
+      ["[data-inspector]", rightDrawerOpen],
+    ] as const) {
+      const panel = root.querySelector<HTMLElement>(selector);
+      if (!panel) continue;
+      panel.toggleAttribute("inert", compact && !isOpen);
+      if (compact && !isOpen) panel.setAttribute("aria-hidden", "true");
+      else panel.removeAttribute("aria-hidden");
+    }
+    const backdrop = root.querySelector<HTMLButtonElement>(
+      "[data-drawer-backdrop]",
+    );
+    if (backdrop) backdrop.hidden = !leftDrawerOpen && !rightDrawerOpen;
+    if (!open && !leftDrawerOpen && !rightDrawerOpen) {
+      drawerTrigger?.focus();
+      drawerTrigger = null;
+    }
+    if (open) {
+      requestAnimationFrame(() => {
+        root
+          .querySelector<HTMLButtonElement>(
+            drawer === "left"
+              ? "[data-session-drawer-close]"
+              : "[data-inspector-drawer-close]",
+          )
+          ?.focus();
+      });
+    }
+  }
+
+  function closeDrawers(): void {
+    if (!leftDrawerOpen && !rightDrawerOpen) return;
+    leftDrawerOpen = false;
+    rightDrawerOpen = false;
+    setDrawer("left", false);
+  }
+
+  function edgeSwipeOptions(offsetX: () => number): EdgeSwipeOptions {
+    return {
+      offsetX,
+      viewportWidth: () => window.innerWidth,
+      enabled: isCompactLayout,
+      drawers: () => ({ left: leftDrawerOpen, right: rightDrawerOpen }),
+      onSwipe: (action) => {
+        const toggle = root.querySelector<HTMLElement>(
+          action.endsWith("left")
+            ? "[data-session-drawer-toggle]"
+            : "[data-inspector-drawer-toggle]",
+        );
+        setDrawer(
+          action.endsWith("left") ? "left" : "right",
+          action.startsWith("open"),
+          toggle ?? undefined,
+        );
+      },
+    };
+  }
 
   function persist(): void {
     writeWorkspace(localStorage, {
@@ -257,7 +345,9 @@ function createDashboard(root: HTMLElement): void {
   }
 
   function selectSession(session: CollabSession): void {
-    // Tear down any active tail viewer or iframe
+    const request = ++collabRequest;
+    // A different session invalidates every in-flight capability result before
+    // its old surface is torn down.
     tailViewer?.destroy();
     tailViewer = null;
     const frame = root.querySelector<HTMLIFrameElement>("[data-collab-frame]");
@@ -267,7 +357,7 @@ function createDashboard(root: HTMLElement): void {
     state.selectedAccess = null;
     persist();
     render();
-    void openCollab("view");
+    void openCollab(defaultRequestedAccess(session), request);
   }
 
   function setGroup(session: CollabSession, groupId: string | null): void {
@@ -280,9 +370,13 @@ function createDashboard(root: HTMLElement): void {
     render();
   }
 
-  async function openCollab(access: "view" | "control"): Promise<void> {
+  async function openCollab(
+    access: "view" | "control",
+    request = ++collabRequest,
+  ): Promise<void> {
     const session = state.selectedSession;
-    if (!session || !canRequestAccess(session, access)) return;
+    const selectedKey = session && sessionKey(session);
+    if (!session || !selectedKey || !canRequestAccess(session, access)) return;
     showStatus(`Requesting ${access} access…`);
     try {
       const result = await json<{ access: string; url: string }>(
@@ -295,12 +389,20 @@ function createDashboard(root: HTMLElement): void {
       );
       if (result.access !== access || typeof result.url !== "string")
         throw new Error("Broker returned an unexpected Collab capability");
+      if (
+        request !== collabRequest ||
+        state.selectedSession === null ||
+        sessionKey(state.selectedSession) !== selectedKey
+      )
+        return;
 
       // View mode: use the lightweight tail viewer (no full-history replay).
       // Control mode: use the full Collab iframe (needs the composer UI).
       if (access === "view") {
         tailViewer?.destroy();
-        const frame = root.querySelector<HTMLIFrameElement>("[data-collab-frame]");
+        const frame = root.querySelector<HTMLIFrameElement>(
+          "[data-collab-frame]",
+        );
         if (frame) frame.style.display = "none";
         const workspace = root.querySelector("[data-workspace]");
         let viewerEl = workspace?.querySelector<HTMLElement>(".tail-viewer");
@@ -313,9 +415,10 @@ function createDashboard(root: HTMLElement): void {
       } else {
         tailViewer?.destroy();
         tailViewer = null;
-        // Remove tail viewer element and show iframe
         root.querySelector(".tail-viewer")?.remove();
-        const frame = root.querySelector<HTMLIFrameElement>("[data-collab-frame]");
+        const frame = root.querySelector<HTMLIFrameElement>(
+          "[data-collab-frame]",
+        );
         if (frame) {
           frame.style.display = "";
           frame.src = collabFrameUrl(result.url, location.origin);
@@ -329,6 +432,7 @@ function createDashboard(root: HTMLElement): void {
         "ok",
       );
     } catch (error) {
+      if (request !== collabRequest) return;
       const message = (error as Error).message;
       showStatus(
         /generation|stale|not found/i.test(message)
@@ -381,6 +485,12 @@ function createDashboard(root: HTMLElement): void {
 
   function renderRail(container: Element): void {
     container.replaceChildren();
+    const drawerHeader = el("div", { className: "drawer-header" });
+    drawerHeader.append(el("strong", { text: "Sessions" }));
+    const close = el("button", { type: "button", text: "Close" });
+    close.dataset.sessionDrawerClose = "";
+    drawerHeader.append(close);
+    container.append(drawerHeader);
     const addGroup = el("button", {
       className: "quiet",
       text: "+ New project group",
@@ -411,13 +521,25 @@ function createDashboard(root: HTMLElement): void {
             text: sessionLabel(session),
           }),
         );
-        card.append(
-          el("span", {
-            className: `badge ${session.access}`,
-            text: session.access,
-          }),
-        );
-        card.onclick = () => selectSession(session);
+        // Control is the norm; only flag the exception.
+        if (session.access !== "control")
+          card.append(
+            el("span", {
+              className: `badge ${session.access}`,
+              text: session.access,
+            }),
+          );
+        card.onclick = () => {
+          // Same rule as the refresh path: re-selecting the room that is
+          // already open would blank the iframe and replay its whole history.
+          // A selection that never opened (selectedAccess still null) retries.
+          const open =
+            state.selectedAccess !== null &&
+            state.selectedSession !== null &&
+            sessionKey(state.selectedSession) === sessionKey(session);
+          if (!open) selectSession(session);
+          if (isCompactLayout()) closeDrawers();
+        };
         card.oncontextmenu = (event) => {
           event.preventDefault();
           openContextMenu(
@@ -441,7 +563,9 @@ function createDashboard(root: HTMLElement): void {
     if (signature === lastWorkspaceSignature) return;
     lastWorkspaceSignature = signature;
     // Preserve live elements from being destroyed by replaceChildren
-    const frame = container.querySelector<HTMLIFrameElement>("[data-collab-frame]");
+    const frame = container.querySelector<HTMLIFrameElement>(
+      "[data-collab-frame]",
+    );
     const viewerEl = container.querySelector<HTMLElement>(".tail-viewer");
     container.replaceChildren();
     if (!session) {
@@ -455,36 +579,27 @@ function createDashboard(root: HTMLElement): void {
       );
       return;
     }
-    const header = el("header", { className: "workspace-header" });
-    const title = el("div", { className: "workspace-title" });
-    title.append(
-      el("span", {
-        className: "workspace-title-text",
-        text: `${displayName(session)} · ${session.host_id}`,
-      }),
-    );
-    title.append(
-      el("span", {
-        className: `badge ${state.selectedAccess ?? "connecting"}`,
-        text:
-          state.selectedAccess === "control"
-            ? "control"
-            : state.selectedAccess === "view"
-              ? "view"
-              : "connecting…",
-      }),
-    );
-    header.append(title);
-    const hint = el("p", {
-      className: "channel-hint",
-      text:
-        state.selectedAccess === "control"
-          ? "Prompt this session in the Collab composer below."
-          : canRequestAccess(session, "control")
-            ? "Viewing read-only. Click a session to switch."
-            : "This room is view-only on its host.",
-    });
-    container.append(header, hint);
+    // The Collab iframe (control mode) shows the session title in its own
+    // header, so only label the workspace while connecting or for the
+    // title-less tail viewer.
+    if (state.selectedAccess !== "control") {
+      const header = el("header", { className: "workspace-header" });
+      const title = el("div", { className: "workspace-title" });
+      title.append(
+        el("span", {
+          className: "workspace-title-text",
+          text: `${displayName(session)} · ${session.host_id}`,
+        }),
+      );
+      title.append(
+        el("span", {
+          className: `badge ${state.selectedAccess ?? "connecting"}`,
+          text: state.selectedAccess === "view" ? "view" : "connecting…",
+        }),
+      );
+      header.append(title);
+      container.append(header);
+    }
     // Tail viewer active → show it; otherwise show the collab iframe.
     if (tailViewer && viewerEl) {
       viewerEl.style.display = "";
@@ -633,6 +748,12 @@ function createDashboard(root: HTMLElement): void {
 
   function renderInspector(container: Element): void {
     container.replaceChildren();
+    const drawerHeader = el("div", { className: "drawer-header" });
+    drawerHeader.append(el("strong", { text: "Inspector" }));
+    const close = el("button", { type: "button", text: "Close" });
+    close.dataset.inspectorDrawerClose = "";
+    drawerHeader.append(close);
+    container.append(drawerHeader);
     const tabs = el("div", { className: "tabs" });
     for (const pane of INSPECTOR_PANES) {
       const tab = el("button", {
@@ -690,10 +811,98 @@ function createDashboard(root: HTMLElement): void {
     if (inspector) renderInspector(inspector);
   }
 
+  // Customize the same-origin Collab guest on every frame load (see
+  // lib/collab-frame.ts) and forward its edge swipes to the drawers.
+  root.addEventListener(
+    "load",
+    (event) => {
+      const frame = event.target;
+      if (!(frame instanceof HTMLIFrameElement)) return;
+      const doc = frame.contentDocument;
+      if (!doc?.head) return;
+      customizeCollabFrame(doc, localStorage);
+      attachEdgeSwipe(
+        doc,
+        edgeSwipeOptions(() => frame.getBoundingClientRect().left),
+      );
+    },
+    true,
+  );
+  attachEdgeSwipe(
+    document,
+    edgeSwipeOptions(() => 0),
+  );
+
   root.addEventListener("click", (event) => {
-    if ((event.target as HTMLElement).matches("[data-refresh]"))
+    const target = (event.target as HTMLElement).closest<HTMLElement>("button");
+    if (!target) return;
+    if (target.matches("[data-refresh]")) {
       void refresh().catch((error) => showStatus(error.message, "warning"));
+      return;
+    }
+    if (target.matches("[data-session-drawer-toggle]")) {
+      setDrawer("left", !leftDrawerOpen, target);
+      return;
+    }
+    if (target.matches("[data-inspector-drawer-toggle]")) {
+      setDrawer("right", !rightDrawerOpen, target);
+      return;
+    }
+    if (target.matches("[data-session-drawer-close]")) {
+      setDrawer("left", false);
+      return;
+    }
+    if (target.matches("[data-inspector-drawer-close]")) {
+      setDrawer("right", false);
+      return;
+    }
+    if (target.matches("[data-drawer-backdrop]")) closeDrawers();
   });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && isCompactLayout()) closeDrawers();
+  });
+  window
+    .matchMedia("(min-width: 769px)")
+    .addEventListener("change", (event) => {
+      if (event.matches) closeDrawers();
+    });
+  let edgeSwipe:
+    | { side: "left" | "right"; x: number; y: number; pointerId: number }
+    | undefined;
+  root.addEventListener("pointerdown", (event) => {
+    if (event.pointerType !== "touch" || !isCompactLayout()) return;
+    const edge = 24;
+    if (event.clientX <= edge)
+      edgeSwipe = {
+        side: "left",
+        x: event.clientX,
+        y: event.clientY,
+        pointerId: event.pointerId,
+      };
+    else if (event.clientX >= window.innerWidth - edge)
+      edgeSwipe = {
+        side: "right",
+        x: event.clientX,
+        y: event.clientY,
+        pointerId: event.pointerId,
+      };
+  });
+  root.addEventListener("pointerup", (event) => {
+    if (!edgeSwipe || event.pointerId !== edgeSwipe.pointerId) return;
+    const swipe = edgeSwipe;
+    edgeSwipe = undefined;
+    const horizontal = event.clientX - swipe.x;
+    const vertical = Math.abs(event.clientY - swipe.y);
+    if (vertical > 32 || Math.abs(horizontal) < 72) return;
+    if (swipe.side === "left" && horizontal > 0) setDrawer("left", true);
+    if (swipe.side === "left" && horizontal < 0) setDrawer("left", false);
+    if (swipe.side === "right" && horizontal < 0) setDrawer("right", true);
+    if (swipe.side === "right" && horizontal > 0) setDrawer("right", false);
+  });
+  root.addEventListener("pointercancel", () => {
+    edgeSwipe = undefined;
+  });
+  setDrawer("left", false);
 
   const socket = new WebSocket(
     `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/ws/dashboard`,
@@ -723,27 +932,6 @@ function createDashboard(root: HTMLElement): void {
       "warning",
     );
 
-  async function handlePromoteRequest(): Promise<void> {
-    const session = state.selectedSession;
-    if (!session || state.selectedAccess === "control") return;
-    if (!canRequestAccess(session, "control")) {
-      showStatus(
-        "This room is view-only; session prompting isn't available.",
-        "warning",
-      );
-      return;
-    }
-    await openCollab("control");
-  }
-
-  window.addEventListener("message", (event) => {
-    const frame = root.querySelector<HTMLIFrameElement>("[data-collab-frame]");
-    if (!frame || event.source !== frame.contentWindow) return;
-    const data = event.data as { source?: string; type?: string } | null;
-    if (data?.source !== "omp-collab-web" || data.type !== "promote-request")
-      return;
-    void handlePromoteRequest();
-  });
   setInterval(() => void pollSessions().catch(() => {}), SESSION_POLL_MS);
   void refresh().catch((error) => showStatus(error.message, "warning"));
 }
