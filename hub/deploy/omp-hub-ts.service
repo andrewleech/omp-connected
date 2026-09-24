@@ -1,0 +1,24 @@
+[Unit]
+Description=Tailscale node "ompc" giving the OMP Hub dashboard its own hostname
+Documentation=file://%h/omp-connected/hub/README.md
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+# A second, unprivileged tailscaled in userspace-networking mode, so the
+# dashboard gets its own MagicDNS name (ompc.<tailnet>.ts.net). Android keys
+# installed web apps by host and ignores the port, so the dashboard must not
+# share a hostname with other installable web apps. `tailscale serve` on this
+# node terminates TLS and proxies to the hub's existing listener. Manage it
+# with `tailscale --socket=$XDG_RUNTIME_DIR/omp-hub-ts/tailscaled.sock ...`.
+[Service]
+Type=simple
+RuntimeDirectory=omp-hub-ts
+StateDirectory=omp-hub-ts
+ExecStart=/usr/sbin/tailscaled --tun=userspace-networking --port=0 --statedir=%S/omp-hub-ts --socket=%t/omp-hub-ts/tailscaled.sock
+Restart=on-failure
+RestartSec=2s
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

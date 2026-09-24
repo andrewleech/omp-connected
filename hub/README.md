@@ -70,6 +70,12 @@ phone needs internet access at install time so Google can mint the WebAPK;
 `about://webapks` on the phone lists it when that worked (otherwise you get
 a plain shortcut).
 
+Install it from its own hostname, `https://ompc.your-tailnet.ts.net` (see
+`omp-hub-ts.service` below), not `hub-host…:4816`. A WebAPK registers with
+Android by scheme, host and path only, so any installed web app scoped to
+`/` on the same host claims every port there, and Chrome then treats the
+dashboard as already installed (Paseo on `hub-host:443` does exactly this).
+
 The service worker only handles top-level page loads: when the hub can't be
 reached (device off the tailnet, hub stopped) it shows a cached "can't
 reach the hub" page instead of the browser error. Everything else, including
@@ -88,6 +94,13 @@ Deploy units live in [`deploy/`](./deploy):
   root cause of a real outage this design fixes — see ARCHITECTURE.md).
 - `omp-hub-cert-renew.service` / `.timer` — weekly Tailscale cert renewal,
   restarting the service above.
+- `omp-hub-ts.service` — a second, unprivileged `tailscaled`
+  (userspace networking) that joins the tailnet as node `ompc`, giving the
+  dashboard the hostname `ompc.<tailnet>.ts.net` for installing as an app.
+  `tailscale serve` on that node terminates TLS and proxies to the hub's
+  existing listener. Agents keep using `hub-host…:4816`. Tailscale Services
+  would give the same name without a second node, but its hosts have to be
+  tagged devices.
 
 Copy `deploy/omp-hub.env.example` → `~/.config/omp-hub/omp-hub.env`,
 fill in a real `OMP_HUB_HOST_TOKEN`, TLS cert paths, and relay settings,
@@ -97,6 +110,20 @@ then:
 systemctl --user enable --now omp-hub.service
 systemctl --user enable --now omp-hub-cert-renew.timer
 ```
+
+One-off setup for the `ompc` node (the login needs a browser approval; its
+state then persists in `~/.local/state/omp-hub-ts`):
+
+```sh
+systemctl --user enable --now omp-hub-ts.service
+ts="tailscale --socket=$XDG_RUNTIME_DIR/omp-hub-ts/tailscaled.sock"
+$ts up --hostname=ompc --accept-dns=false
+$ts serve --bg https://hub-host.your-tailnet.ts.net:4816
+```
+
+Disable key expiry for `ompc` in the admin console, or it drops off the
+tailnet after the tailnet's key expiry period. `OMP_HUB_RELAY_ALLOWED_ORIGINS`
+must include `https://ompc.<tailnet>.ts.net`.
 
 Set `OMP_HUB_URL` and `OMP_HUB_HOST_TOKEN` in every interactive OMP
 terminal to point it at this deployment.
