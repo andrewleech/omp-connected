@@ -216,10 +216,12 @@ export class AgentRegistry {
     return [...ids].sort();
   }
 
-  /** Forwards a Collab RPC to any one currently-connected agent on
-   *  `hostId` and awaits its JSON-RPC reply. The answer is host-wide
-   *  (Collab session state, not agent-messaging state), so which live
-   *  connection answers it doesn't matter. */
+  /** Forwards a Collab RPC to one currently-connected agent on `hostId` and
+   *  awaits its JSON-RPC reply. The answer is host-wide (Collab session
+   *  state, not agent-messaging state), so any live connection can answer;
+   *  the longest-connected one is asked, because an agent that keeps
+   *  reconnecting always has a fresh `connectedAt` and would otherwise drop
+   *  every call routed to it. */
   async callOnHost<M extends CollabMethod>(
     hostId: string,
     method: M,
@@ -227,12 +229,15 @@ export class AgentRegistry {
     timeoutMs: number,
   ): Promise<CollabMethodResult[M]> {
     this.pruneExpired();
-    const entry = [...this.agents.values()].find(
-      (e) => e.hostId === hostId && e.conn !== undefined,
-    );
-    if (!entry) throw new Error(`no connected agent on host '${hostId}'`);
-    const conn = entry.conn;
-    if (!conn) throw new Error(`no connected agent on host '${hostId}'`);
+    let entry: AgentEntry | undefined;
+    for (const candidate of this.agents.values()) {
+      if (candidate.hostId !== hostId || candidate.conn === undefined) continue;
+      if (!entry || candidate.connectedAt < entry.connectedAt)
+        entry = candidate;
+    }
+    const conn = entry?.conn;
+    if (!entry || !conn)
+      throw new Error(`no connected agent on host '${hostId}'`);
     const id = crypto.randomUUID();
     return new Promise<CollabMethodResult[M]>((resolve, reject) => {
       const timer = setTimeout(() => {
