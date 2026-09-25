@@ -4,32 +4,39 @@
 
 # omp-connected
 
-Fleet presence, agent-to-agent messaging, and a browser dashboard for
-[Oh My Pi](https://github.com/can1357/oh-my-pi) sessions.
+A self-hosted dashboard for all your [Oh My Pi](https://github.com/can1357/oh-my-pi) (omp) coding agent sessions, across every machine you run them on. Follow and drive any session from a browser or your phone, and let sessions message each other.
 
-Two components, one repo:
+Each omp session started with `ompc` registers with a hub you run on one always-on host. The hub's dashboard lists every live session grouped by host; pick one and you get the session itself through omp's Collab: the conversation and tool calls as they happen, and a prompt box to steer the agent. Session traffic goes through a private relay on the hub, which only forwards encrypted frames.
+
+![Dashboard on desktop: sessions grouped by host, with a live session open](docs/screenshots/desktop.png)
+
+<p align="center">
+  <img src="docs/screenshots/mobile-sessions.png" alt="Dashboard on a phone: the sessions drawer" width="280">
+  &nbsp;&nbsp;
+  <img src="docs/screenshots/mobile-session.png" alt="Dashboard on a phone: a live session" width="280">
+</p>
+
+## Features
+
+- **Every session in one place.** Live sessions from all your hosts, grouped by host and labelled with their `ompc` session name.
+- **Control from the browser.** Open a session to follow its conversation and tool calls live, send it prompts, or interrupt it.
+- **Phone friendly, installable app.** The dashboard has a mobile layout with slide-out session and inspector drawers, and installs as an app (PWA) from Chrome on Android or desktop. When the hub can't be reached, the app shows an offline page instead of a browser error. See [Installing the dashboard as an app](#installing-the-dashboard-as-an-app).
+- **Persistent sessions.** `ompc` runs each omp session in its own tmux server, so it survives disconnects and you can reattach from any terminal. A partial name brings up a picker of matching live sessions.
+- **Agent-to-agent messaging.** Sessions can list each other, exchange messages and broadcast to teams through the hub.
+- **Self-hosted.** One Bun server on your own network (Tailscale works well) with a shared registration token; nothing goes through a third party.
+
+The repo has two parts:
 
 | Component | Path | What it does |
 |---|---|---|
-| **Extension** | `extension/` | OMP plugin — registers each session with the hub, handles Collab discovery, provides agent-messaging tools |
-| **Hub** | `hub/` | Always-on Bun server — fleet dashboard, agent registry, Collab link broker, and private relay |
-
-## What it looks like
-
-1. Launch an OMP session with `ompc` (the bundled session launcher).
-2. The extension auto-registers the session with the hub over WebSocket.
-3. Open the hub's dashboard in a browser to see all active sessions.
-4. Click a session to view its live terminal output via Collab.
-5. Send messages between sessions using the `ompc_send_message` tool.
+| **Extension** | `extension/` | OMP plugin (`omp-connected`) plus the `ompc` launcher. Registers each session with the hub, handles Collab discovery, provides the agent-messaging tools |
+| **Hub** | `hub/` | Always-on Bun server: dashboard, agent registry, Collab link broker and private relay |
 
 ## Prerequisites
 
-- [OMP](https://github.com/can1357/oh-my-pi) (the official CLI) — every
-  host; either the standalone binary or the Bun install works
-- [tmux](https://github.com/tmux/tmux) 3.5 or newer (session persistence for
-  `ompc`) — every host. Older tmux works, without csi-u modified keys such as
-  Shift+Enter (3.5+) or clipboard/image passthrough (3.3+).
-- [Bun](https://bun.sh) (runtime for the hub server) — hub host only
+- [OMP](https://github.com/can1357/oh-my-pi) (the official CLI), every host. Either the standalone binary or the Bun install works.
+- [tmux](https://github.com/tmux/tmux) 3.5 or newer (session persistence for `ompc`), every host. Older tmux works, without csi-u modified keys such as Shift+Enter (3.5+) or clipboard/image passthrough (3.3+).
+- [Bun](https://bun.sh) (runtime for the hub server), hub host only.
 
 ```sh
 # Install OMP (official installer)
@@ -44,8 +51,10 @@ curl -fsSL https://bun.sh/install | bash
 ### 1. Clone
 
 ```sh
-git clone https://github.com/alelec/omp-connected.git ~/omp-connected
+git clone https://github.com/andrewleech/omp-connected.git ~/omp-connected
 ```
+
+Clone to `~/omp-connected`: the systemd units in `hub/deploy/` expect the checkout there.
 
 ### 2. Run the installer
 
@@ -64,12 +73,14 @@ the checkout.
 Do this on one always-on host only. Every other host is a client of this hub;
 see [Adding hosts to the fleet](#adding-hosts-to-the-fleet).
 
-Install dependencies and build the dashboard:
+On the hub host, fetch the pinned upstream omp source the dashboard's Collab guest is built from, then install dependencies and build the dashboard:
 
 ```sh
-cd ~/omp-connected/hub
+cd ~/omp-connected
+git submodule update --init --depth 1 hub/vendor/collab-web
+cd hub
 bun install
-bun run scripts/build-webui.ts
+bun run build
 ```
 
 Generate a shared secret for agent registration:
@@ -96,7 +107,9 @@ EOF
 **Test it manually first:**
 
 ```sh
-source ~/.config/omp-hub/omp-hub.env && bun run hub/src/server/index.ts
+cd ~/omp-connected/hub
+set -a && . ~/.config/omp-hub/omp-hub.env && set +a
+bun run start
 ```
 
 Then visit `https://<host>:<port>/health`.
@@ -158,11 +171,25 @@ selects, q/Esc quits. The highlighted default is the exact name, attaching
 to it or creating it if it isn't running. A lone exact match or no match
 skips the menu. So does `-d`, or running without a terminal.
 
+### 6. Open the dashboard
+
+Browse to `https://<hub-host>:4816`. Sessions show up as soon as `ompc` starts them, grouped by host; click one to open it.
+
+#### Installing the dashboard as an app
+
+The dashboard is a PWA. In Chrome on Android use **Add to Home screen**, then **Install**; desktop Chrome shows an install icon in the address bar. It needs HTTPS with a valid certificate (see [TLS](#tls)), and on Android the phone needs internet access while installing so Google can build the app package.
+
+Android registers an installed web app by host, not host and port. If another web app on the hub host is already installed, Chrome treats the dashboard as installed too; give the dashboard its own hostname in that case. [hub/README.md](hub/README.md#installing-as-an-app-pwa) shows how, using a second Tailscale node.
+
 ### Updating
 
 ```sh
 cd ~/omp-connected && git pull && ./install.sh   # extension + ompc
 omp update                                       # OMP itself
+
+# hub host only: rebuild the dashboard and restart the hub
+git submodule update --init --depth 1 hub/vendor/collab-web
+cd hub && bun install && bun run build && systemctl --user restart omp-hub.service
 ```
 
 Running sessions keep the old extension code until OMP restarts inside them.
@@ -226,11 +253,11 @@ curl -s https://<hub-host>:4816/api/hosts/
 Inside a session, `ompc_identity` returns the registered ID. If the host
 doesn't appear, check the OMP log:
 
-- `registration attempt failed` — hub unreachable or token mismatch. The
+- `registration attempt failed`: hub unreachable or token mismatch. The
   extension retries with backoff (1–30s).
-- `could not load omp's Collab CLI module` — the installed OMP predates
+- `could not load omp's Collab CLI module`: the installed OMP predates
   `omp collab list --json`; run `omp update`.
-- `could not discover this session's Collab instanceId` — Collab isn't
+- `could not discover this session's Collab instanceId`: Collab isn't
   running in the session (the Collab step above).
 
 ## Collab relay
@@ -304,8 +331,9 @@ systemctl --user enable --now omp-hub-cert-renew.timer
 ```sh
 cd ~/omp-connected/hub
 bun install
-bun test                          # 75 tests
-bun run scripts/build-webui.ts    # rebuild dashboard
+bun run test                      # unit tests
+bun run test:e2e                  # Playwright browser tests
+bun run build                     # rebuild dashboard + Collab guest
 ```
 
 ## Architecture
@@ -319,7 +347,7 @@ registration and Collab handling.
 
 - **Shared-secret registration.** A single fleet-wide token
   (`OMP_HUB_HOST_TOKEN`) gates agent registration. It authenticates "some
-  session in the fleet," not a specific identity — the extension's claimed
+  session in the fleet," not a specific identity; the extension's claimed
   `hostId`/`instanceId` is accepted at face value.
 - **Capability URLs.** Collab links are short-TTL bearer capabilities. The room
   key lives only in the URL fragment (never sent to a server in an HTTP
