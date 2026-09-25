@@ -56,10 +56,7 @@ bun run lint
 - `build:webui` — bundles `src/webui/app.ts` + `src/webui/index.html` into
   `dist/webui/`, along with the PWA files (manifest, icons, offline page,
   service worker).
-- `build:collab` — builds the vendored OMP Collab guest client (set
-  `COLLAB_WEB_SRC` to point at an OMP source checkout's
-  `packages/collab-web`) into `dist/webui/collab/`. See
-  `scripts/build-vendor-collab.sh` for details.
+- `build:collab`: installs the dependencies of the pinned upstream Collab guest (`vendor/collab-web`, from its lockfile) and builds it into `dist/webui/collab/`. Initialise the submodule first with `git submodule update --init --depth 1 vendor/collab-web`, or set `COLLAB_WEB_SRC` to another OMP checkout's `packages/collab-web`. See `scripts/build-vendor-collab.sh` for details.
 
 ### Installing as an app (PWA)
 

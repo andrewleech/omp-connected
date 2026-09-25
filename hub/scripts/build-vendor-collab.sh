@@ -17,7 +17,10 @@ if [[ ! -d $COLLAB_WEB_SRC ]]; then
 	exit 1
 fi
 
-
+# collab-web is one package in the oh-my-pi bun workspace; install only its
+# dependencies (at the workspace root, from the pinned lockfile).
+WORKSPACE_ROOT="$(git -C "$COLLAB_WEB_SRC" rev-parse --show-toplevel)"
+(cd "$WORKSPACE_ROOT" && bun install --frozen-lockfile --filter @oh-my-pi/collab-web)
 (cd "$COLLAB_WEB_SRC" && bun run build)
 
 rm -rf "$OUT_DIR"
