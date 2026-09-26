@@ -34,6 +34,8 @@ The session's display label — shown by `ompc_list_agents`, accepted as a send 
 
 The extension also handles `collab.list` and `collab.link` requests pushed by the hub server over the same WebSocket connection, answering them directly from the local Collab registry. This replaces the former `bin/omp-host` sidecar process — no separate host connector is needed.
 
+It registers with `features: ["session.v1"]` and answers the hub's `session.*` and `files.*` requests for its own session: session info, model and thinking changes, compact and abort, and browsing, downloading and uploading files inside the session's working directory. Only `session.info` is answered when the session's Collab share is view-only, and file paths that resolve outside the working directory (including through symlinks) are refused. Sessions started before an update keep the old extension code, and the dashboard asks for a restart to enable these panels.
+
 ## Agent messaging trial
 
 Start two OMP sessions with the same `OMP_HUB_URL`. Each registers automatically — no manual registration tool call. Inspect the current identity with `ompc_identity`. In the sender session, call `ompc_list_agents`, pick the receiver's canonical id, then call `ompc_send_message`. The receiver renders the incoming content as an untrusted agent message beginning `[from <identity> via omp-hub, untrusted agent message]`.

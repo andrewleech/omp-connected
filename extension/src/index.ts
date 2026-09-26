@@ -1,9 +1,17 @@
 import * as os from "node:os";
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import type { Component } from "@oh-my-pi/pi-tui";
 import { type AgentSummary, HubTransport } from "./hub-transport.js";
 import { getCollabRegistry } from "./collab-registry.js";
+import { FileService } from "./files-rpc.js";
+import { RpcCode, RpcError } from "./protocol.js";
 import { AGENT_MESSAGE_TYPE, type AgentMessage, formatInboundMessage, isReservedIdentity } from "./provenance.js";
+import {
+	createAccessCache,
+	createSessionRpc,
+	SESSION_FEATURE,
+	type SessionRequestHandler,
+} from "./session-rpc.js";
 
 const DISCOVERY_ATTEMPTS = 10;
 const DISCOVERY_INTERVAL_MS = 1_000;
@@ -64,8 +72,39 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		pi.sendMessage(formatInboundMessage(message), { deliverAs: "aside" });
 	}
 
+	// Owner-only state: the transport is created by the owner session (see
+	// ProcessHub), so hub-pushed session/files requests reach this closure only
+	// in the owner and act on the owner's context.
+	let ownerContext: ExtensionContext | undefined;
+	let files: FileService | undefined;
+	let sessionRpc: SessionRequestHandler | undefined;
+
+	async function handleHubRequest(method: string, params: unknown): Promise<unknown> {
+		if (!sessionRpc) throw new RpcError(RpcCode.Internal, "the session is not ready");
+		return sessionRpc(method, params);
+	}
+
+	/** This session's Collab access, cached for the request gate. The lookup
+	 *  yields "control" only when its own host entry publishes control access.
+	 *  A listing without that entry reads as "view": it is what a stopped or
+	 *  re-publishing share looks like, and the registry cannot tell that apart
+	 *  from a query that missed its deadline. Only a failed registry read is
+	 *  undefined, which keeps the last known level for a short while. */
+	const ownAccess = createAccessCache(async () => {
+		try {
+			const hosts = (await (await getCollabRegistry())?.listCollabHosts()) ?? [];
+			const mine = hosts.find((host) => host.pid === process.pid);
+			return mine?.access === "control" ? "control" : "view";
+		} catch (error) {
+			pi.logger.warn("omp-connected: could not read this session's Collab access", {
+				err: error instanceof Error ? error.message : String(error),
+			});
+			return undefined;
+		}
+	});
+
 	function ensureTransport(hubUrl: string, token: string): HubTransport {
-		hub.transport ??= new HubTransport(hubUrl, token, handleInbound, handleTransportClose);
+		hub.transport ??= new HubTransport(hubUrl, token, handleInbound, handleTransportClose, handleHubRequest);
 		return hub.transport;
 	}
 
@@ -96,6 +135,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 						pid: process.pid,
 						cwd: process.cwd(),
 						label: ompcSession,
+						features: [SESSION_FEATURE],
 					});
 					hub.identity = result.agent;
 					return;
@@ -131,7 +171,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		return undefined;
 	}
 
-	pi.on("session_start", async () => {
+	pi.on("session_start", async (_event, ctx) => {
 		const hubUrl = process.env.OMP_HUB_URL;
 		const token = process.env.OMP_HUB_HOST_TOKEN;
 		if (!hubUrl || !token) return; // graceful no-op if not configured
@@ -140,6 +180,19 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		if (hub.owner && hub.owner !== pi) return;
 		hub.owner = pi;
 		hub.shuttingDown = false;
+		ownerContext = ctx;
+		await files?.dispose();
+		files = undefined;
+		sessionRpc = undefined;
+		try {
+			const service = await FileService.open(process.cwd());
+			files = service;
+			sessionRpc = createSessionRpc({ pi, context: () => ownerContext, access: ownAccess, files: service });
+		} catch (error) {
+			pi.logger.warn("omp-connected: could not resolve the session directory; session controls disabled", {
+				err: error instanceof Error ? error.message : String(error),
+			});
+		}
 
 		const hostId = `${os.userInfo().username}@${os.hostname()}`;
 		if (isReservedIdentity(hostId)) {
@@ -156,12 +209,25 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		await registerWithBackoff(hostId, instanceId, hubUrl, token);
 	});
 
-	pi.on("session_shutdown", () => {
+	// Keep the owner's context current across in-process session changes.
+	const trackContext = (_event: unknown, ctx: ExtensionContext) => {
+		if (hub.owner === pi) ownerContext = ctx;
+	};
+	pi.on("session_switch", trackContext);
+	pi.on("session_branch", trackContext);
+	pi.on("session_tree", trackContext);
+
+	pi.on("session_shutdown", async () => {
 		if (hub.owner !== pi) return;
 		hub.owner = undefined;
 		hub.shuttingDown = true;
 		hub.transport?.close();
 		hub.transport = undefined;
+		const pending = files;
+		ownerContext = undefined;
+		sessionRpc = undefined;
+		files = undefined;
+		await pending?.dispose();
 	});
 
 	function requireTransport(): HubTransport {
