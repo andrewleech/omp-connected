@@ -20,6 +20,9 @@ Each omp session started with `ompc` registers with a hub you run on one always-
 
 - **Every session in one place.** Live sessions from all your hosts, grouped by host and labelled with their `ompc` session name.
 - **Control from the browser.** Open a session to follow its conversation and tool calls live, send it prompts, or interrupt it.
+- **Session panel.** The inspector shows the selected session's working directory, state, model, thinking level and context usage, and lets you switch model or thinking level, compact the context or abort a turn.
+- **Files panel.** Browse the session's working directory, download files, preview images, create folders, and upload files (button or drag and drop, up to 256 MB each). File access is confined to that directory, and both controls and files need a session shared with control access.
+- **Images in prompts.** Paste, drop or attach images in a session's prompt box; they're downscaled in the browser to fit a relay frame. This needs a Collab guest built with image attachments, which upstream omp doesn't have yet: build `hub` with `COLLAB_WEB_SRC` pointing at a checkout that has it (see [hub/README.md](hub/README.md)).
 - **Phone friendly, installable app.** The dashboard has a mobile layout with slide-out session and inspector drawers, and installs as an app (PWA) from Chrome on Android or desktop. When the hub can't be reached, the app shows an offline page instead of a browser error. See [Installing the dashboard as an app](#installing-the-dashboard-as-an-app).
 - **Persistent sessions.** `ompc` runs each omp session in its own tmux server, so it survives disconnects and you can reattach from any terminal. A partial name brings up a picker of matching live sessions.
 - **Agent-to-agent messaging.** Sessions can list each other, exchange messages and broadcast to teams through the hub.

@@ -10,7 +10,10 @@
 import { customizeCollabFrame } from "./lib/collab-frame";
 import { collabFrameUrl } from "./lib/collab-link";
 import { CollabTailViewer } from "./lib/collab-tail";
+import { el } from "./lib/dom";
 import { type EdgeSwipeOptions, attachEdgeSwipe } from "./lib/edge-swipe";
+import { FilesPane } from "./lib/files-pane";
+import { SessionPane } from "./lib/session-pane";
 import {
   type CollabSession,
   INSPECTOR_PANES,
@@ -45,26 +48,6 @@ interface AgentSummary {
   pid: number;
   connectedAt: string;
   teams: string[];
-}
-
-function el(
-  name: string,
-  options: {
-    className?: string;
-    text?: string;
-    type?: "button" | "submit" | "reset";
-    disabled?: boolean;
-    title?: string;
-  } = {},
-): HTMLElement {
-  const node = document.createElement(name);
-  if (options.className) node.className = options.className;
-  if (options.text !== undefined) node.textContent = options.text;
-  if (options.type) (node as HTMLButtonElement).type = options.type;
-  if (options.disabled !== undefined)
-    (node as HTMLButtonElement).disabled = options.disabled;
-  if (options.title) node.title = options.title;
-  return node;
 }
 
 function displayName(session: CollabSession): string {
@@ -182,6 +165,13 @@ function createDashboard(root: HTMLElement): void {
   let leftDrawerOpen = false;
   let rightDrawerOpen = false;
   let drawerTrigger: HTMLElement | null = null;
+  const sessionPane = new SessionPane({ showStatus });
+  const filesPane = new FilesPane({ showStatus }, (session) =>
+    sessionPane.cwdFor(session),
+  );
+  let inspectorShell:
+    | { tabs: Map<InspectorPane, HTMLButtonElement>; body: HTMLElement }
+    | undefined;
 
   function isCompactLayout(): boolean {
     return window.matchMedia("(max-width: 768px)").matches;
@@ -750,60 +740,61 @@ function createDashboard(root: HTMLElement): void {
     body.append(renderComposeForm(target));
   }
 
+  const INSPECTOR_LABELS: Record<InspectorPane, string> = {
+    session: "Session",
+    files: "Files",
+    agents: "Agents",
+  };
+
+  /** The inspector's header and tabs are built once; the Session and Files
+   *  panes keep their own element trees, which stay attached across renders
+   *  so polling never steals focus or closes an open selector. */
   function renderInspector(container: Element): void {
-    container.replaceChildren();
-    const drawerHeader = el("div", { className: "drawer-header" });
-    drawerHeader.append(el("strong", { text: "Inspector" }));
-    const close = el("button", { type: "button", text: "Close" });
-    close.dataset.inspectorDrawerClose = "";
-    drawerHeader.append(close);
-    container.append(drawerHeader);
-    const tabs = el("div", { className: "tabs" });
-    for (const pane of INSPECTOR_PANES) {
-      const tab = el("button", {
-        text:
-          pane === "files"
-            ? "Files & tools"
-            : pane.charAt(0).toUpperCase() + pane.slice(1),
-        type: "button",
-        className: pane === state.inspector ? "active" : "",
-      });
-      (tab as HTMLButtonElement).onclick = () => {
-        state.inspector = pane as InspectorPane;
-        persist();
-        render();
-      };
-      tabs.append(tab);
+    if (!inspectorShell || !container.contains(inspectorShell.body)) {
+      container.replaceChildren();
+      const drawerHeader = el("div", { className: "drawer-header" });
+      drawerHeader.append(el("strong", { text: "Inspector" }));
+      const close = el("button", { type: "button", text: "Close" });
+      close.dataset.inspectorDrawerClose = "";
+      drawerHeader.append(close);
+      const tabBar = el("div", { className: "tabs" });
+      const tabs = new Map<InspectorPane, HTMLButtonElement>();
+      for (const pane of INSPECTOR_PANES) {
+        const tab = el("button", {
+          text: INSPECTOR_LABELS[pane],
+          type: "button",
+        }) as HTMLButtonElement;
+        tab.dataset.inspectorTab = pane;
+        tab.onclick = () => {
+          state.inspector = pane;
+          persist();
+          render();
+        };
+        tabs.set(pane, tab);
+        tabBar.append(tab);
+      }
+      const body = el("div", { className: "inspector-body" });
+      container.append(drawerHeader, tabBar, body);
+      inspectorShell = { tabs, body };
     }
-    container.append(tabs);
-    const body = el("div", { className: "inspector-body" });
-    if (state.inspector === "controls") {
-      body.append(el("h2", { text: "Controls" }));
-      body.append(
-        el("p", {
-          text: "Prompt and abort are provided by an opened control room. Other OMP controls remain available in the host TUI until their Collab control-frame transport is verified.",
-        }),
-      );
-    } else if (state.inspector === "participants") {
-      body.append(el("h2", { text: "Participants" }));
-      body.append(
-        el("p", {
-          text: state.selectedSession
-            ? `${state.selectedSession.participants ?? 0} connected to the selected room.`
-            : "Select a room.",
-        }),
-      );
-    } else if (state.inspector === "agents") {
+    const { tabs, body } = inspectorShell;
+    for (const [pane, tab] of tabs) {
+      tab.classList.toggle("active", pane === state.inspector);
+      tab.setAttribute("aria-pressed", String(pane === state.inspector));
+    }
+    sessionPane.setSession(state.selectedSession);
+    filesPane.setSession(state.selectedSession);
+    sessionPane.setActive(state.inspector === "session");
+    filesPane.setActive(state.inspector === "files");
+    if (state.inspector === "agents") {
+      body.replaceChildren();
       renderAgentsBody(body);
-    } else {
-      body.append(el("h2", { text: "Files & tools" }));
-      body.append(
-        el("p", {
-          text: "Unavailable until the Collab protocol exposes a verified inspection transport.",
-        }),
-      );
+      return;
     }
-    container.append(body);
+    const pane =
+      state.inspector === "session" ? sessionPane.element : filesPane.element;
+    if (body.firstElementChild !== pane || body.childElementCount !== 1)
+      body.replaceChildren(pane);
   }
 
   function render(): void {
