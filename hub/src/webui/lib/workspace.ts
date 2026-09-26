@@ -3,13 +3,21 @@
 export const WORKSPACE_STORAGE_KEY = "omp-hub-dashboard/v1";
 
 const WORKSPACE_VERSION = 1;
-export const INSPECTOR_PANES = [
-  "controls",
-  "participants",
-  "agents",
-  "files",
-] as const;
+export const INSPECTOR_PANES = ["session", "files", "agents"] as const;
 export type InspectorPane = (typeof INSPECTOR_PANES)[number];
+const DEFAULT_INSPECTOR_PANE: InspectorPane = "session";
+
+/**
+ * The persisted inspector pane. Stored `controls` and `participants` values
+ * name parts of the Session tab, so they map onto it; any other unknown
+ * value falls back to the default pane.
+ */
+export function inspectorPaneFromStorage(value: unknown): InspectorPane {
+  if (value === "controls" || value === "participants") return "session";
+  return INSPECTOR_PANES.includes(value as InspectorPane)
+    ? (value as InspectorPane)
+    : DEFAULT_INSPECTOR_PANE;
+}
 
 export interface CollabSession {
   host_id: string;
@@ -23,6 +31,8 @@ export interface CollabSession {
   participants?: number;
   /** Registered agent label from the hub (the ompc session name). */
   label?: string;
+  /** Capabilities of the session's registered omp-connected extension. */
+  features?: string[];
 }
 
 export interface WorkspaceGroup {
@@ -82,7 +92,7 @@ export function readWorkspace(storage: StorageLike): Workspace {
         version: WORKSPACE_VERSION,
         groups: [],
         selected: null,
-        inspector: "controls",
+        inspector: DEFAULT_INSPECTOR_PANE,
       };
     }
     const groups = value.groups
@@ -107,16 +117,14 @@ export function readWorkspace(storage: StorageLike): Workspace {
       version: WORKSPACE_VERSION,
       groups,
       selected: typeof value.selected === "string" ? value.selected : null,
-      inspector: INSPECTOR_PANES.includes(value.inspector as InspectorPane)
-        ? (value.inspector as InspectorPane)
-        : "controls",
+      inspector: inspectorPaneFromStorage(value.inspector),
     };
   } catch {
     return {
       version: WORKSPACE_VERSION,
       groups: [],
       selected: null,
-      inspector: "controls",
+      inspector: DEFAULT_INSPECTOR_PANE,
     };
   }
 }

@@ -93,14 +93,14 @@ describe("fleet dashboard workspace", () => {
       version: 1,
       groups: [{ id: "g1", name: "Project", sessions: [sessionKey(alpha)] }],
       selected: sessionKey(alpha),
-      inspector: "controls",
+      inspector: "files",
     });
     const restored = readWorkspace(storage);
     expect(restored.groups).toEqual([
       { id: "g1", name: "Project", sessions: [sessionKey(alpha)] },
     ]);
     expect(restored.selected).toBe(sessionKey(alpha));
-    expect(restored.inspector).toBe("controls");
+    expect(restored.inspector).toBe("files");
   });
 
   test("INSPECTOR_PANES includes agents", () => {
@@ -126,7 +126,20 @@ describe("fleet dashboard workspace", () => {
       selected: null,
       inspector: "not-a-real-pane",
     });
-    expect(readWorkspace(storage).inspector).toBe("controls");
+    expect(readWorkspace(storage).inspector).toBe("session");
+  });
+
+  test("maps the retired controls and participants panes to session", () => {
+    const storage = new MemoryStorage();
+    for (const legacy of ["controls", "participants"]) {
+      storage.value = JSON.stringify({
+        version: 1,
+        groups: [],
+        selected: null,
+        inspector: legacy,
+      });
+      expect(readWorkspace(storage).inspector).toBe("session");
+    }
   });
 
   test("falls back to defaults on corrupt storage", () => {
@@ -136,7 +149,7 @@ describe("fleet dashboard workspace", () => {
       version: 1,
       groups: [],
       selected: null,
-      inspector: "controls",
+      inspector: "session",
     });
   });
 
