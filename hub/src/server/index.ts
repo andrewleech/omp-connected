@@ -8,6 +8,7 @@ import { agentRpcRoutes } from "./agent-rpc-routes";
 import { collabRpcRoutes } from "./collab-rpc-routes";
 import { loadConfig } from "./config";
 import { dashboardEventsPlugin } from "./dashboard-events";
+import { MAX_UPLOAD_BYTES, sessionRpcRoutes } from "./session-rpc-routes";
 import { wsAgentPlugin } from "./ws-agent";
 
 export interface CreateHubOptions {
@@ -61,6 +62,7 @@ export function createHub(options: CreateHubOptions = {}): Hub {
       revalidatedFile(`${webuiRoot}/manifest.webmanifest`),
     )
     .use(collabRpcRoutes(agentRegistry))
+    .use(sessionRpcRoutes(agentRegistry))
     .use(agentRpcRoutes(agentRegistry, osHostname()))
     .use(wsAgentPlugin(agentRegistry, hostToken))
     .use(dashboardEventsPlugin(agentRegistry))
@@ -94,6 +96,10 @@ export function createHub(options: CreateHubOptions = {}): Hub {
       : undefined);
   app.listen({
     port,
+    // Above the upload cap, so the upload route sees an oversized streamed
+    // body and answers 413 itself (aborting the partial upload) before
+    // Bun's own limit cuts the connection.
+    maxRequestBodySize: MAX_UPLOAD_BYTES + 16 * 1024 * 1024,
     ...(host ? { hostname: host } : {}),
     ...(tls
       ? { tls: { cert: Bun.file(tls.cert), key: Bun.file(tls.key) } }

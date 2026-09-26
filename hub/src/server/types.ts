@@ -54,6 +54,9 @@ export interface HostCollabSession {
    *  else basename(cwd)). Absent for Collab sessions with no registered
    *  omp-connected agent. */
   label?: string;
+  /** Hub-added: the features the registered agent advertised at
+   *  registration; `[]` when no omp-connected agent is registered. */
+  features?: string[];
 }
 
 export type CollabListParams = Record<string, never>;
@@ -115,6 +118,7 @@ export interface AgentSummary {
   pid: number;
   connectedAt: string;
   teams: string[];
+  features: string[]; // advertised at registration, [] if none
 }
 
 export type AgentMessageType = "message" | "reply";
@@ -176,6 +180,10 @@ export interface AgentRegisterParams {
   /** Display label (the ompc tmux session name); must match
    *  AGENT_LABEL_PATTERN. Absent → basename(cwd). */
   label?: string;
+  /** Optional capabilities the extension serves (e.g. "session.v1"); at
+   *  most AGENT_FEATURES_MAX entries, each matching AGENT_FEATURE_PATTERN.
+   *  Absent → []. */
+  features?: string[];
   /** Shared secret, checked against OMP_HUB_HOST_TOKEN. */
   token: string;
 }
@@ -183,6 +191,9 @@ export interface AgentRegisterParams {
 /** ompc's session-name rule. Excludes `@` and `:`, so a label can never be
  *  mistaken for a canonical `${hostId}:${instanceId}` address. */
 export const AGENT_LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
+
+export const AGENT_FEATURE_PATTERN = /^[a-z][a-z0-9._-]{0,31}$/;
+export const AGENT_FEATURES_MAX = 16;
 
 export interface AgentRegisterResult {
   ok: true;
@@ -290,3 +301,131 @@ export const AGENT_RPC_ERRORS = {
   idempotencyConflict: -32012,
   rateLimited: -32013,
 } as const;
+
+// ---------------------------------------------------------------------------
+// Session inspection and file transfer.
+// Server -> extension JSON-RPC requests sent to ONE agent connection (see
+// AgentRegistry.callOnAgent), served by extensions that advertise the
+// "session.v1" feature. Paths are POSIX, relative to the session root.
+// ---------------------------------------------------------------------------
+
+export const SESSION_FEATURE = "session.v1";
+
+/** Error codes the extension replies with for session.* / files.* calls. */
+export const SESSION_RPC_ERRORS = {
+  notFound: -32001,
+  exists: -32002,
+  forbidden: -32003,
+  invalid: -32004,
+  changed: -32005,
+  busy: -32006,
+  methodNotFound: -32601,
+} as const;
+
+export interface SessionModelRef {
+  provider: string;
+  id: string;
+  name: string;
+}
+
+export interface SessionInfoResult {
+  cwd: string;
+  pid: number;
+  sessionName: string | null;
+  access: "view" | "control";
+  idle: boolean;
+  model: SessionModelRef | null;
+  thinkingLevel: string | null;
+  thinkingLevels: string[];
+  contextUsage: {
+    tokens: number | null;
+    contextWindow: number | null;
+    percent: number | null;
+  } | null;
+  models: SessionModelRef[];
+}
+
+export type SessionFileType = "file" | "dir" | "symlink" | "other";
+
+export interface SessionFileEntry {
+  name: string;
+  type: SessionFileType;
+  size: number;
+  mtimeMs: number;
+  target?: "file" | "dir";
+}
+
+export interface FilesListResult {
+  path: string;
+  entries: SessionFileEntry[];
+}
+
+export interface FilesStatResult {
+  path: string;
+  type: SessionFileType;
+  size: number;
+  mtimeMs: number;
+}
+
+export interface FilesReadParams {
+  path: string;
+  offset: number;
+  length: number;
+  expect?: { size: number; mtimeMs: number };
+}
+
+export interface FilesReadResult {
+  data: string; // base64
+  size: number;
+  mtimeMs: number;
+  eof: boolean;
+}
+
+export interface FilesWriteParams {
+  path: string;
+  uploadId: string;
+  offset: number;
+  data: string; // base64
+  final: boolean;
+  overwrite: boolean;
+}
+
+export interface FilesWriteResult {
+  ok: true;
+  path: string;
+  size: number;
+}
+
+export interface OkResult {
+  ok: true;
+}
+
+export interface SessionMethodParams {
+  "session.info": Record<string, never>;
+  "session.abort": Record<string, never>;
+  "session.compact": { instructions?: string };
+  "session.set_model": { provider: string; id: string };
+  "session.set_thinking": { level: string };
+  "files.list": { path: string };
+  "files.stat": { path: string };
+  "files.read": FilesReadParams;
+  "files.write": FilesWriteParams;
+  "files.write_abort": { path: string; uploadId: string };
+  "files.mkdir": { path: string };
+}
+
+export interface SessionMethodResult {
+  "session.info": SessionInfoResult;
+  "session.abort": OkResult;
+  "session.compact": OkResult;
+  "session.set_model": OkResult;
+  "session.set_thinking": OkResult;
+  "files.list": FilesListResult;
+  "files.stat": FilesStatResult;
+  "files.read": FilesReadResult;
+  "files.write": FilesWriteResult;
+  "files.write_abort": OkResult;
+  "files.mkdir": OkResult;
+}
+
+export type SessionMethod = keyof SessionMethodParams;

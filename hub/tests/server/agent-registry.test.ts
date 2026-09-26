@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  AgentCallError,
   type AgentConn,
   AgentRegistry,
   AgentRegistryError,
@@ -110,6 +111,7 @@ describe("AgentRegistry — registration", () => {
       pid: 4242,
       connectedAt: summary.connectedAt,
       teams: [],
+      features: [],
     });
   });
 
@@ -653,7 +655,10 @@ describe("AgentRegistry — host-level Collab calls", () => {
       2000,
     );
     await Promise.resolve();
-    registry.resolveHostCall(sent[0]?.id as string, undefined, "not found");
+    registry.resolveHostCall(sent[0]?.id as string, undefined, {
+      code: -32000,
+      message: "not found",
+    });
 
     await expect(call).rejects.toThrow("not found");
   });
@@ -712,5 +717,127 @@ describe("AgentRegistry — host-level Collab calls", () => {
   test("resolveHostCall returns false for an id it doesn't recognize", () => {
     const registry = new AgentRegistry();
     expect(registry.resolveHostCall("unknown-id", {}, undefined)).toBe(false);
+  });
+});
+
+describe("AgentRegistry: per-agent session calls", () => {
+  function recordingConn(sent: { id: string; method: string }[]): AgentConn {
+    return fakeConn((data) => sent.push(JSON.parse(data)));
+  }
+
+  test("register stores the advertised features on the summary", () => {
+    const registry = new AgentRegistry();
+    const summary = registry.register(
+      {
+        hostId: "user@hub-host",
+        instanceId: "a",
+        pid: 1,
+        cwd: "/w/a",
+        features: ["session.v1"],
+      },
+      fakeConn(),
+    );
+    expect(summary.features).toEqual(["session.v1"]);
+    expect(registry.liveAgent("user@hub-host:a")?.features).toEqual([
+      "session.v1",
+    ]);
+  });
+
+  test("callOnAgent sends only to the addressed agent, not another on the same host", async () => {
+    const registry = new AgentRegistry();
+    const sentA: { id: string; method: string }[] = [];
+    const sentB: { id: string; method: string }[] = [];
+    registerAgent(registry, { instanceId: "a" }, recordingConn(sentA));
+    registerAgent(registry, { instanceId: "b" }, recordingConn(sentB));
+
+    const call = registry.callOnAgent(
+      "user@hub-host:b",
+      "files.list",
+      { path: "" },
+      2000,
+    );
+    expect(sentA).toEqual([]);
+    expect(sentB).toHaveLength(1);
+    expect(sentB[0]?.method).toBe("files.list");
+    registry.resolveHostCall(
+      sentB[0]?.id as string,
+      { path: "", entries: [] },
+      undefined,
+    );
+    expect(await call).toEqual({ path: "", entries: [] });
+  });
+
+  test("an error reply rejects with the extension's code", async () => {
+    const registry = new AgentRegistry();
+    const sent: { id: string; method: string }[] = [];
+    registerAgent(registry, { instanceId: "a" }, recordingConn(sent));
+
+    const call = registry.callOnAgent(
+      "user@hub-host:a",
+      "files.stat",
+      { path: "gone" },
+      2000,
+    );
+    registry.resolveHostCall(sent[0]?.id as string, undefined, {
+      code: -32001,
+      message: "no such file",
+    });
+    const err = await call.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AgentCallError);
+    expect(err).toMatchObject({
+      kind: "remote",
+      code: -32001,
+      message: "no such file",
+    });
+  });
+
+  test("no reply within the deadline rejects as a timeout and drops the pending call", async () => {
+    const registry = new AgentRegistry();
+    const sent: { id: string; method: string }[] = [];
+    registerAgent(registry, { instanceId: "a" }, recordingConn(sent));
+
+    const err = await registry
+      .callOnAgent("user@hub-host:a", "session.info", {}, 10)
+      .catch((e: unknown) => e);
+    expect(err).toMatchObject({ kind: "timeout" });
+    // A late reply is no longer a pending call.
+    expect(registry.resolveHostCall(sent[0]?.id as string, {}, undefined)).toBe(
+      false,
+    );
+  });
+
+  test("the agent disconnecting or being replaced rejects its outstanding call", async () => {
+    const registry = new AgentRegistry();
+    const conn = fakeConn();
+    registerAgent(registry, { instanceId: "a" }, conn);
+    const dropped = registry.callOnAgent(
+      "user@hub-host:a",
+      "session.info",
+      {},
+      2000,
+    );
+    registry.unregister("user@hub-host:a", conn);
+    await expect(dropped).rejects.toMatchObject({ kind: "disconnected" });
+
+    registerAgent(registry, { instanceId: "a" }, fakeConn());
+    const replaced = registry.callOnAgent(
+      "user@hub-host:a",
+      "session.info",
+      {},
+      2000,
+    );
+    registerAgent(registry, { instanceId: "a" }, fakeConn());
+    await expect(replaced).rejects.toMatchObject({ kind: "disconnected" });
+  });
+
+  test("callOnAgent rejects immediately for an agent that is not live", async () => {
+    const registry = new AgentRegistry();
+    const conn = fakeConn();
+    registerAgent(registry, { instanceId: "a" }, conn);
+    registry.unregister("user@hub-host:a", conn);
+    await expect(
+      registry.callOnAgent("user@hub-host:a", "session.info", {}, 2000),
+    ).rejects.toMatchObject({ kind: "disconnected" });
+    expect(registry.liveAgent("user@hub-host:a")).toBeUndefined();
   });
 });
