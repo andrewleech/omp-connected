@@ -1,6 +1,6 @@
 import type { AgentMessage } from "./provenance.js";
 import { getCollabRegistry } from "./collab-registry.js";
-import { hubWebSocketUrl, makeRequest } from "./protocol.js";
+import { hubWebSocketUrl, makeRequest, RpcCode, RpcError, toErrorPayload } from "./protocol.js";
 
 // Wire shapes from omp-hub's agent.register — kept as small local mirrors
 // (this plugin and omp-hub are separate repos/packages with no shared
@@ -23,9 +23,14 @@ export interface AgentRegisterResult {
 
 type InboundHandler = (message: AgentMessage) => void;
 
+/** Answers a hub-pushed request the transport does not handle itself;
+ *  throws RpcError (or anything else, replied as internal) on failure. */
+export type PushRequestHandler = (method: string, params: unknown) => Promise<unknown>;
+
 const REQUEST_TIMEOUT_MS = 10_000;
 const CONNECT_TIMEOUT_MS = 10_000;
-const MAX_FRAME_CHARS = 20_000;
+/** Fits a `files.write` request: a 256 KiB chunk as base64 plus framing. */
+const MAX_FRAME_CHARS = 1_048_576;
 
 export class HubTransport {
 	#socket: WebSocket | undefined;
@@ -36,6 +41,7 @@ export class HubTransport {
 		private readonly token: string,
 		private readonly onInbound: InboundHandler,
 		private readonly onClose?: () => void,
+		private readonly onRequest?: PushRequestHandler,
 	) {}
 
 	/** Sends `agent.register`, injecting the shared-secret token so callers
@@ -46,6 +52,7 @@ export class HubTransport {
 		pid: number;
 		cwd: string;
 		label?: string;
+		features?: string[];
 	}): Promise<AgentRegisterResult> {
 		return (await this.request("agent.register", { ...params, token: this.token })) as AgentRegisterResult;
 	}
@@ -93,7 +100,7 @@ export class HubTransport {
 		}
 		const socket = new WebSocket(hubWebSocketUrl(this.hubUrl));
 		this.#socket = socket;
-		socket.addEventListener("message", (event) => this.handleFrame(event.data));
+		socket.addEventListener("message", (event) => this.handleFrame(event.data, socket));
 		socket.addEventListener("close", () => this.closeSocket(socket));
 		return this.awaitOpen(socket);
 	}
@@ -127,7 +134,7 @@ export class HubTransport {
 	 *  from a server-initiated push (has `method`) — omp-hub sends
 	 *  `agent.message` as a JSON-RPC *request*, not a notification, so the
 	 *  extension's own reply is the delivery receipt. */
-	private handleFrame(raw: unknown): void {
+	private handleFrame(raw: unknown, socket: WebSocket): void {
 		if (typeof raw !== "string" || raw.length > MAX_FRAME_CHARS) return;
 		let frame: unknown;
 		try {
@@ -140,7 +147,7 @@ export class HubTransport {
 		if (typeof value.id !== "string") return;
 
 		if (typeof value.method === "string") {
-			this.handlePush(value.id, value.method, "params" in value ? value.params : undefined);
+			this.handlePush(socket, value.id, value.method, "params" in value ? value.params : undefined);
 			return;
 		}
 
@@ -164,7 +171,7 @@ export class HubTransport {
 		pending.reject(new Error("omp-hub sent a malformed response"));
 	}
 
-	private handlePush(id: string, method: string, params: unknown): void {
+	private handlePush(socket: WebSocket, id: string, method: string, params: unknown): void {
 		if (method === "agent.message") {
 			this.onInbound(params as AgentMessage);
 			try {
@@ -178,6 +185,25 @@ export class HubTransport {
 		if (method === "collab.list" || method === "collab.link") {
 			void this.handleCollabPush(id, method, params);
 			return;
+		}
+		void this.answerPush(socket, id, method, params);
+	}
+
+	/** Replies to the socket the request arrived on, so a reply never lands
+	 *  on a newer connection that did not receive the request. */
+	private async answerPush(socket: WebSocket, id: string, method: string, params: unknown): Promise<void> {
+		let reply: Record<string, unknown>;
+		try {
+			if (!this.onRequest) throw new RpcError(RpcCode.MethodNotFound, `unknown method '${method}'`);
+			reply = { jsonrpc: "2.0", id, result: await this.onRequest(method, params) };
+		} catch (error) {
+			reply = { jsonrpc: "2.0", id, error: toErrorPayload(error) };
+		}
+		if (socket.readyState !== WebSocket.OPEN) return;
+		try {
+			socket.send(JSON.stringify(reply));
+		} catch {
+			// Best-effort: the hub times the request out.
 		}
 	}
 
