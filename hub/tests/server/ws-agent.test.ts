@@ -108,6 +108,7 @@ function registerParams(
     cwd: string;
     token: string;
     label: string;
+    features: unknown;
   }> = {},
 ) {
   return {
@@ -117,6 +118,9 @@ function registerParams(
     cwd: overrides.cwd ?? "/home/user/api",
     token: overrides.token ?? HOST_TOKEN,
     ...(overrides.label === undefined ? {} : { label: overrides.label }),
+    ...(overrides.features === undefined
+      ? {}
+      : { features: overrides.features }),
   };
 }
 
@@ -260,6 +264,67 @@ describe("wsAgentPlugin — registration", () => {
     const result = await reply;
     expect(result.error?.code).toBe(-32602);
     expect(agentRegistry.listAgents()).toHaveLength(0);
+  });
+
+  test("advertised features are stored; absent features register as []", async () => {
+    const agentRegistry = new AgentRegistry();
+    const { url } = start(agentRegistry);
+
+    const withFeatures = await connectAndRegister(
+      url,
+      registerParams({ instanceId: "a", features: ["session.v1", "x-2.b_c"] }),
+    );
+    const without = await connectAndRegister(
+      url,
+      registerParams({ instanceId: "b" }),
+    );
+
+    expect(agentRegistry.liveAgent("user@hub-host:a")?.features).toEqual([
+      "session.v1",
+      "x-2.b_c",
+    ]);
+    expect(agentRegistry.liveAgent("user@hub-host:b")?.features).toEqual([]);
+    withFeatures.close();
+    without.close();
+  });
+
+  test.each([
+    ["a non-array", "session.v1"],
+    ["a non-string entry", ["session.v1", 1]],
+    ["an uppercase entry", ["Session.v1"]],
+    ["an entry starting with a digit", ["1session"]],
+    ["an entry over 32 characters", [`a${"b".repeat(32)}`]],
+    ["more than 16 entries", Array.from({ length: 17 }, (_, i) => `f${i}`)],
+  ])("features that are %s are rejected with -32602", async (_, features) => {
+    const agentRegistry = new AgentRegistry();
+    const { url } = start(agentRegistry);
+
+    const socket = new WebSocket(url);
+    await waitOpen(socket);
+    const reply = waitForMessage(socket);
+    socket.send(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: "1",
+        method: "agent.register",
+        params: registerParams({ features }),
+      }),
+    );
+
+    const result = await reply;
+    expect(result.error?.code).toBe(-32602);
+    expect(agentRegistry.listAgents()).toHaveLength(0);
+  });
+
+  test("exactly 16 valid features are accepted", async () => {
+    const agentRegistry = new AgentRegistry();
+    const { url } = start(agentRegistry);
+    const features = Array.from({ length: 16 }, (_, i) => `f${i}`);
+
+    const socket = await connectAndRegister(url, registerParams({ features }));
+
+    expect(agentRegistry.listAgents()[0]?.features).toEqual(features);
+    socket.close();
   });
 
   test("any method sent before agent.register is rejected with -32002", async () => {
@@ -490,6 +555,44 @@ describe("wsAgentPlugin — host-level collab RPC forwarding", () => {
     await expect(
       agentRegistry.callOnHost("user@nowhere", "collab.list", {}, 2000),
     ).rejects.toThrow("no connected agent on host");
+  });
+
+  test("callOnAgent relays the extension's error code, and a malformed error still rejects", async () => {
+    const agentRegistry = new AgentRegistry();
+    const { url } = start(agentRegistry);
+
+    const socket = await connectAndRegister(
+      url,
+      registerParams({ instanceId: "inst-1", features: ["session.v1"] }),
+    );
+
+    let push = waitForMessage(socket);
+    const coded = agentRegistry
+      .callOnAgent("user@hub-host:inst-1", "files.mkdir", { path: "d" }, 2000)
+      .catch((e: unknown) => e);
+    let frame = await push;
+    expect(frame.method).toBe("files.mkdir");
+    socket.send(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: frame.id,
+        error: { code: -32002, message: "'d' already exists" },
+      }),
+    );
+    expect(await coded).toMatchObject({
+      kind: "remote",
+      code: -32002,
+      message: "'d' already exists",
+    });
+
+    push = waitForMessage(socket);
+    const malformed = agentRegistry
+      .callOnAgent("user@hub-host:inst-1", "session.info", {}, 2000)
+      .catch((e: unknown) => e);
+    frame = await push;
+    socket.send(JSON.stringify({ jsonrpc: "2.0", id: frame.id, error: {} }));
+    expect(await malformed).toMatchObject({ kind: "remote", code: undefined });
+    socket.close();
   });
 
   test("a collab-call reply is not mistaken for a message-delivery ack", async () => {

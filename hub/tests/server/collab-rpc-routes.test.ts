@@ -38,7 +38,14 @@ function registerFakeAgent(registry: AgentRegistry, hostId: string): void {
     close: () => {},
   };
   registry.register(
-    { hostId, instanceId: "inst-1", pid: 111, cwd: "/x", label: "x.install" },
+    {
+      hostId,
+      instanceId: "inst-1",
+      pid: 111,
+      cwd: "/x",
+      label: "x.install",
+      features: ["session.v1"],
+    },
     conn,
   );
 }
@@ -63,7 +70,7 @@ describe("collab-rpc-routes", () => {
     expect(await response.json()).toEqual([{ hostId: "user@hub-host" }]);
   });
 
-  test("GET /:id/collab relays the host's sessions, labelling registered ones", async () => {
+  test("GET /:id/collab relays the host's sessions, adding registered labels and features", async () => {
     const registry = new AgentRegistry();
     registerFakeAgent(registry, "user@hub-host");
     const app = collabRpcRoutes(registry);
@@ -73,8 +80,8 @@ describe("collab-rpc-routes", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       sessions: [
-        { instanceId: "inst-1", label: "x.install" },
-        { instanceId: "other" },
+        { instanceId: "inst-1", label: "x.install", features: ["session.v1"] },
+        { instanceId: "other", features: [] },
       ],
     });
   });

@@ -3,8 +3,9 @@
 // method a fresh connection may send is agent.register; after that this
 // plugin dispatches agent.* methods to AgentRegistry and treats any
 // incoming {result: ...}/{error: ...} frame as one of two things: a reply
-// to a collab.list/collab.link call this server pushed to serve host-level
-// Collab discovery (AgentRegistry.resolveHostCall, checked first), or
+// to a call this server pushed (collab.list/collab.link for host-level
+// Collab discovery, or a session.* / files.* call for the dashboard's
+// session inspector; AgentRegistry.resolveHostCall, checked first), or
 // otherwise the extension's delivery receipt for a server-pushed
 // agent.message request (AgentRegistry.pushToRecipient uses the message's
 // own id, so no separate pending-push table is needed for that case).
@@ -17,12 +18,15 @@
 
 import { Elysia } from "elysia";
 import {
+  type AgentCallErrorReply,
   type AgentConn,
   type AgentRegistry,
   AgentRegistryError,
 } from "./agent-registry";
 import { RateLimiter } from "./rate-limit";
 import {
+  AGENT_FEATURES_MAX,
+  AGENT_FEATURE_PATTERN,
   AGENT_LABEL_PATTERN,
   AGENT_RPC_ERRORS,
   type AgentRegisterParams,
@@ -48,6 +52,17 @@ function safeJsonParse(raw: unknown): unknown {
   }
 }
 
+function isFeatureList(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= AGENT_FEATURES_MAX &&
+    value.every(
+      (feature) =>
+        typeof feature === "string" && AGENT_FEATURE_PATTERN.test(feature),
+    )
+  );
+}
+
 function isAgentRegisterParams(value: unknown): value is AgentRegisterParams {
   return (
     !!value &&
@@ -65,8 +80,27 @@ function isAgentRegisterParams(value: unknown): value is AgentRegisterParams {
     (!("label" in value) ||
       value.label === undefined ||
       (typeof value.label === "string" &&
-        AGENT_LABEL_PATTERN.test(value.label)))
+        AGENT_LABEL_PATTERN.test(value.label))) &&
+    (!("features" in value) ||
+      value.features === undefined ||
+      isFeatureList(value.features))
   );
+}
+
+/** The error half of a reply frame. A malformed error object still fails
+ *  the call rather than being mistaken for a result. */
+function replyError(data: object): AgentCallErrorReply | undefined {
+  if (!("error" in data)) return undefined;
+  const error = data.error;
+  if (!error || typeof error !== "object")
+    return { message: "agent replied with an error" };
+  const code =
+    "code" in error && typeof error.code === "number" ? error.code : undefined;
+  const message =
+    "message" in error && typeof error.message === "string"
+      ? error.message
+      : "agent replied with an error";
+  return { ...(code !== undefined ? { code } : {}), message };
 }
 
 export function wsAgentPlugin(agentRegistry: AgentRegistry, hostToken: string) {
@@ -221,6 +255,7 @@ export function wsAgentPlugin(agentRegistry: AgentRegistry, hostToken: string) {
           pid: params.pid,
           cwd: params.cwd,
           label: params.label,
+          features: params.features,
         },
         conn,
       );
@@ -249,24 +284,16 @@ export function wsAgentPlugin(agentRegistry: AgentRegistry, hostToken: string) {
         return;
       const id = data.id;
 
-      // A reply frame from the extension: either a collab.list/collab.link
-      // result this server is awaiting on behalf of a host-level query, or
-      // otherwise the delivery receipt for a server-pushed agent.message
+      // A reply frame from the extension: either the result of a call this
+      // server is awaiting (collab.list/collab.link, session.* / files.*),
+      // or otherwise the delivery receipt for a server-pushed agent.message
       // request. Its id is that call's/message's own id.
       if ("result" in data || "error" in data) {
-        const errorMessage =
-          "error" in data &&
-          data.error &&
-          typeof data.error === "object" &&
-          "message" in data.error &&
-          typeof (data.error as { message: unknown }).message === "string"
-            ? (data.error as { message: string }).message
-            : undefined;
         if (
           agentRegistry.resolveHostCall(
             id,
             "result" in data ? data.result : undefined,
-            errorMessage,
+            replyError(data),
           )
         )
           return;

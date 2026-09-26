@@ -13,6 +13,9 @@
 // `register()` takes `cwd` as the extension's own claim: there is no
 // independent process to confirm it against, so this registry does not
 // try to.
+//
+// `callOnAgent()` addresses one specific agent connection instead: the
+// session.* / files.* methods act on that session's own omp process.
 
 import { basename } from "node:path";
 import {
@@ -34,6 +37,9 @@ import {
   type CollabMethodResult,
   type DashboardEvent,
   type JsonRpcRequest,
+  type SessionMethod,
+  type SessionMethodParams,
+  type SessionMethodResult,
 } from "./types";
 
 export interface AgentConn {
@@ -70,6 +76,29 @@ export class AgentRegistryError extends Error {
   }
 }
 
+/** Why a server-initiated call on an agent connection failed. `remote`
+ *  carries the extension's JSON-RPC error `code`; the others are local
+ *  (no reply in time, or the connection went away / could not be written). */
+export type AgentCallFailure = "remote" | "timeout" | "disconnected";
+
+export class AgentCallError extends Error {
+  constructor(
+    message: string,
+    public readonly kind: AgentCallFailure,
+    /** The extension's JSON-RPC error code; only set when `kind` is
+     *  "remote" and the reply carried a numeric code. */
+    public readonly code?: number,
+  ) {
+    super(message);
+  }
+}
+
+/** The error half of a JSON-RPC reply, as relayed by the ws-agent layer. */
+export interface AgentCallErrorReply {
+  code?: number;
+  message: string;
+}
+
 interface AgentEntry {
   id: string;
   hostId: string;
@@ -77,6 +106,7 @@ interface AgentEntry {
   label: string;
   cwd: string;
   pid: number;
+  features: string[];
   connectedAt: Date;
   /** undefined while disconnected-but-within-TTL. */
   conn: AgentConn | undefined;
@@ -89,7 +119,7 @@ interface AgentEntry {
 
 interface PendingHostCall {
   resolve(result: unknown): void;
-  reject(error: Error): void;
+  reject(error: AgentCallError): void;
   timer: ReturnType<typeof setTimeout>;
   /** Canonical id of the agent connection this call is outstanding
    *  against, so unregister() can reject it if that specific connection
@@ -152,6 +182,7 @@ export class AgentRegistry {
       pid: number;
       cwd: string;
       label?: string;
+      features?: string[];
     },
     conn: AgentConn,
   ): AgentSummary {
@@ -170,6 +201,9 @@ export class AgentRegistry {
       } catch {
         // already closing
       }
+      // The replaced socket is closing and its unregister() will be a
+      // no-op (it no longer owns the entry), so fail its calls now.
+      this.rejectPendingHostCallsFor(id);
     }
     const entry: AgentEntry = {
       id,
@@ -178,6 +212,7 @@ export class AgentRegistry {
       label: params.label ?? basename(params.cwd),
       cwd: params.cwd,
       pid: params.pid,
+      features: [...(params.features ?? [])],
       connectedAt: new Date(this.now()),
       conn,
       disconnectedAt: undefined,
@@ -243,46 +278,87 @@ export class AgentRegistry {
     }
     const conn = entry?.conn;
     if (!entry || !conn)
-      throw new Error(`no connected agent on host '${hostId}'`);
+      throw new AgentCallError(
+        `no connected agent on host '${hostId}'`,
+        "disconnected",
+      );
+    return this.callOnConn(entry.id, conn, method, params, timeoutMs);
+  }
+
+  /** Sends a session.* / files.* request to the live connection of one
+   *  specific agent and awaits its reply. Rejects with an AgentCallError:
+   *  `remote` (with the extension's code) on an error reply, `timeout`
+   *  after `timeoutMs`, `disconnected` if the agent is not live or its
+   *  connection drops or is replaced before replying. */
+  async callOnAgent<M extends SessionMethod>(
+    agentId: string,
+    method: M,
+    params: SessionMethodParams[M],
+    timeoutMs: number,
+  ): Promise<SessionMethodResult[M]> {
+    const conn = this.agents.get(agentId)?.conn;
+    if (!conn)
+      throw new AgentCallError(
+        `agent '${agentId}' is not connected`,
+        "disconnected",
+      );
+    return this.callOnConn(agentId, conn, method, params, timeoutMs);
+  }
+
+  private callOnConn<R>(
+    agentId: string,
+    conn: AgentConn,
+    method: string,
+    params: unknown,
+    timeoutMs: number,
+  ): Promise<R> {
     const id = crypto.randomUUID();
-    return new Promise<CollabMethodResult[M]>((resolve, reject) => {
+    return new Promise<R>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingHostCalls.delete(id);
-        reject(new Error(`agent RPC ${method} timed out`));
+        reject(new AgentCallError(`agent RPC ${method} timed out`, "timeout"));
       }, timeoutMs);
       if (typeof timer === "object" && "unref" in timer) timer.unref();
       this.pendingHostCalls.set(id, {
         resolve: resolve as (result: unknown) => void,
         reject,
         timer,
-        agentId: entry.id,
+        agentId,
       });
       try {
         conn.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
       } catch (err) {
         clearTimeout(timer);
         this.pendingHostCalls.delete(id);
-        reject(err as Error);
+        reject(new AgentCallError((err as Error).message, "disconnected"));
       }
     });
   }
 
   /** Called by the ws-agent handler when a JSON-RPC result/error arrives
    *  that isn't a message-delivery ack. Returns false when `id` doesn't
-   *  match an outstanding callOnHost() — the caller falls back to
-   *  treating the frame as an ack in that case. */
+   *  match an outstanding callOnHost()/callOnAgent(); the caller falls
+   *  back to treating the frame as an ack in that case. */
   resolveHostCall(
     id: string,
     result: unknown | undefined,
-    error: string | undefined,
+    error: AgentCallErrorReply | undefined,
   ): boolean {
     const pending = this.pendingHostCalls.get(id);
     if (!pending) return false;
     this.pendingHostCalls.delete(id);
     clearTimeout(pending.timer);
-    if (error !== undefined) pending.reject(new Error(error));
+    if (error !== undefined)
+      pending.reject(new AgentCallError(error.message, "remote", error.code));
     else pending.resolve(result);
     return true;
+  }
+
+  /** The live agent with this canonical id, or undefined when it is not
+   *  currently connected. */
+  liveAgent(agentId: string): AgentSummary | undefined {
+    const entry = this.agents.get(agentId);
+    return entry?.conn ? this.toSummary(entry) : undefined;
   }
 
   /** Currently connected agents only — disconnected-but-within-TTL
@@ -639,6 +715,7 @@ export class AgentRegistry {
       pid: entry.pid,
       connectedAt: entry.connectedAt.toISOString(),
       teams: [...entry.teams],
+      features: [...entry.features],
     };
   }
 
@@ -678,7 +755,9 @@ export class AgentRegistry {
       if (pending.agentId !== agentId) continue;
       this.pendingHostCalls.delete(id);
       clearTimeout(pending.timer);
-      pending.reject(new Error(`agent '${agentId}' disconnected`));
+      pending.reject(
+        new AgentCallError(`agent '${agentId}' disconnected`, "disconnected"),
+      );
     }
   }
 }

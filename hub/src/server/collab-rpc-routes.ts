@@ -38,17 +38,20 @@ export function collabRpcRoutes(agentRegistry: AgentRegistry) {
           COLLAB_TIMEOUT_MS,
         );
         // Attach each session's registered label (the ompc session name)
-        // so the dashboard shows the same name as the agent tools.
-        const labels = new Map(
+        // so the dashboard shows the same name as the agent tools, and the
+        // features its extension advertised ([] when none is registered).
+        const agents = new Map(
           agentRegistry
             .listAgents()
             .filter((agent) => agent.hostId === hostId)
-            .map((agent) => [agent.instanceId, agent.label]),
+            .map((agent) => [agent.instanceId, agent]),
         );
         return {
           sessions: result.sessions.map((session) => {
-            const label = labels.get(session.instanceId);
-            return label === undefined ? session : { ...session, label };
+            const agent = agents.get(session.instanceId);
+            return agent === undefined
+              ? { ...session, features: [] }
+              : { ...session, label: agent.label, features: agent.features };
           }),
         };
       } catch (err) {
