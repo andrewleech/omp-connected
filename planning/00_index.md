@@ -8,12 +8,14 @@ HEAD: ea1ccb0695
 2. `20260922_webui_source_audit.md`, `20260922_claudenet_reference_review.md`, `20260922_webui_contract_risk_audit.md`, `20260922_status_bar_telemetry_decision.md`, and `20260922_browser_test_architecture.md` — evidence and decisions D6–D7.
 3. `20260922_webui_roadmap.md` — current state, D1–D7, closed Q1–Q2, phases, risks, and rollout.
 4. Phase tickets include `phase1_status_telemetry_contract.md`, `phase1_active_collab_bar.md`, `phase3_playwright_ci.md`, and `phase3_mobile_release_validation.md`.
-5. Collab tail-first snapshot, a separate track:
-   - [design and wire contract](20260923_collab_tail_snapshot_design.md), T1–T13;
-   - [roadmap](20260923_collab_tail_snapshot_roadmap.md), phases 0–4 and Q1–Q3;
+5. Collab tail-first snapshot, a separate track, archived in `archive/collab-tail-snapshot/` (fork branch `collab-tail-snapshot`, upstream PR #13389):
+   - origin: `20260922_collab_tail_handover.md`, the hub-side problem report that started the work;
+   - [design and wire contract](archive/collab-tail-snapshot/20260923_collab_tail_snapshot_design.md), T1–T13;
+   - [roadmap](archive/collab-tail-snapshot/20260923_collab_tail_snapshot_roadmap.md), phases 0–4 and Q1–Q3;
    - `tickets/tail_*.md` and `tickets/hub_reselect_guard.md`;
    - evidence: `20260923_collab_snapshot_composition.md` and `20260923_upstream_*.md`;
-   - results: `20260923_tail_snapshot_phase0.md`, `20260924_tail_snapshot_phase1.md`, `20260924_tail_snapshot_field_test.md` (phases 2–3).
+   - results: `20260923_tail_snapshot_phase0.md`, `20260924_tail_snapshot_phase1.md`, `20260924_tail_snapshot_field_test.md` (phases 2–3);
+   - PR body and head: `pr-drafts/collab-tail-snapshot.md`.
 
 ## Operating conventions
 - Every document is stamped with its date and HEAD revision.

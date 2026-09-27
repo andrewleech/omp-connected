@@ -25,4 +25,4 @@ Rules:
 - Collab stays unpatched in this repo; the submodule tracks the fork branch until upstream merges it.
 - The guest owns the byte budget.
 - No content is lost; trimmed content is loaded on demand.
-See the [design](20260923_collab_tail_snapshot_design.md) and the [roadmap](20260923_collab_tail_snapshot_roadmap.md).
+See the [design](archive/collab-tail-snapshot/20260923_collab_tail_snapshot_design.md) and the [roadmap](archive/collab-tail-snapshot/20260923_collab_tail_snapshot_roadmap.md).
