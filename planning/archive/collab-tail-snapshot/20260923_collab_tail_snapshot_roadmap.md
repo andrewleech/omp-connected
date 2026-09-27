@@ -168,6 +168,6 @@ to stock omp (logistics §5).
 | collab-web `index.html` loads a third-party analytics script that our hub serves to users (web survey, finding 10) | Out of scope; separate hub decision |
 
 ## Progress tracking
-- Each executed phase writes `planning/YYYYMMDD_tail_snapshot_phaseN.md` with its results and what was learned.
+- Each executed phase writes `YYYYMMDD_tail_snapshot_phaseN.md` with its results and what was learned.
 - This roadmap is updated in place.
-- At the start of each phase, revalidate that phase's tickets using the procedure in `00_index.md`.
+- At the start of each phase, revalidate that phase's tickets using the procedure in `../../00_index.md`.
