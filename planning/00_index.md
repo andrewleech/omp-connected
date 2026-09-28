@@ -16,6 +16,7 @@ HEAD: ea1ccb0695
    - evidence: `20260923_collab_snapshot_composition.md` and `20260923_upstream_*.md`;
    - results: `20260923_tail_snapshot_phase0.md`, `20260924_tail_snapshot_phase1.md`, `20260924_tail_snapshot_field_test.md` (phases 2–3);
    - PR body and head: `pr-drafts/collab-tail-snapshot.md`.
+6. Collab guest image attachments, archived in `archive/collab-web-image-attach/` (fork branch `collab-web-image-attach`, no upstream PR): [design, reviews and verification](archive/collab-web-image-attach/20260926_guest_image_attach.md), the only record of the track.
 
 ## Operating conventions
 - Every document is stamped with its date and HEAD revision.
