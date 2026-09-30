@@ -354,6 +354,97 @@ describe("session-rpc-routes: info, controls, listing", () => {
   });
 });
 
+describe("session-rpc-routes: scheduled prompts", () => {
+  const FEATURES = ["session.v1", "session.schedule.v1"];
+  const queued = {
+    id: "p1",
+    text: "run the tests",
+    fireAt: 2000,
+    createdAt: 1000,
+  };
+
+  test("need the schedule feature, answering 501 with the restart hint otherwise", async () => {
+    const registry = new AgentRegistry();
+    const calls = registerSessionAgent(registry, () => ({ ok: true }));
+    const app = sessionRpcRoutes(registry);
+
+    const responses = await Promise.all([
+      app.handle(new Request(`${BASE}/inst-1/scheduled`)),
+      app.handle(post("scheduled", { text: "x", delayMs: 1000 })),
+      app.handle(
+        new Request(`${BASE}/inst-1/scheduled/p1`, { method: "DELETE" }),
+      ),
+    ]);
+
+    for (const response of responses) {
+      expect(response.status).toBe(501);
+      expect(await response.json()).toEqual({
+        error:
+          "session's omp-connected extension does not support session.schedule.v1; restart the session to update it",
+      });
+    }
+    expect(calls).toEqual([]);
+  });
+
+  test("queue, list and cancel forward to the session", async () => {
+    const registry = new AgentRegistry();
+    const calls = registerSessionAgent(
+      registry,
+      (method) => {
+        if (method === "session.schedule_prompt") return queued;
+        if (method === "session.scheduled") return { prompts: [queued] };
+        return { ok: true };
+      },
+      { features: FEATURES },
+    );
+    const app = sessionRpcRoutes(registry);
+
+    const added = await app.handle(
+      post("scheduled", { text: "run the tests", delayMs: 60_000 }),
+    );
+    const listed = await app.handle(new Request(`${BASE}/inst-1/scheduled`));
+    const cancelled = await app.handle(
+      new Request(`${BASE}/inst-1/scheduled/p1`, { method: "DELETE" }),
+    );
+
+    expect(await added.json()).toEqual(queued);
+    expect(await listed.json()).toEqual({ prompts: [queued] });
+    expect(await cancelled.json()).toEqual({ ok: true });
+    expect(calls).toEqual([
+      {
+        method: "session.schedule_prompt",
+        params: { text: "run the tests", delayMs: 60_000 },
+      },
+      { method: "session.scheduled", params: {} },
+      { method: "session.cancel_scheduled", params: { id: "p1" } },
+    ]);
+  });
+
+  test("a malformed prompt or delay answers 400 without calling the session", async () => {
+    const registry = new AgentRegistry();
+    const calls = registerSessionAgent(registry, () => queued, {
+      features: FEATURES,
+    });
+    const app = sessionRpcRoutes(registry);
+
+    const rejected = await Promise.all([
+      app.handle(post("scheduled", { text: "  ", delayMs: 1000 })),
+      app.handle(post("scheduled", { text: "x".repeat(100_001), delayMs: 1 })),
+      app.handle(post("scheduled", { text: "x", delayMs: "1000" })),
+      app.handle(post("scheduled", { text: "x", delayMs: 1.5 })),
+      app.handle(post("scheduled", { text: "x", delayMs: -1 })),
+      app.handle(
+        post("scheduled", { text: "x", delayMs: 7 * 24 * 3600 * 1000 + 1 }),
+      ),
+    ]);
+
+    expect(rejected.map((r) => r.status)).toEqual([
+      400, 400, 400, 400, 400, 400,
+    ]);
+    expect(calls).toEqual([]);
+  });
+});
+
 describe("session-rpc-routes: download", () => {
   test("streams a multi-chunk file with the stat's size/mtime as `expect`", async () => {
     const registry = new AgentRegistry();

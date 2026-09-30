@@ -310,6 +310,13 @@ export const AGENT_RPC_ERRORS = {
 // ---------------------------------------------------------------------------
 
 export const SESSION_FEATURE = "session.v1";
+/** Advertised with SESSION_FEATURE by extensions that serve the
+ *  session.schedule_prompt / session.scheduled / session.cancel_scheduled
+ *  methods (prompts the session sends itself at a later time). */
+export const SCHEDULE_FEATURE = "session.schedule.v1";
+/** The extension's limits for a scheduled prompt. */
+export const MAX_SCHEDULED_TEXT = 100_000;
+export const MAX_SCHEDULE_DELAY_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Error codes the extension replies with for session.* / files.* calls. */
 export const SESSION_RPC_ERRORS = {
@@ -400,6 +407,14 @@ export interface OkResult {
   ok: true;
 }
 
+export interface ScheduledPromptResult {
+  id: string;
+  text: string;
+  /** Epoch ms by the session host's clock. */
+  fireAt: number;
+  createdAt: number;
+}
+
 export interface SessionMethodParams {
   "session.info": Record<string, never>;
   "session.abort": Record<string, never>;
@@ -412,6 +427,9 @@ export interface SessionMethodParams {
   "files.write": FilesWriteParams;
   "files.write_abort": { path: string; uploadId: string };
   "files.mkdir": { path: string };
+  "session.schedule_prompt": { text: string; delayMs: number };
+  "session.scheduled": Record<string, never>;
+  "session.cancel_scheduled": { id: string };
 }
 
 export interface SessionMethodResult {
@@ -426,6 +444,9 @@ export interface SessionMethodResult {
   "files.write": FilesWriteResult;
   "files.write_abort": OkResult;
   "files.mkdir": OkResult;
+  "session.schedule_prompt": ScheduledPromptResult;
+  "session.scheduled": { prompts: ScheduledPromptResult[] };
+  "session.cancel_scheduled": OkResult;
 }
 
 export type SessionMethod = keyof SessionMethodParams;

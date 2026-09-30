@@ -5,6 +5,7 @@ import * as path from "node:path";
 import type { ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { FileService } from "../../src/files-rpc.js";
 import { RpcCode } from "../../src/protocol.js";
+import { PromptScheduler } from "../../src/scheduled-prompts.js";
 import {
 	type AccessSource,
 	type CollabAccess,
@@ -77,11 +78,20 @@ function harness(options: { access?: CollabAccess | AccessSource; idle?: boolean
 			},
 		},
 	} as unknown as SessionRpcDeps["pi"];
+	// Never fires within a test: the clock stands still and the timer is inert.
+	const scheduler = new PromptScheduler({
+		send: () => undefined,
+		onError: () => undefined,
+		now: () => 5_000,
+		setTimer: () => undefined,
+		clearTimer: () => undefined,
+	});
 	const handle = createSessionRpc({
 		pi,
 		context: () => ctx,
 		access,
 		files,
+		scheduler,
 	});
 	return {
 		handle,
@@ -144,6 +154,9 @@ test("a view-only session answers session.info but refuses every other method as
 		["files.write", { path: "x", uploadId: "upload-01", offset: 0, data: "", final: true, overwrite: false }],
 		["files.write_abort", { path: "x", uploadId: "upload-01" }],
 		["files.mkdir", { path: "d" }],
+		["session.schedule_prompt", { text: "later", delayMs: 60_000 }],
+		["session.scheduled", {}],
+		["session.cancel_scheduled", { id: "x" }],
 	];
 	for (const [method, params] of gated) {
 		expect({ method, code: await rpcCode(handle(method, params)) }).toEqual({ method, code: RpcCode.Forbidden });
@@ -304,4 +317,22 @@ test("abort calls through to the session", async () => {
 	const { handle, calls } = harness();
 	expect(await handle("session.abort", undefined)).toEqual({ ok: true });
 	expect(calls.abort).toBe(1);
+});
+
+test("scheduled prompts can be queued, listed and cancelled; bad requests are invalid", async () => {
+	const { handle } = harness();
+	const queued = (await handle("session.schedule_prompt", { text: "run the tests", delayMs: 90_000 })) as {
+		id: string;
+		fireAt: number;
+	};
+	expect(queued).toMatchObject({ text: "run the tests", fireAt: 95_000, createdAt: 5_000 });
+	expect(await handle("session.scheduled", {})).toEqual({ prompts: [queued] });
+
+	expect(await rpcCode(handle("session.schedule_prompt", { text: "", delayMs: 1_000 }))).toBe(RpcCode.Invalid);
+	expect(await rpcCode(handle("session.schedule_prompt", { text: "x", delayMs: "soon" }))).toBe(RpcCode.Invalid);
+	expect(await rpcCode(handle("session.schedule_prompt", { text: "x", delayMs: -5 }))).toBe(RpcCode.Invalid);
+
+	expect(await handle("session.cancel_scheduled", { id: queued.id })).toEqual({ ok: true });
+	expect(await rpcCode(handle("session.cancel_scheduled", { id: queued.id }))).toBe(RpcCode.NotFound);
+	expect(await handle("session.scheduled", {})).toEqual({ prompts: [] });
 });
