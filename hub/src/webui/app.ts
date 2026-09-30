@@ -13,6 +13,12 @@ import { CollabTailViewer } from "./lib/collab-tail";
 import { el } from "./lib/dom";
 import { type EdgeSwipeOptions, attachEdgeSwipe } from "./lib/edge-swipe";
 import { FilesPane } from "./lib/files-pane";
+import {
+  SCHEDULE_FEATURE,
+  attachScheduledSend,
+  scheduleApi,
+} from "./lib/scheduled-send";
+import { sessionApiBase } from "./lib/session-api";
 import { SessionPane } from "./lib/session-pane";
 import {
   type CollabSession,
@@ -807,7 +813,8 @@ function createDashboard(root: HTMLElement): void {
   }
 
   // Customize the same-origin Collab guest on every frame load (see
-  // lib/collab-frame.ts) and forward its edge swipes to the drawers.
+  // lib/collab-frame.ts), forward its edge swipes to the drawers, and add
+  // scheduled send to a control room whose extension serves it.
   root.addEventListener(
     "load",
     (event) => {
@@ -820,6 +827,17 @@ function createDashboard(root: HTMLElement): void {
         doc,
         edgeSwipeOptions(() => frame.getBoundingClientRect().left),
       );
+      const session = state.selectedSession;
+      if (
+        session &&
+        state.selectedAccess === "control" &&
+        doc.location.href !== "about:blank" &&
+        session.features?.includes(SCHEDULE_FEATURE)
+      )
+        attachScheduledSend(
+          doc,
+          scheduleApi(sessionApiBase(session.host_id, session.instanceId)),
+        );
     },
     true,
   );
