@@ -20,6 +20,7 @@ Each omp session started with `ompc` registers with a hub you run on one always-
 
 - **Every session in one place.** Live sessions from all your hosts, grouped by host and labelled with their `ompc` session name.
 - **Control from the browser.** Open a session to follow its conversation and tool calls live, send it prompts, or interrupt it.
+- **Send later.** Hold the Send button for a moment to queue a prompt for later instead, either after a delay or at a time of day. The session itself holds the prompt, so it still goes out with the browser closed; a strip above the prompt box counts down to each one and lets you cancel it. Waiting prompts are dropped if the omp session exits.
 - **Session panel.** The inspector shows the selected session's working directory, state, model, thinking level and context usage, and lets you switch model or thinking level, compact the context or abort a turn.
 - **Files panel.** Browse the session's working directory, download files, preview images, create folders, and upload files (button or drag and drop, up to 256 MB each). File access is confined to that directory, and both controls and files need a session shared with control access.
 - **Images in prompts.** Paste, drop or attach images in a session's prompt box; they're downscaled in the browser to fit a relay frame. This needs a Collab guest built with image attachments, which upstream omp doesn't have yet: build `hub` with `COLLAB_WEB_SRC` pointing at a checkout that has it (see [hub/README.md](hub/README.md)).

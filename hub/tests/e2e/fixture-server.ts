@@ -17,7 +17,7 @@ const sessions = {
     sessionName: "Writable room",
     cwd: "/work/writer",
     participants: 2,
-    features: ["session.v1"],
+    features: ["session.v1", "session.schedule.v1"],
   },
   viewer: {
     instanceId: "viewer-room",
@@ -30,7 +30,28 @@ const sessions = {
   },
 };
 
-const guest = `<!doctype html><html><body style="margin:0;background:#111;color:#fff;font:14px system-ui"><aside data-native-status-bar style="float:right;margin:12px;padding:8px;border:1px solid #65b9e8">project · main · active · model · context · 42 tok/s</aside><main style="padding:64px 12px">Collab control fixture</main></body></html>`;
+// The guest's composer markup that the dashboard's scheduled send hooks
+// (lib/scheduled-send.ts). Like the real React composer, the prompt lives in
+// the page's own state, fed by input events, and Send is disabled while it
+// is blank; Send logs the prompt into [data-sent].
+const guest = `<!doctype html><html><body style="margin:0;background:#111;color:#fff;font:14px system-ui"><aside data-native-status-bar style="float:right;margin:12px;padding:8px;border:1px solid #65b9e8">project · main · active · model · context · 42 tok/s</aside><main style="padding:64px 12px">Collab control fixture<ol data-sent></ol></main>
+<div class="sh-composer" style="position:fixed;left:0;right:0;bottom:0;padding:10px"><div class="sh-composer-inner" style="display:flex;gap:8px"><textarea class="sh-composer-input" aria-label="prompt" style="flex:1"></textarea><div class="sh-composer-actions"><button type="button" class="sh-btn sh-btn-primary">Send</button></div></div></div>
+<script>
+const input = document.querySelector(".sh-composer-input");
+const send = document.querySelector(".sh-btn-primary");
+let text = "";
+const sync = () => { send.disabled = text.trim() === ""; };
+input.addEventListener("input", () => { text = input.value; sync(); });
+send.addEventListener("click", () => {
+  const item = document.createElement("li");
+  item.textContent = text;
+  document.querySelector("[data-sent]").append(item);
+  text = "";
+  input.value = "";
+  sync();
+});
+sync();
+</script></body></html>`;
 
 // The writer session's side of the session.v1 routes: info, model/thinking
 // controls and an in-memory directory tree for the Files tab. Loading the
@@ -52,11 +73,18 @@ const writerInfo = {
   models,
 };
 const files = new Map<string, Uint8Array | "dir">();
+const scheduled: {
+  id: string;
+  text: string;
+  fireAt: number;
+  createdAt: number;
+}[] = [];
 
 function resetWriter(): void {
   writerInfo.model = models[0];
   writerInfo.thinkingLevel = "medium";
   files.clear();
+  scheduled.length = 0;
   files.set("docs", "dir");
   files.set("docs/notes.md", new TextEncoder().encode("# notes\n"));
   files.set("README.md", new TextEncoder().encode("hello\n"));
@@ -107,6 +135,29 @@ async function writerSessionApi(
     writerInfo.thinkingLevel = (
       (await request.json()) as { level: string }
     ).level;
+    return json({ ok: true });
+  }
+  if (route === "/scheduled" && request.method === "GET")
+    return json({ prompts: scheduled });
+  if (route === "/scheduled" && request.method === "POST") {
+    const body = (await request.json()) as { text: string; delayMs: number };
+    const now = Date.now();
+    const prompt = {
+      id: `p${now}${scheduled.length}`,
+      text: body.text,
+      fireAt: now + body.delayMs,
+      createdAt: now,
+    };
+    scheduled.push(prompt);
+    return json(prompt);
+  }
+  if (route.startsWith("/scheduled/") && request.method === "DELETE") {
+    const at = scheduled.findIndex(
+      (prompt) => prompt.id === route.slice("/scheduled/".length),
+    );
+    if (at === -1)
+      return Response.json({ error: "not found" }, { status: 404 });
+    scheduled.splice(at, 1);
     return json({ ok: true });
   }
   if (route === "/files") {
