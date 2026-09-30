@@ -184,3 +184,118 @@ test("a server-pushed collab.link request with invalid params returns an error",
 	expect(reply).toHaveProperty("error");
 	transport.close();
 });
+/**
+ * A TCP relay in front of `port` that can go silent the way a dropped Wi-Fi
+ * link does: bytes stop flowing both ways and neither end sees a close.
+ */
+async function silenceableLink(port: number) {
+	let silent = false;
+	const upstreams = new Set<Awaited<ReturnType<typeof Bun.connect>>>();
+	const proxy = Bun.listen<{ upstream?: Awaited<ReturnType<typeof Bun.connect>>; queued: Uint8Array[] }>({
+		hostname: "127.0.0.1",
+		port: 0,
+		socket: {
+			async open(client) {
+				client.data = { queued: [] };
+				const upstream = await Bun.connect({
+					hostname: "127.0.0.1",
+					port,
+					socket: {
+						data(_socket, bytes) {
+							if (!silent) client.write(bytes);
+						},
+						close() {
+							if (!silent) client.end();
+						},
+					},
+				});
+				upstreams.add(upstream);
+				client.data.upstream = upstream;
+				for (const bytes of client.data.queued.splice(0)) upstream.write(bytes);
+			},
+			data(client, bytes) {
+				if (silent) return;
+				if (client.data.upstream) client.data.upstream.write(bytes);
+				else client.data.queued.push(new Uint8Array(bytes));
+			},
+			close(client) {
+				if (!silent) client.data.upstream?.end();
+			},
+		},
+	});
+	return {
+		port: proxy.port,
+		silence() {
+			silent = true;
+		},
+		stop() {
+			for (const upstream of upstreams) upstream.end();
+			proxy.stop(true);
+		},
+	};
+}
+
+/** Liveness ticks the test drives by hand, on a hand-driven clock. */
+function manualHeartbeat() {
+	const clock = { now: 0 };
+	let tick: (() => void) | undefined;
+	return {
+		clock,
+		options: {
+			now: () => clock.now,
+			every: (fn: () => void) => {
+				tick = fn;
+				return () => {
+					tick = undefined;
+				};
+			},
+		},
+		/** Advances the clock and runs one tick. */
+		advance(ms: number) {
+			clock.now += ms;
+			tick?.();
+		},
+		get running() {
+			return tick !== undefined;
+		},
+	};
+}
+
+test("a link that goes silent without closing is noticed and closed, so the owner reconnects", async () => {
+	const hub = startHub((client, request) => respond(client, request.id, { ok: true, agent: { id: "a" } }));
+	const link = await silenceableLink(hub.port as number);
+	const heartbeat = manualHeartbeat();
+	let closed = 0;
+	const transport = new HubTransport(
+		`http://127.0.0.1:${link.port}`,
+		"secret-token",
+		() => undefined,
+		() => {
+			closed += 1;
+		},
+		undefined,
+		heartbeat.options,
+	);
+	try {
+		await transport.register({ hostId: "user@hub-host", instanceId: "inst-1", pid: 1, cwd: "/tmp" });
+
+		// While the hub answers pings, the connection stays up however long it is idle.
+		for (let i = 0; i < 10; i += 1) {
+			heartbeat.advance(15_000);
+			await Bun.sleep(20); // the ping's round trip over the local link
+		}
+		expect(closed).toBe(0);
+
+		link.silence();
+		heartbeat.advance(15_000);
+		await Bun.sleep(20);
+		heartbeat.advance(15_000);
+		await Bun.sleep(20);
+		heartbeat.advance(15_000);
+		expect(closed).toBe(1);
+		expect(heartbeat.running).toBe(false);
+	} finally {
+		transport.close();
+		link.stop();
+	}
+});
