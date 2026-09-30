@@ -17,6 +17,9 @@ HEAD: ea1ccb0695
    - results: `20260923_tail_snapshot_phase0.md`, `20260924_tail_snapshot_phase1.md`, `20260924_tail_snapshot_field_test.md` (phases 2–3);
    - PR body and head: `pr-drafts/collab-tail-snapshot.md`.
 6. Collab guest image attachments, archived in `archive/collab-web-image-attach/` (fork branch `collab-web-image-attach`, no upstream PR): [design, reviews and verification](archive/collab-web-image-attach/20260926_guest_image_attach.md), the only record of the track.
+7. Collab rewind for guests, active (fork branches `collab-guest-leaf` then `collab-guest-rewind`, no upstream issue yet):
+   - [design and roadmap](20260930_collab_rewind_design.md): bugs B1 to B3, decisions R1 to R12, wire contract, Q1 to Q7, phases 0 to 4;
+   - tickets: `tickets/rewind_p0_*` (reproduce, upstream issue), `rewind_p1_*` (leaf sync: wire chain, host, TUI guest, collab-web, hub viewer), `rewind_p2_*` (shared rewind core, host `rewind` frame, TUI guest), `rewind_p3_web_rewind_ui`, `rewind_p4_fleet_and_upstream`.
 
 ## Operating conventions
 - Every document is stamped with its date and HEAD revision.
