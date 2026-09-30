@@ -31,10 +31,26 @@ const REQUEST_TIMEOUT_MS = 10_000;
 const CONNECT_TIMEOUT_MS = 10_000;
 /** Fits a `files.write` request: a 256 KiB chunk as base64 plus framing. */
 const MAX_FRAME_CHARS = 1_048_576;
+/** How often an open connection is pinged. */
+export const HEARTBEAT_INTERVAL_MS = 15_000;
+/** A connection with nothing received (message or pong) for this long is
+ *  dead: a dropped network leaves the socket looking open, with no close
+ *  event, until something is written to it. */
+export const HEARTBEAT_TIMEOUT_MS = 35_000;
+
+export interface HeartbeatOptions {
+	now?: () => number;
+	/** Runs `fn` every `ms` until the returned stop function is called. */
+	every?: (fn: () => void, ms: number) => () => void;
+}
 
 export class HubTransport {
 	#socket: WebSocket | undefined;
 	#pending = new Map<string, { resolve: (value: unknown) => void; reject: (reason: Error) => void }>();
+	#lastSeen = 0;
+	#stopHeartbeat: (() => void) | undefined;
+	readonly #now: () => number;
+	readonly #every: (fn: () => void, ms: number) => () => void;
 
 	constructor(
 		private readonly hubUrl: string,
@@ -42,7 +58,16 @@ export class HubTransport {
 		private readonly onInbound: InboundHandler,
 		private readonly onClose?: () => void,
 		private readonly onRequest?: PushRequestHandler,
-	) {}
+		heartbeat: HeartbeatOptions = {},
+	) {
+		this.#now = heartbeat.now ?? Date.now;
+		this.#every =
+			heartbeat.every ??
+			((fn, ms) => {
+				const timer = setInterval(fn, ms);
+				return () => clearInterval(timer);
+			});
+	}
 
 	/** Sends `agent.register`, injecting the shared-secret token so callers
 	 *  never have to remember to attach it themselves. */
@@ -85,6 +110,8 @@ export class HubTransport {
 	}
 
 	close(): void {
+		this.#stopHeartbeat?.();
+		this.#stopHeartbeat = undefined;
 		const socket = this.#socket;
 		this.#socket = undefined;
 		socket?.close();
@@ -100,9 +127,39 @@ export class HubTransport {
 		}
 		const socket = new WebSocket(hubWebSocketUrl(this.hubUrl));
 		this.#socket = socket;
-		socket.addEventListener("message", (event) => this.handleFrame(event.data, socket));
+		socket.addEventListener("message", (event) => {
+			this.#lastSeen = this.#now();
+			this.handleFrame(event.data, socket);
+		});
+		socket.addEventListener("pong", () => {
+			this.#lastSeen = this.#now();
+		});
 		socket.addEventListener("close", () => this.closeSocket(socket));
-		return this.awaitOpen(socket);
+		const open = await this.awaitOpen(socket);
+		this.#startHeartbeat(socket);
+		return open;
+	}
+
+	/** Pings `socket` on an interval and closes the transport once nothing
+	 *  has arrived for HEARTBEAT_TIMEOUT_MS, which the owner's close handler
+	 *  turns into a reconnect. */
+	#startHeartbeat(socket: WebSocket): void {
+		this.#stopHeartbeat?.();
+		this.#lastSeen = this.#now();
+		this.#stopHeartbeat = this.#every(() => {
+			if (this.#socket !== socket) return;
+			if (this.#now() - this.#lastSeen > HEARTBEAT_TIMEOUT_MS) {
+				// No close handshake can complete over a dead link; drop it now.
+				socket.terminate();
+				this.close();
+				return;
+			}
+			try {
+				socket.ping();
+			} catch {
+				// A failed write closes the socket, which the close listener handles.
+			}
+		}, HEARTBEAT_INTERVAL_MS);
 	}
 
 	private async awaitOpen(socket: WebSocket): Promise<WebSocket> {
