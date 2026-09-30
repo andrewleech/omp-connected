@@ -6,9 +6,11 @@ import { getCollabRegistry } from "./collab-registry.js";
 import { FileService } from "./files-rpc.js";
 import { RpcCode, RpcError } from "./protocol.js";
 import { AGENT_MESSAGE_TYPE, type AgentMessage, formatInboundMessage, isReservedIdentity } from "./provenance.js";
+import { PromptScheduler, type ScheduledPrompt } from "./scheduled-prompts.js";
 import {
 	createAccessCache,
 	createSessionRpc,
+	SCHEDULE_FEATURE,
 	SESSION_FEATURE,
 	type SessionRequestHandler,
 } from "./session-rpc.js";
@@ -19,6 +21,7 @@ const REGISTER_BACKOFF_MIN_MS = 1_000;
 const REGISTER_BACKOFF_MAX_MS = 30_000;
 const SEND_RETRY_ATTEMPTS = 3;
 const SEND_RETRY_BASE_MS = 500;
+const SCHEDULED_STATUS_KEY = "omp-connected-scheduled";
 
 /** Mirrors ompc's session-name rule and the hub's label validation. */
 const LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
@@ -78,6 +81,30 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 	let ownerContext: ExtensionContext | undefined;
 	let files: FileService | undefined;
 	let sessionRpc: SessionRequestHandler | undefined;
+	let scheduler: PromptScheduler | undefined;
+
+	function showScheduled(prompts: readonly ScheduledPrompt[]): void {
+		const ctx = ownerContext;
+		if (!ctx?.hasUI) return;
+		const next = prompts[0];
+		ctx.ui.setStatus(
+			SCHEDULED_STATUS_KEY,
+			next
+				? `${prompts.length} scheduled prompt${prompts.length === 1 ? "" : "s"}, next at ${new Date(next.fireAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+				: undefined,
+		);
+	}
+
+	/** Drops the waiting prompts, telling the host user when there were any. */
+	function dropScheduled(reason: string): void {
+		const dropped = scheduler?.clear() ?? 0;
+		if (dropped > 0) {
+			ownerContext?.ui.notify(
+				`omp-connected: ${dropped} scheduled prompt${dropped === 1 ? " was" : "s were"} dropped because ${reason}`,
+				"warning",
+			);
+		}
+	}
 
 	async function handleHubRequest(method: string, params: unknown): Promise<unknown> {
 		if (!sessionRpc) throw new RpcError(RpcCode.Internal, "the session is not ready");
@@ -135,7 +162,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 						pid: process.pid,
 						cwd: process.cwd(),
 						label: ompcSession,
-						features: [SESSION_FEATURE],
+						features: [SESSION_FEATURE, SCHEDULE_FEATURE],
 					});
 					hub.identity = result.agent;
 					return;
@@ -184,10 +211,38 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		await files?.dispose();
 		files = undefined;
 		sessionRpc = undefined;
+		scheduler?.clear();
+		scheduler = new PromptScheduler({
+			send: async (text, afterPrevious) => {
+				// It was queued under a control share; a share since made view-only
+				// (or stopped) must not still run it.
+				if ((await ownAccess.refresh()) !== "control") {
+					throw new Error("the session is no longer shared with control access, so it was dropped");
+				}
+				const current = ownerContext;
+				if (!current) throw new Error("the session is not ready");
+				// An explicit deliverAs never starts a turn, so only a busy session
+				// (or a prompt queued behind one sent a moment ago) takes followUp.
+				if (afterPrevious || !current.isIdle()) pi.sendUserMessage(text, { deliverAs: "followUp" });
+				else pi.sendUserMessage(text);
+			},
+			onError: (prompt, error) => {
+				const message = error instanceof Error ? error.message : String(error);
+				pi.logger.warn("omp-connected: a scheduled prompt could not be sent", { id: prompt.id, err: message });
+				ownerContext?.ui.notify(`omp-connected: a scheduled prompt could not be sent: ${message}`, "error");
+			},
+			onChange: showScheduled,
+		});
 		try {
 			const service = await FileService.open(process.cwd());
 			files = service;
-			sessionRpc = createSessionRpc({ pi, context: () => ownerContext, access: ownAccess, files: service });
+			sessionRpc = createSessionRpc({
+				pi,
+				context: () => ownerContext,
+				access: ownAccess,
+				files: service,
+				scheduler,
+			});
 		} catch (error) {
 			pi.logger.warn("omp-connected: could not resolve the session directory; session controls disabled", {
 				err: error instanceof Error ? error.message : String(error),
@@ -213,7 +268,12 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 	const trackContext = (_event: unknown, ctx: ExtensionContext) => {
 		if (hub.owner === pi) ownerContext = ctx;
 	};
-	pi.on("session_switch", trackContext);
+	pi.on("session_switch", (event, ctx) => {
+		if (hub.owner !== pi) return;
+		// A prompt queued for one conversation must not land in another.
+		dropScheduled("the session was switched");
+		trackContext(event, ctx);
+	});
 	pi.on("session_branch", trackContext);
 	pi.on("session_tree", trackContext);
 
@@ -224,6 +284,8 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		hub.transport?.close();
 		hub.transport = undefined;
 		const pending = files;
+		dropScheduled("the session is shutting down");
+		scheduler = undefined;
 		ownerContext = undefined;
 		sessionRpc = undefined;
 		files = undefined;

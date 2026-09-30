@@ -16,6 +16,9 @@ import { AgentCallError, type AgentRegistry } from "./agent-registry";
 import { RateLimiter } from "./rate-limit";
 import {
   type FilesStatResult,
+  MAX_SCHEDULED_TEXT,
+  MAX_SCHEDULE_DELAY_MS,
+  SCHEDULE_FEATURE,
   SESSION_FEATURE,
   SESSION_RPC_ERRORS,
   type SessionMethod,
@@ -38,8 +41,6 @@ const INLINE_IMAGE_TYPES = new Set([
   "image/gif",
   "image/webp",
 ]);
-const NO_FEATURE_ERROR = `session's omp-connected extension does not support ${SESSION_FEATURE}; restart the session to update it`;
-
 const HTTP_STATUS_BY_RPC_CODE: Record<number, number> = {
   [SESSION_RPC_ERRORS.notFound]: 404,
   [SESSION_RPC_ERRORS.exists]: 409,
@@ -122,6 +123,7 @@ export function sessionRpcRoutes(
   function target(
     hostId: string,
     instanceId: string,
+    feature: string = SESSION_FEATURE,
   ): { agentId: string } | Failure {
     if (!INSTANCE_ID_RE.test(instanceId))
       return { status: 400, error: "Invalid session instance ID" };
@@ -129,8 +131,11 @@ export function sessionRpcRoutes(
     const agent = agentRegistry.liveAgent(agentId);
     if (!agent)
       return { status: 404, error: `session '${agentId}' not connected` };
-    if (!agent.features.includes(SESSION_FEATURE))
-      return { status: 501, error: NO_FEATURE_ERROR };
+    if (!agent.features.includes(feature))
+      return {
+        status: 501,
+        error: `session's omp-connected extension does not support ${feature}; restart the session to update it`,
+      };
     return { agentId };
   }
 
@@ -199,8 +204,9 @@ export function sessionRpcRoutes(
     routeParams: { id: string; instanceId: string },
     method: M,
     params: SessionMethodParams[M],
+    feature?: string,
   ): Promise<SessionMethodResult[M] | { error: string }> | { error: string } {
-    const resolved = target(routeParams.id, routeParams.instanceId);
+    const resolved = target(routeParams.id, routeParams.instanceId, feature);
     if (!("agentId" in resolved)) return fail(set, resolved);
     if (!controlLimiter.allow(resolved.agentId)) return rateLimited(set);
     return forward(set, resolved.agentId, method, params);
@@ -400,6 +406,58 @@ export function sessionRpcRoutes(
         level: payload.level,
       });
     })
+
+    .get("/:id/sessions/:instanceId/scheduled", ({ params, set }) => {
+      const resolved = target(params.id, params.instanceId, SCHEDULE_FEATURE);
+      if (!("agentId" in resolved)) return fail(set, resolved);
+      return forward(set, resolved.agentId, "session.scheduled", {});
+    })
+
+    .post("/:id/sessions/:instanceId/scheduled", ({ params, body, set }) => {
+      const payload = bodyObject(body);
+      const text = payload?.text;
+      const delayMs = payload?.delayMs;
+      if (
+        typeof text !== "string" ||
+        text.trim() === "" ||
+        text.length > MAX_SCHEDULED_TEXT
+      ) {
+        return fail(set, {
+          status: 400,
+          error: `text must be a non-empty string of at most ${MAX_SCHEDULED_TEXT} characters`,
+        });
+      }
+      if (
+        typeof delayMs !== "number" ||
+        !Number.isInteger(delayMs) ||
+        delayMs < 0 ||
+        delayMs > MAX_SCHEDULE_DELAY_MS
+      ) {
+        return fail(set, {
+          status: 400,
+          error: `delayMs must be a whole number from 0 to ${MAX_SCHEDULE_DELAY_MS}`,
+        });
+      }
+      return control(
+        set,
+        params,
+        "session.schedule_prompt",
+        { text, delayMs },
+        SCHEDULE_FEATURE,
+      );
+    })
+
+    .delete(
+      "/:id/sessions/:instanceId/scheduled/:scheduleId",
+      ({ params, set }) =>
+        control(
+          set,
+          params,
+          "session.cancel_scheduled",
+          { id: params.scheduleId },
+          SCHEDULE_FEATURE,
+        ),
+    )
 
     .get("/:id/sessions/:instanceId/files", ({ params, query, set }) => {
       const resolved = target(params.id, params.instanceId);

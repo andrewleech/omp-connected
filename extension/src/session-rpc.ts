@@ -4,9 +4,13 @@
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import type { FileService } from "./files-rpc.js";
 import { paramsRecord, RpcCode, RpcError } from "./protocol.js";
+import { type PromptScheduler, ScheduleError, type ScheduledPrompt } from "./scheduled-prompts.js";
 
 /** Feature flag advertised in `agent.register` for this request set. */
 export const SESSION_FEATURE = "session.v1";
+/** Advertised alongside SESSION_FEATURE when the session.schedule_prompt,
+ *  session.scheduled and session.cancel_scheduled methods are served. */
+export const SCHEDULE_FEATURE = "session.schedule.v1";
 
 export type CollabAccess = "view" | "control";
 
@@ -105,6 +109,8 @@ export interface SessionRpcDeps {
 	/** The access level of this session's own Collab host entry. */
 	access: AccessSource;
 	files: FileService;
+	/** The owner session's queue of prompts to send later. */
+	scheduler: PromptScheduler;
 }
 
 /** Handles one pushed request; throws RpcError for contract failures. */
@@ -221,6 +227,28 @@ export function createSessionRpc(deps: SessionRpcDeps): SessionRequestHandler {
 				);
 			}
 			pi.setThinkingLevel(level as Parameters<typeof pi.setThinkingLevel>[0]);
+			return { ok: true };
+		},
+		"session.schedule_prompt"(params): ScheduledPrompt {
+			const { text, delayMs } = paramsRecord(params);
+			if (typeof text !== "string" || typeof delayMs !== "number") {
+				throw new RpcError(RpcCode.Invalid, "text must be a string and delayMs a number");
+			}
+			requireContext();
+			try {
+				return deps.scheduler.add(text, delayMs);
+			} catch (error) {
+				if (error instanceof ScheduleError) throw new RpcError(RpcCode.Invalid, error.message);
+				throw error;
+			}
+		},
+		"session.scheduled"(): { prompts: ScheduledPrompt[] } {
+			return { prompts: deps.scheduler.list() };
+		},
+		"session.cancel_scheduled"(params) {
+			const { id } = paramsRecord(params);
+			if (typeof id !== "string") throw new RpcError(RpcCode.Invalid, "id must be a string");
+			if (!deps.scheduler.cancel(id)) throw new RpcError(RpcCode.NotFound, "no such scheduled prompt; it may have been sent already");
 			return { ok: true };
 		},
 		"files.list": (params) => files.list(params),
