@@ -21,6 +21,8 @@ HEAD: ea1ccb0695
    - [design and roadmap](20260930_collab_rewind_design.md): bugs B1 to B3, decisions R1 to R12, wire contract, Q1 to Q7, phases 0 to 4;
    - tickets: `tickets/rewind_p0_*` (reproduce, upstream issue), `rewind_p1_*` (leaf sync: wire chain, host, TUI guest, collab-web, hub viewer), `rewind_p2_*` (shared rewind core, host `rewind` frame, TUI guest), `rewind_p3_web_rewind_ui`, `rewind_p4_fleet_and_upstream`.
 
+8. Collab guest slash commands, archived in `archive/collab-guest-commands/` (fork branch `collab-guest-commands`, no upstream PR): [design, reviews and verification](archive/collab-guest-commands/20260930_guest_slash_commands.md), the only record of the track.
+
 ## Operating conventions
 - Every document is stamped with its date and HEAD revision.
 - Tickets have immutable `Written:` metadata and append-only `Revalidated:` entries.
