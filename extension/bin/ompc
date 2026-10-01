@@ -66,8 +66,9 @@ tmux_config="$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/omp-tmux.conf
 # Dots in session names are tmux's session.pane target separator, so never
 # pass the name as a target (`has-session -t`, `new-session -A` both break
 # on `<dir>.<suffix>`); list-sessions output is compared literally instead.
-# Some tmux versions (3.5a, seen) rewrite `.` and `:` to `_` in the stored
-# session name and others keep them, so accept either form.
+# tmux versions differ on whether they rewrite `.` and `:` to `_` in the stored
+# session name (3.2a-3.6 do, 3.7c does not), so sessions are created with the
+# rewritten name everywhere and the check accepts either form.
 tmux_session_name() {
 	local name=${1//./_}
 	printf '%s' "${name//:/_}"
@@ -85,7 +86,7 @@ if "$detach"; then
 		printf '%s\n' "$session_name"
 		exit 0
 	fi
-	tmux -L "$session_name" -f "$tmux_config" new-session -d -s "$session_name" \
+	tmux -L "$session_name" -f "$tmux_config" new-session -d -s "$(tmux_session_name "$session_name")" \
 		-e "OMPC_SESSION=$session_name" "${omp_command[@]}" "$@"
 	printf '%s\n' "$session_name"
 	exit 0
@@ -182,5 +183,5 @@ fi
 if session_live "$session_name"; then
 	exec tmux -L "$session_name" attach-session
 fi
-exec tmux -L "$session_name" -f "$tmux_config" new-session -s "$session_name" \
+exec tmux -L "$session_name" -f "$tmux_config" new-session -s "$(tmux_session_name "$session_name")" \
 	-e "OMPC_SESSION=$session_name" "${omp_command[@]}" "$@"
