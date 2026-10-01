@@ -23,7 +23,9 @@ Each omp session started with `ompc` registers with a hub you run on one always-
 - **Send later.** Hold the Send button for a moment to queue a prompt for later instead, either after a delay or at a time of day. The session itself holds the prompt, so it still goes out with the browser closed; a strip above the prompt box counts down to each one and lets you cancel it. Waiting prompts are dropped if the omp session exits.
 - **Session panel.** The inspector shows the selected session's working directory, state, model, thinking level and context usage, and lets you switch model or thinking level, compact the context or abort a turn.
 - **Files panel.** Browse the session's working directory, download files, preview images, create folders, and upload files (button or drag and drop, up to 256 MB each). File access is confined to that directory, and both controls and files need a session shared with control access.
-- **Images in prompts.** Paste, drop or attach images in a session's prompt box; they're downscaled in the browser to fit a relay frame. This needs a Collab guest built with image attachments, which upstream omp doesn't have yet: build `hub` with `COLLAB_WEB_SRC` pointing at a checkout that has it (see [hub/README.md](hub/README.md)).
+- **Images in prompts.** Paste, drop or attach images in a session's prompt box; they're downscaled in the browser to fit a relay frame. This needs the forked Collab guest, see [Fork build](#fork-build-of-omp).
+- **Slash commands.** A writable browser guest can type `/` to autocomplete the host's commands (builtins, skills, extension and custom commands) and run them on the host; the output comes back in a panel under the conversation. Commands that relocate the session or touch the host machine (`/move`, `/wt`, `/stats`, `/trace`, `/browser`, `/computer`, `/session delete`) are not offered. This needs the forked omp on the host and the forked guest in the hub. With stock omp the same text is sent to the agent as an ordinary prompt.
+- **Fast joins to long sessions.** The browser joins with the recent end of the conversation and loads earlier history on demand, instead of downloading the whole session first. This needs the forked omp on the host; with stock omp the guest downloads the full snapshot.
 - **Phone friendly, installable app.** The dashboard has a mobile layout with slide-out session and inspector drawers, and installs as an app (PWA) from Chrome on Android or desktop. When the hub can't be reached, the app shows an offline page instead of a browser error. See [Installing the dashboard as an app](#installing-the-dashboard-as-an-app).
 - **Persistent sessions.** `ompc` runs each omp session in its own tmux server, so it survives disconnects and you can reattach from any terminal. A partial name brings up a picker of matching live sessions.
 - **Agent-to-agent messaging.** Sessions can list each other, exchange messages and broadcast to teams through the hub.
@@ -38,7 +40,7 @@ The repo has two parts:
 
 ## Prerequisites
 
-- [OMP](https://github.com/can1357/oh-my-pi) (the official CLI), every host. Either the standalone binary or the Bun install works.
+- [OMP](https://github.com/can1357/oh-my-pi) (the official CLI), every host. Either the standalone binary or the Bun install works. Fast joins to long sessions, slash commands and image prompts additionally need a forked build, see [Fork build](#fork-build-of-omp); everything else works with stock OMP.
 - [tmux](https://github.com/tmux/tmux) 3.5 or newer (session persistence for `ompc`), every host. Older tmux works, without csi-u modified keys such as Shift+Enter (3.5+) or clipboard/image passthrough (3.3+).
 - [Bun](https://bun.sh) (runtime for the hub server), hub host only.
 
@@ -198,6 +200,47 @@ cd hub && bun install && bun run build && systemctl --user restart omp-hub.servi
 
 Running sessions keep the old extension code until OMP restarts inside them.
 
+## Fork build of OMP
+
+Fast joins, slash commands and image prompts depend on changes that upstream OMP doesn't have yet. They live on branches of [andrewleech/oh-my-pi](https://github.com/andrewleech/oh-my-pi), merged into `ompc-fleet` (upstream main plus `collab-tail-snapshot`, `collab-web-image-attach`, `collab-guest-commands` and a relay heartbeat fix). Two things are built from it:
+
+- **A forked `omp` binary on every host.** It sits next to your normal OMP and is used only by `ompc`; plain `omp`, and therefore `omp update`, are untouched.
+- **The Collab guest in the hub**, on the hub host.
+
+Build on any Linux or macOS machine with Bun and git (use the same OS and CPU as the hosts that will run it, or build once per platform):
+
+```sh
+git clone -b ompc-fleet https://github.com/andrewleech/oh-my-pi.git ~/src/oh-my-pi
+cd ~/src/oh-my-pi
+bun install
+# Prebuilt native addons from the newest published release at or below this branch's base
+# (package.json says which; swap linux-x64 for your platform, e.g. darwin-arm64)
+d=$(mktemp -d) && (cd "$d" && npm pack -q @oh-my-pi/pi-natives-linux-x64@<release> && tar xzf *.tgz) &&
+  cp "$d"/package/*.node packages/natives/native/ && rm -rf "$d"
+bun --cwd=packages/coding-agent run build        # -> packages/coding-agent/dist/omp
+```
+
+Compiling the natives locally also works but links against your machine's glibc, so a binary built on a new distro may not load on an older host.
+
+On each host, install the binary and tell `ompc` to use it:
+
+```sh
+install -m755 packages/coding-agent/dist/omp ~/.local/share/omp-connected/omp
+echo 'OMP_BIN=$HOME/.local/share/omp-connected/omp' >> ~/.config/omp-connected/omp-host.env
+```
+
+On the hub host, build the guest from the same checkout and restart the hub:
+
+```sh
+cd ~/omp-connected/hub
+COLLAB_WEB_SRC=~/src/oh-my-pi/packages/collab-web bun run build
+systemctl --user restart omp-hub.service
+```
+
+Without `COLLAB_WEB_SRC` the hub builds the older guest pinned in `hub/vendor/collab-web` (upstream OMP v15.5.9), which has none of the above.
+
+A forked binary doesn't update itself. To pick up a new upstream release, `git pull` the branch in the checkout (or rebase it onto upstream), rebuild, and reinstall on each host. Sessions already running keep the old binary until restarted. Once the changes are merged upstream, remove `OMP_BIN` and go back to stock OMP.
+
 ## Adding hosts to the fleet
 
 One host runs the hub; every other host runs only the extension and joins
@@ -214,7 +257,8 @@ On each additional host:
    ```
 
 2. **Extension.** Install the [prerequisites](#prerequisites), clone the repo,
-   and run `install.sh` ([Install steps 1–2](#1-clone)).
+   and run `install.sh` ([Install steps 1–2](#1-clone)). To use the
+   [forked OMP](#fork-build-of-omp), install its binary here too.
 
 3. **Hub credentials.** Create `~/.config/omp-connected/omp-host.env` with the
    hub URL and the same `OMP_HUB_HOST_TOKEN` the hub uses
