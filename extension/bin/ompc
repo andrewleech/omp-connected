@@ -66,8 +66,16 @@ tmux_config="$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/omp-tmux.conf
 # Dots in session names are tmux's session.pane target separator, so never
 # pass the name as a target (`has-session -t`, `new-session -A` both break
 # on `<dir>.<suffix>`); list-sessions output is compared literally instead.
+# Some tmux versions (3.5a, seen) rewrite `.` and `:` to `_` in the stored
+# session name and others keep them, so accept either form.
+tmux_session_name() {
+	local name=${1//./_}
+	printf '%s' "${name//:/_}"
+}
+
 session_live() {
-	tmux -L "$1" list-sessions -F '#{session_name}' 2>/dev/null | grep -qxF "$1"
+	tmux -L "$1" list-sessions -F '#{session_name}' 2>/dev/null |
+		grep -qxF -e "$1" -e "$(tmux_session_name "$1")"
 }
 
 if "$detach"; then
@@ -108,7 +116,7 @@ pick_session() {
 		info=$(tmux -L "$name" list-sessions \
 			-F '#{session_name} #{session_attached} #{session_activity}' 2>/dev/null) || continue
 		read -r info_name info_attached info_activity <<<"$info"
-		[[ $info_name == "$name" ]] || continue
+		[[ $info_name == "$name" || $info_name == "$(tmux_session_name "$name")" ]] || continue
 		age=$((now - info_activity))
 		if ((age < 60)); then age="${age}s"
 		elif ((age < 3600)); then age="$((age / 60))m"
