@@ -88,8 +88,9 @@ check_server_responsive() {
 	local out pids
 	out=$(tmux -L "$1" list-sessions 2>&1) && return 0
 	[[ $out == *"server exited unexpectedly"* ]] || return 0
-	pids=$(ps -u "$(id -u)" -o pid=,args= |
-		awk -v m="tmux -L $1 " '{ pid = $1; sub(/^ *[0-9]+ +/, "") } index($0, m) == 1 { print pid }' | paste -sd' ')
+	pids=$(ps -u "$(id -u)" -o pid=,comm=,args= |
+		awk -v m="tmux -L $1 " '/^ *[0-9]+ tmux: server / { pid = $1; sub(/^ *[0-9]+ +tmux: server +/, ""); if (index($0, m) == 1) print pid }' |
+		paste -sd' ')
 	printf 'ompc: tmux server for %s is not responding (pid %s)\n' "$1" "${pids:-unknown}" >&2
 	printf 'ompc: kill it, then retry: kill %s\n' "${pids:-<pid>}" >&2
 	exit 1
