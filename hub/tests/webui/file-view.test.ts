@@ -99,6 +99,17 @@ describe("renderMarkdownDocument", () => {
     );
     expect(doc).not.toContain("e.test/r.png");
   });
+
+  test("an inline <img> tag's relative src goes through the file API too", () => {
+    const doc = renderMarkdownDocument(
+      '<p align="center"><img src="../logo.png" alt="logo" width="80"></p>',
+      "n.md",
+      images,
+    );
+    expect(doc).toContain(
+      'src="https://hub.test/api/hosts/h/sessions/s/files/download?path=logo.png&amp;inline=1"',
+    );
+  });
 });
 
 describe("renderHtmlDocument", () => {

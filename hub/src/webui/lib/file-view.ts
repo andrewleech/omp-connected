@@ -148,13 +148,24 @@ export function renderMarkdownDocument(
     }
     return `<span>${renderer.parser.parseInline(token.tokens)}</span>`;
   };
+  const imageUrl = (href: string): string | null => {
+    const relative = resolveRelative(images.dir, href);
+    if (relative)
+      return `${images.apiBase}/files/download?path=${encodeURIComponent(relative)}&inline=1`;
+    return /^data:image\//i.test(href) ? href : null;
+  };
+  // Inline `<img>` tags get the same treatment; the policy blocks whatever
+  // is left pointing elsewhere.
+  renderer.html = ({ text: html }) =>
+    html.replace(
+      /(<img\b[^>]*?\ssrc=)(["'])(.*?)\2/gi,
+      (match, lead: string, quote: string, src: string) => {
+        const url = imageUrl(src);
+        return url ? `${lead}${quote}${escapeHtml(url)}${quote}` : match;
+      },
+    );
   renderer.image = ({ href, text: alt, title: imageTitle }) => {
-    const relative = resolveRelative(images.dir, href ?? "");
-    const src = relative
-      ? `${images.apiBase}/files/download?path=${encodeURIComponent(relative)}&inline=1`
-      : /^data:image\//i.test(href ?? "")
-        ? href
-        : null;
+    const src = imageUrl(href ?? "");
     if (!src) return escapeHtml(alt);
     const titleAttr = imageTitle ? ` title="${escapeHtml(imageTitle)}"` : "";
     return `<img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}"${titleAttr}>`;
