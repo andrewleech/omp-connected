@@ -193,7 +193,7 @@ function json(value: unknown): Response {
 // The writer session's agent registration; the viewer has none, so it shows
 // no activity dot. A test flips `busy` through POST /__activity.
 let writerBusy = true;
-const dashboardSockets = new Set<{ send(data: string): void }>();
+const dashboardSockets = new Set<{ send(data: string): void; close(): void }>();
 
 Bun.serve({
   hostname: "127.0.0.1",
@@ -223,6 +223,12 @@ Bun.serve({
           },
         ],
       });
+    // Changes the state without telling the dashboard, then drops its sockets.
+    if (url.pathname === "/__drop" && request.method === "POST") {
+      writerBusy = url.searchParams.get("busy") === "1";
+      for (const socket of dashboardSockets) socket.close();
+      return json({ ok: true });
+    }
     if (url.pathname === "/__activity" && request.method === "POST") {
       writerBusy = url.searchParams.get("busy") === "1";
       const event = JSON.stringify({
