@@ -68,7 +68,12 @@ test("Files tab browses, uploads and asks before overwriting", async ({
   const pane = page.locator("[data-files-pane]");
   const list = pane.getByRole("list", { name: "Files" });
 
-  await expect(list.locator("[data-name]")).toHaveText([/docs/, /README\.md/]);
+  await expect(list.locator("[data-name]")).toHaveText([
+    /docs/,
+    /blob\.dat/,
+    /README\.md/,
+    /run\.sh/,
+  ]);
   await expect(
     list.locator('[data-name="README.md"] a.file-name'),
   ).toHaveAttribute(
@@ -101,4 +106,57 @@ test("Files tab browses, uploads and asks before overwriting", async ({
   });
   await overwrite;
   await expect(list.locator('[data-name="report.txt"]')).toContainText("14 B");
+});
+
+test("a text file opens in a viewer with rendered and raw views and a download link", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Files", exact: true }).click();
+  const list = page
+    .locator("[data-files-pane]")
+    .getByRole("list", { name: "Files" });
+  const viewer = page.locator("[data-file-viewer]");
+
+  await list.locator('[data-name="README.md"] a.file-name').click();
+  await expect(viewer).toBeVisible();
+  await expect(
+    viewer.getByRole("heading", { name: "README.md" }),
+  ).toBeVisible();
+  const rendered = viewer.frameLocator("iframe");
+  await expect(rendered.getByRole("heading", { name: "Hello" })).toBeVisible();
+  await expect(rendered.locator("strong")).toHaveText("bold");
+  await expect(rendered.getByRole("link", { name: "site" })).toHaveAttribute(
+    "target",
+    "_blank",
+  );
+  // A relative link has nowhere to go, and embedded script never runs.
+  await expect(rendered.locator('a[href="other.md"]')).toHaveCount(0);
+  await expect(page).not.toHaveTitle("pwned");
+  await expect(viewer.locator("iframe")).toHaveAttribute("sandbox", "");
+  await expect(viewer.getByRole("link", { name: "Download" })).toHaveAttribute(
+    "href",
+    /\/api\/hosts\/writer\/sessions\/writer-room\/files\/download\?path=README\.md$/,
+  );
+
+  await viewer.getByRole("button", { name: "Raw" }).click();
+  await expect(viewer.locator("pre")).toContainText("# Hello");
+  await expect(viewer.locator("iframe")).toBeHidden();
+  await viewer.getByRole("button", { name: "Rendered" }).click();
+  await expect(rendered.getByRole("heading", { name: "Hello" })).toBeVisible();
+
+  await page.keyboard.press("Escape");
+  await expect(viewer).toBeHidden();
+
+  // A shell script has no rendered form, only text.
+  await list.locator('[data-name="run.sh"] a.file-name').click();
+  await expect(viewer.locator("pre")).toContainText("echo hi");
+  await expect(viewer.getByRole("button", { name: "Rendered" })).toBeHidden();
+  await page.keyboard.press("Escape");
+
+  // A file that is not text is downloaded and the viewer closes again.
+  const download = page.waitForEvent("download");
+  await list.locator('[data-name="blob.dat"] a.file-name').click();
+  expect((await download).suggestedFilename()).toBe("blob.dat");
+  await expect(viewer).toBeHidden();
 });

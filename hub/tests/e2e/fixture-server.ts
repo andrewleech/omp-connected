@@ -87,7 +87,14 @@ function resetWriter(): void {
   scheduled.length = 0;
   files.set("docs", "dir");
   files.set("docs/notes.md", new TextEncoder().encode("# notes\n"));
-  files.set("README.md", new TextEncoder().encode("hello\n"));
+  files.set(
+    "README.md",
+    new TextEncoder().encode(
+      "# Hello\n\nsome **bold** text <script>window.parent.document.title='pwned'</script>\n\n[site](https://example.com) [local](other.md)\n",
+    ),
+  );
+  files.set("run.sh", new TextEncoder().encode("#!/bin/sh\necho hi\n"));
+  files.set("blob.dat", new Uint8Array([1, 2, 0, 3, 255]));
 }
 resetWriter();
 
@@ -199,8 +206,12 @@ Bun.serve({
   hostname: "127.0.0.1",
   port: 4173,
   websocket: {
-    open: (socket) => dashboardSockets.add(socket),
-    close: (socket) => dashboardSockets.delete(socket),
+    open: (socket) => {
+      dashboardSockets.add(socket);
+    },
+    close: (socket) => {
+      dashboardSockets.delete(socket);
+    },
     message: () => {},
   },
   async fetch(request, server) {

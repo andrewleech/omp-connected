@@ -17,6 +17,8 @@ import {
   joinPath,
   normalisePath,
 } from "./file-paths";
+import { opensInViewer } from "./file-view";
+import { FileViewer } from "./file-viewer";
 import {
   ApiError,
   type FileEntry,
@@ -66,6 +68,7 @@ export class FilesPane {
   readonly #host: PaneHost;
   readonly #cwdFor: (session: CollabSession) => string | undefined;
   readonly #gate = new LatestResponseGate();
+  #viewer: FileViewer | null = null;
   #session: CollabSession | null = null;
   #key: string | null = null;
   #path = "";
@@ -386,6 +389,26 @@ export class FilesPane {
       link.textContent = entry.name;
       link.href = `${this.#apiBase(session)}/files/download?path=${encodeURIComponent(path)}`;
       link.download = entry.name;
+      // Text opens in the viewer, which offers the download; the href still
+      // downloads for middle-click, and for files the viewer does not take.
+      if (opensInViewer(entry.name, entry.size)) {
+        link.addEventListener("click", (event) => {
+          if (
+            event.button !== 0 ||
+            event.ctrlKey ||
+            event.metaKey ||
+            event.shiftKey
+          )
+            return;
+          event.preventDefault();
+          this.#viewer ??= new FileViewer();
+          void this.#viewer.open({
+            name: entry.name,
+            path,
+            apiBase: new URL(this.#apiBase(session), location.href).href,
+          });
+        });
+      }
       name = link;
     } else {
       name = el("span", { className: "file-name", text: entry.name });

@@ -23,6 +23,7 @@
   "type": "module",
   "dependencies": {
     "@elysiajs/static": "1.4.10",
-    "elysia": "1.4.28"
+    "elysia": "1.4.28",
+    "marked": "^18.0.14"
   }
 }

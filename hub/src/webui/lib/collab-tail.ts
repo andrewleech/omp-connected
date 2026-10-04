@@ -102,10 +102,18 @@ export function parseCollabLink(link: string): ParsedLink | null {
     m[2] ?? (url.hash.startsWith("#") ? url.hash.slice(1) : url.hash);
   if (!fragment || !B64URL.test(fragment)) return null;
 
-  const raw = Uint8Array.from(atob(fragment.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+  const raw = Uint8Array.from(
+    atob(fragment.replace(/-/g, "+").replace(/_/g, "/")),
+    (c) => c.charCodeAt(0),
+  );
   if (raw.byteLength < ROOM_KEY_BYTES) return null;
   const key = raw.subarray(0, ROOM_KEY_BYTES);
-  const origin = url.protocol === "https:" ? "wss:" : url.protocol === "http:" ? "ws:" : url.protocol;
+  const origin =
+    url.protocol === "https:"
+      ? "wss:"
+      : url.protocol === "http:"
+        ? "ws:"
+        : url.protocol;
   const wsUrl = `${origin}//${url.host}/r/${m[1]}`;
   return { wsUrl, key };
 }
@@ -148,7 +156,9 @@ function renderMarkdown(src: string): string {
     // Heading
     const hm = /^(#{1,4})\s+(.+)/.exec(escaped);
     if (hm) {
-      out.push(`<span class="md-heading">${hm[1]} ${inlineMarkdown(hm[2])}</span>\n`);
+      out.push(
+        `<span class="md-heading">${hm[1]} ${inlineMarkdown(hm[2])}</span>\n`,
+      );
       continue;
     }
 
@@ -162,14 +172,18 @@ function renderMarkdown(src: string): string {
     // Bullet list
     const bm = /^(\s*)([-*])\s+(.*)/.exec(escaped);
     if (bm) {
-      out.push(`${bm[1]}<span class="md-bullet">${bm[2]}</span> ${inlineMarkdown(bm[3])}\n`);
+      out.push(
+        `${bm[1]}<span class="md-bullet">${bm[2]}</span> ${inlineMarkdown(bm[3])}\n`,
+      );
       continue;
     }
 
     // Numbered list
     const nm = /^(\s*)(\d+\.)\s+(.*)/.exec(escaped);
     if (nm) {
-      out.push(`${nm[1]}<span class="md-bullet">${nm[2]}</span> ${inlineMarkdown(nm[3])}\n`);
+      out.push(
+        `${nm[1]}<span class="md-bullet">${nm[2]}</span> ${inlineMarkdown(nm[3])}\n`,
+      );
       continue;
     }
 
@@ -199,7 +213,11 @@ function inlineMarkdown(s: string): string {
 }
 
 /** Render a text block as a div with markdown formatting. */
-function renderTextBlock(text: string, className: string, maxLen = 2000): HTMLElement {
+function renderTextBlock(
+  text: string,
+  className: string,
+  maxLen = 2000,
+): HTMLElement {
   const el = document.createElement("div");
   el.className = className;
   const trimmed = text.length > maxLen ? text.slice(0, maxLen) + " …" : text;
@@ -240,7 +258,12 @@ interface SessionEntry {
 }
 
 const PREVIEW_LINES = 8;
-const CONTENT_TOOLS: Record<string, true> = { edit: true, write: true, ast_edit: true, create: true };
+const CONTENT_TOOLS: Record<string, true> = {
+  edit: true,
+  write: true,
+  ast_edit: true,
+  create: true,
+};
 
 function truncLines(text: string, n: number): string {
   const lines = text.split("\n");
@@ -264,7 +287,9 @@ function renderAssistantEntry(entry: SessionEntry): HTMLElement {
   const content = entry.message!.content;
   const blocks = Array.isArray(content) ? (content as ContentBlock[]) : [];
   const hasText = blocks.some((b) => b.type === "text" && b.text?.trim());
-  const hasThinking = blocks.some((b) => b.type === "thinking" && b.thinking?.trim());
+  const hasThinking = blocks.some(
+    (b) => b.type === "thinking" && b.thinking?.trim(),
+  );
   const toolCalls = blocks.filter(isToolCall);
 
   // Pure tool-call message (no text) → render as tool card(s)
@@ -297,12 +322,16 @@ function renderAssistantEntry(entry: SessionEntry): HTMLElement {
     div.appendChild(renderToolCallEntry(toolCalls));
   }
 
-  if (entry.message?.stopReason === "aborted" || entry.message?.stopReason === "error") {
+  if (
+    entry.message?.stopReason === "aborted" ||
+    entry.message?.stopReason === "error"
+  ) {
     const err = document.createElement("div");
     err.style.color = "#fc3a4b";
-    err.textContent = entry.message.stopReason === "aborted"
-      ? "Aborted"
-      : `Error: ${entry.message.errorMessage ?? "unknown"}`;
+    err.textContent =
+      entry.message.stopReason === "aborted"
+        ? "Aborted"
+        : `Error: ${entry.message.errorMessage ?? "unknown"}`;
     div.appendChild(err);
   }
 
@@ -329,20 +358,24 @@ function renderToolCallEntry(toolCalls: ContentBlock[]): HTMLElement {
     if (!isEdit && args !== undefined) {
       const preview = document.createElement("div");
       preview.className = "tail-preview";
-      preview.textContent = truncLines(JSON.stringify(args, null, 2), PREVIEW_LINES);
+      preview.textContent = truncLines(
+        JSON.stringify(args, null, 2),
+        PREVIEW_LINES,
+      );
       card.appendChild(preview);
     }
 
     const full = document.createElement("div");
     full.className = "tail-body tail-full";
     const fullText = args !== undefined ? JSON.stringify(args, null, 2) : "";
-    full.textContent = fullText.length > 4000 ? fullText.slice(0, 4000) + " …" : fullText;
+    full.textContent =
+      fullText.length > 4000 ? fullText.slice(0, 4000) + " …" : fullText;
     card.appendChild(full);
 
     card.addEventListener("click", () => card.classList.toggle("collapsed"));
     frag.appendChild(card);
   }
-  return frag.children.length === 1 ? frag.children[0] as HTMLElement : frag;
+  return frag.children.length === 1 ? (frag.children[0] as HTMLElement) : frag;
 }
 
 // ── Tool result ─────────────────────────────────────────────────────────
@@ -365,10 +398,11 @@ function renderToolResultEntry(entry: SessionEntry): HTMLElement {
   if (typeof content === "string") {
     text = content;
   } else if (Array.isArray(content)) {
-    text = (content as ContentBlock[])
-      .map((b) => (b.type === "text" ? (b.text ?? "") : ""))
-      .join("")
-      .trim() || "[tool result]";
+    text =
+      (content as ContentBlock[])
+        .map((b) => (b.type === "text" ? (b.text ?? "") : ""))
+        .join("")
+        .trim() || "[tool result]";
   } else {
     text = "[tool result]";
   }
@@ -399,11 +433,15 @@ function renderUserEntry(entry: SessionEntry): HTMLElement {
   div.appendChild(label);
 
   const content = entry.message!.content;
-  const text = typeof content === "string"
-    ? content
-    : Array.isArray(content)
-      ? (content as ContentBlock[]).filter((b) => b.type === "text").map((b) => b.text ?? "").join("\n")
-      : "";
+  const text =
+    typeof content === "string"
+      ? content
+      : Array.isArray(content)
+        ? (content as ContentBlock[])
+            .filter((b) => b.type === "text")
+            .map((b) => b.text ?? "")
+            .join("\n")
+        : "";
   if (text.trim()) {
     div.appendChild(renderTextBlock(text, "tail-body"));
   }
@@ -417,14 +455,18 @@ function renderSystemEntry(entry: SessionEntry): HTMLElement {
   div.className = "tail-entry entry-system";
 
   if (entry.type === "compaction") {
-    const tokens = entry.tokensBefore ? ` from ${Number(entry.tokensBefore).toLocaleString()} tokens` : "";
+    const tokens = entry.tokensBefore
+      ? ` from ${Number(entry.tokensBefore).toLocaleString()} tokens`
+      : "";
     div.textContent = `[compaction${tokens}]`;
   } else if (entry.type === "model_change") {
     div.textContent = `Switched to model: ${entry.model ?? "unknown"}`;
   } else if (entry.type === "thinking_level_change") {
     div.textContent = `Thinking level: ${(entry as Record<string, unknown>).thinkingLevel ?? "default"}`;
   } else if (entry.type === "custom_message") {
-    const ct = (entry as Record<string, unknown>).customType as string | undefined;
+    const ct = (entry as Record<string, unknown>).customType as
+      | string
+      | undefined;
     div.textContent = ct ? `[${ct}]` : "[custom message]";
   } else {
     div.textContent = `[${entry.type}]`;
@@ -456,7 +498,6 @@ const MAX_BUFFERED = INITIAL_TAIL + PAGE_SIZE * 20; // 880
 const MAX_DECRYPT_ATTEMPTS = 4;
 const DECRYPT_TIMEOUT_MS = 5_000;
 
-
 export class CollabTailViewer {
   #container: HTMLElement;
   #key: CryptoKey | null = null;
@@ -467,7 +508,8 @@ export class CollabTailViewer {
   #snapshotDone = false;
   #finalSeen = false;
   #snapshotFailed = false;
-  #decrypts: OrderedWorkQueue<Uint8Array, Record<string, unknown>> | null = null;
+  #decrypts: OrderedWorkQueue<Uint8Array, Record<string, unknown>> | null =
+    null;
   #header: Record<string, unknown> | null = null;
   #state: Record<string, unknown> | null = null;
   #statusEl: HTMLElement;
@@ -504,7 +546,10 @@ export class CollabTailViewer {
     this.#scrollEl.appendChild(this.#contentEl);
 
     this.#scrollEl.addEventListener("scroll", () => {
-      if (this.#scrollEl.scrollTop < 50 && this.#renderedCount < this.#allEntries.length) {
+      if (
+        this.#scrollEl.scrollTop < 50 &&
+        this.#renderedCount < this.#allEntries.length
+      ) {
         this.#loadMore();
       }
     });
@@ -589,7 +634,9 @@ export class CollabTailViewer {
             this.#statusEl.textContent = "Session ended";
             this.#statusEl.className = "tail-status warning";
           }
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
         return;
       }
 
@@ -638,7 +685,8 @@ export class CollabTailViewer {
     this.#renderedCount = 0;
     this.#contentEl.innerHTML = "";
     this.#loadMoreEl.style.display = "none";
-    this.#statusEl.textContent = "Snapshot decryption timed out. Reload to retry.";
+    this.#statusEl.textContent =
+      "Snapshot decryption timed out. Reload to retry.";
     this.#statusEl.className = "tail-status warning";
     this.#ws?.close();
   }
@@ -674,7 +722,8 @@ export class CollabTailViewer {
       case "snapshot-chunk": {
         const entries = frame.entries as SessionEntry[] | undefined;
         if (entries) {
-          for (let i = 0; i < entries.length; i++) this.#allEntries.push(entries[i]);
+          for (let i = 0; i < entries.length; i++)
+            this.#allEntries.push(entries[i]);
           this.#totalReceived += entries.length;
           if (this.#allEntries.length > MAX_BUFFERED * 1.5) {
             this.#allEntries = this.#allEntries.slice(-MAX_BUFFERED);
@@ -745,7 +794,10 @@ export class CollabTailViewer {
       obs.disconnect();
     });
     obs.observe(this.#scrollEl);
-    setTimeout(() => { this.#forceScrollBottom(); obs.disconnect(); }, 500);
+    setTimeout(() => {
+      this.#forceScrollBottom();
+      obs.disconnect();
+    }, 500);
   }
 
   #loadMore(): void {
