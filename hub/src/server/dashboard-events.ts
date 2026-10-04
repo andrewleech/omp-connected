@@ -2,7 +2,8 @@
 // true the instant they happen: an agent registering/disconnecting (which
 // is also the only signal a host connecting/disconnecting has now that
 // host-level Collab discovery is served through the same /ws/agent
-// connection). Deliberately NOT a generic event bus: there is no
+// connection), and an agent reporting that it started or finished a turn.
+// Deliberately NOT a generic event bus: there is no
 // ping/heartbeat tick, and Collab *session* state is never pushed here
 // (the server only ever learns it by RPC-polling a host) — the webui
 // polls for that on its own schedule plus a manual Refresh, avoiding a

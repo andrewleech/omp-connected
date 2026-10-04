@@ -600,6 +600,50 @@ describe("AgentRegistry — dashboard events", () => {
   });
 });
 
+describe("AgentRegistry — activity", () => {
+  test("setActivity is reported in summaries and pushed only when it changes", () => {
+    const registry = new AgentRegistry();
+    registerAgent(registry);
+    const events: DashboardEvent[] = [];
+    registry.onChange((event) => events.push(event));
+    expect(registry.listAgents()[0]?.busy).toBeUndefined();
+
+    registry.setActivity("user@hub-host:inst-1", true);
+    registry.setActivity("user@hub-host:inst-1", true);
+    expect(registry.listAgents()[0]?.busy).toBe(true);
+    registry.setActivity("user@hub-host:inst-1", false);
+
+    expect(events).toEqual([
+      { event: "agent.activity", agentId: "user@hub-host:inst-1", busy: true },
+      { event: "agent.activity", agentId: "user@hub-host:inst-1", busy: false },
+    ]);
+  });
+
+  test("a re-registered agent starts with unknown activity", () => {
+    const registry = new AgentRegistry();
+    registerAgent(registry);
+    registry.setActivity("user@hub-host:inst-1", true);
+
+    registerAgent(registry);
+
+    expect(registry.listAgents()[0]?.busy).toBeUndefined();
+  });
+
+  test("setActivity ignores unknown and disconnected agents", () => {
+    const registry = new AgentRegistry();
+    const conn = fakeConn();
+    registerAgent(registry, {}, conn);
+    registry.unregister("user@hub-host:inst-1", conn);
+    const events: DashboardEvent[] = [];
+    registry.onChange((event) => events.push(event));
+
+    registry.setActivity("user@hub-host:inst-1", true);
+    registry.setActivity("nobody:none", true);
+
+    expect(events).toEqual([]);
+  });
+});
+
 describe("AgentRegistry — host-level Collab calls", () => {
   test("listHostIds returns unique hostIds from currently connected agents only", () => {
     const registry = new AgentRegistry();

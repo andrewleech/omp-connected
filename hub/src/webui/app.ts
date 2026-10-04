@@ -54,6 +54,7 @@ interface AgentSummary {
   pid: number;
   connectedAt: string;
   teams: string[];
+  busy?: boolean;
 }
 
 function displayName(session: CollabSession): string {
@@ -515,6 +516,20 @@ function createDashboard(root: HTMLElement): void {
           type: "button",
           title: displayName(session),
         }) as HTMLButtonElement;
+        const busy = state.agents.find(
+          (agent) => agent.id === `${session.host_id}:${session.instanceId}`,
+        )?.busy;
+        if (busy !== undefined) {
+          const dot = el("span", {
+            className: `activity-dot ${busy ? "working" : "idle"}`,
+            title: busy ? "Working" : "Idle, waiting for input",
+          });
+          // Described rather than named, so the card's accessible name stays
+          // the session label.
+          dot.setAttribute("aria-hidden", "true");
+          card.setAttribute("aria-description", busy ? "Working" : "Idle");
+          card.append(dot);
+        }
         card.append(
           el("span", {
             className: "session-label",
@@ -946,7 +961,22 @@ function createDashboard(root: HTMLElement): void {
   );
   socket.onmessage = (event) => {
     try {
-      const data = JSON.parse(String(event.data)) as { event?: string };
+      const data = JSON.parse(String(event.data)) as {
+        event?: string;
+        agentId?: string;
+        busy?: boolean;
+      };
+      if (data.event === "agent.activity") {
+        // Only the dots change, so redraw the rail and leave the workspace
+        // (and its live Collab iframe) alone.
+        const agent = state.agents.find((a) => a.id === data.agentId);
+        if (agent && typeof data.busy === "boolean") {
+          agent.busy = data.busy;
+          const rail = root.querySelector("[data-session-rail]");
+          if (rail) renderRail(rail);
+        }
+        return;
+      }
       if (
         data.event === "agent.registered" ||
         data.event === "agent.disconnected"
@@ -968,7 +998,10 @@ function createDashboard(root: HTMLElement): void {
     );
 
   setInterval(() => void pollSessions().catch(() => {}), SESSION_POLL_MS);
-  void refresh().catch((error) => showStatus(error.message, "warning"));
+  void refresh()
+    .then(() => loadAgents())
+    .then(() => render())
+    .catch((error) => showStatus(error.message, "warning"));
 }
 
 const root = document.querySelector<HTMLElement>("[data-omp-dashboard]");

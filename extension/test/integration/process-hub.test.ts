@@ -80,3 +80,42 @@ test("a subagent in the same process shares the parent's hub registration instea
 
 	await parent.emit("session_shutdown");
 });
+
+test("the owning session reports turn start/end to the hub and a subagent's turns are ignored", async () => {
+	const activity: unknown[] = [];
+	const server = Bun.serve({
+		port: 0,
+		fetch(request, server) {
+			if (server.upgrade(request)) return;
+			return new Response("not found", { status: 404 });
+		},
+		websocket: {
+			message(socket, message) {
+				const request = JSON.parse(String(message)) as { id: string; method: string; params: unknown };
+				if (request.method === "agent.activity") activity.push(request.params);
+				const result = request.method === "agent.register" ? { ok: true, agent: { id: "host:inst-1" } } : { ok: true };
+				socket.send(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }));
+			},
+		},
+	});
+	servers.push(server);
+	process.env.OMP_HUB_URL = `http://localhost:${server.port}`;
+	process.env.OMP_HUB_HOST_TOKEN = "secret-token";
+	const settled = () => Bun.sleep(100);
+
+	const parent = fakeSession();
+	const subagent = fakeSession();
+	await parent.emit("session_start");
+	await subagent.emit("session_start");
+	await settled();
+	expect(activity).toEqual([{ busy: false }]);
+
+	await parent.emit("agent_start");
+	await subagent.emit("agent_start");
+	await subagent.emit("agent_end");
+	await parent.emit("agent_end");
+	await settled();
+	expect(activity).toEqual([{ busy: false }, { busy: true }, { busy: false }]);
+
+	await parent.emit("session_shutdown");
+});

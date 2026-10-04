@@ -190,11 +190,49 @@ function json(value: unknown): Response {
   return Response.json(value, { headers: { "cache-control": "no-store" } });
 }
 
+// The writer session's agent registration; the viewer has none, so it shows
+// no activity dot. A test flips `busy` through POST /__activity.
+let writerBusy = true;
+const dashboardSockets = new Set<{ send(data: string): void }>();
+
 Bun.serve({
   hostname: "127.0.0.1",
   port: 4173,
-  async fetch(request) {
+  websocket: {
+    open: (socket) => dashboardSockets.add(socket),
+    close: (socket) => dashboardSockets.delete(socket),
+    message: () => {},
+  },
+  async fetch(request, server) {
     const url = new URL(request.url);
+    if (url.pathname === "/ws/dashboard" && server.upgrade(request)) return;
+    if (url.pathname === "/api/agents")
+      return json({
+        agents: [
+          {
+            id: "writer:writer-room",
+            hostId: "writer",
+            instanceId: "writer-room",
+            label: "Writable room",
+            cwd: "/work/writer",
+            pid: 4242,
+            connectedAt: new Date(0).toISOString(),
+            teams: [],
+            features: ["session.v1"],
+            busy: writerBusy,
+          },
+        ],
+      });
+    if (url.pathname === "/__activity" && request.method === "POST") {
+      writerBusy = url.searchParams.get("busy") === "1";
+      const event = JSON.stringify({
+        event: "agent.activity",
+        agentId: "writer:writer-room",
+        busy: writerBusy,
+      });
+      for (const socket of dashboardSockets) socket.send(event);
+      return json({ ok: true });
+    }
     if (url.pathname === "/api/hosts")
       return json([{ hostId: "writer" }, { hostId: "viewer" }]);
     if (url.pathname === "/api/hosts/writer/collab")
@@ -229,6 +267,7 @@ Bun.serve({
       return new Response(guest, { headers: { "content-type": "text/html" } });
     if (url.pathname === "/" || url.pathname === "/index.html") {
       resetWriter();
+      writerBusy = true;
       return new Response(Bun.file(indexPath), {
         headers: { "content-type": "text/html" },
       });

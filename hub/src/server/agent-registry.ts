@@ -112,6 +112,8 @@ interface AgentEntry {
   conn: AgentConn | undefined;
   disconnectedAt: number | undefined;
   teams: Set<string>;
+  /** Last activity the extension reported; undefined until it does. */
+  busy: boolean | undefined;
   /** FIFO, unbounded. Rate limiting (at the ws-agent layer) bounds input
    *  rate; TTL purge of the owning entry bounds long-term accumulation. */
   mailbox: AgentMessage[];
@@ -217,6 +219,7 @@ export class AgentRegistry {
       conn,
       disconnectedAt: undefined,
       teams: existing?.teams ?? new Set(),
+      busy: undefined,
       mailbox: existing?.mailbox ?? [],
     };
     this.agents.set(id, entry);
@@ -229,6 +232,15 @@ export class AgentRegistry {
     });
     this.onChangeFn({ event: "agent.registered", agent: summary });
     return summary;
+  }
+
+  /** Records whether a live agent is mid-turn and tells dashboards when that
+   *  changed. Not an event-log entry: turns start and end far too often. */
+  setActivity(id: string, busy: boolean): void {
+    const entry = this.agents.get(id);
+    if (!entry?.conn || entry.busy === busy) return;
+    entry.busy = busy;
+    this.onChangeFn({ event: "agent.activity", agentId: id, busy });
   }
 
   /** Marks an agent's live connection gone. The entry (and its mailbox) is
@@ -716,6 +728,7 @@ export class AgentRegistry {
       connectedAt: entry.connectedAt.toISOString(),
       teams: [...entry.teams],
       features: [...entry.features],
+      ...(entry.busy !== undefined ? { busy: entry.busy } : {}),
     };
   }
 
