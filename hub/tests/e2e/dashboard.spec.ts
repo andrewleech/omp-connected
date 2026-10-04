@@ -156,3 +156,16 @@ test("session dots follow the agent's working/idle state live", async ({
     /\/collab\/#fixture-control$/,
   );
 });
+
+test("the dashboard reconnects and resyncs dots after the event stream drops", async ({
+  page,
+  request,
+}) => {
+  await page.goto("/");
+  const writer = page.getByRole("button", { name: "writer", exact: true });
+  await expect(writer.locator(".activity-dot.working")).toBeVisible();
+  await request.post("/__drop?busy=0");
+  await expect(writer.locator(".activity-dot.idle")).toBeVisible({
+    timeout: 10_000,
+  });
+});

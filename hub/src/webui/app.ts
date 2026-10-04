@@ -956,10 +956,27 @@ function createDashboard(root: HTMLElement): void {
       );
   }
 
-  const socket = new WebSocket(
-    `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/ws/dashboard`,
-  );
-  socket.onmessage = (event) => {
+  // Reconnects after the hub restarts or the link drops. Events sent in the
+  // gap are not replayed (activity dots in particular), so every reconnect
+  // reloads the roster.
+  let reconnectDelay = 1000;
+  let hadSocket = false;
+  function connectSocket(): void {
+    const socket = new WebSocket(
+      `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/ws/dashboard`,
+    );
+    socket.onopen = () => {
+      reconnectDelay = 1000;
+      if (hadSocket) refreshForAgentEvent();
+      hadSocket = true;
+    };
+    socket.onmessage = handleSocketMessage;
+    socket.onclose = () => {
+      setTimeout(connectSocket, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+    };
+  }
+  function handleSocketMessage(event: MessageEvent): void {
     try {
       const data = JSON.parse(String(event.data)) as {
         event?: string;
@@ -990,12 +1007,8 @@ function createDashboard(root: HTMLElement): void {
     } catch {
       // ignore malformed frames
     }
-  };
-  socket.onclose = () =>
-    showStatus(
-      "Hub event stream disconnected; use Refresh to retry.",
-      "warning",
-    );
+  }
+  connectSocket();
 
   setInterval(() => void pollSessions().catch(() => {}), SESSION_POLL_MS);
   void refresh()
