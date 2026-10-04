@@ -661,4 +661,41 @@ describe("wsAgentPlugin — dashboard events", () => {
 
     dashboard.close();
   });
+
+  test("agent.activity from an agent reaches /ws/dashboard clients", async () => {
+    const agentRegistry = new AgentRegistry();
+    const { url, dashboardUrl } = start(agentRegistry);
+    const socket = await connectAndRegister(url, registerParams());
+    const dashboard = new WebSocket(dashboardUrl);
+    await waitOpen(dashboard);
+    const frames = collectFrames<DashboardEvent>(dashboard, 1);
+
+    socket.send(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: "a1",
+        method: "agent.activity",
+        params: { busy: true },
+      }),
+    );
+    const reply = await waitForMessage(socket);
+
+    expect(reply.result).toEqual({ ok: true });
+    expect((await frames)[0]).toEqual({
+      event: "agent.activity",
+      agentId: "user@hub-host:inst-1",
+      busy: true,
+    });
+    socket.send(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: "a2",
+        method: "agent.activity",
+        params: { busy: "yes" },
+      }),
+    );
+    expect((await waitForMessage(socket)).error?.code).toBe(-32602);
+    socket.close();
+    dashboard.close();
+  });
 });

@@ -82,6 +82,15 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 	let files: FileService | undefined;
 	let sessionRpc: SessionRequestHandler | undefined;
 	let scheduler: PromptScheduler | undefined;
+	/** True between the owner's agent_start and agent_end. */
+	let busy = false;
+
+	/** Tells the hub whether a turn is running. Best effort: the hub keeps the
+	 *  last value, and registration re-sends it after a reconnect. */
+	function reportActivity(): void {
+		if (!hub.transport || !hub.identity) return;
+		hub.transport.request("agent.activity", { busy }).catch(() => {});
+	}
 
 	function showScheduled(prompts: readonly ScheduledPrompt[]): void {
 		const ctx = ownerContext;
@@ -165,6 +174,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 						features: [SESSION_FEATURE, SCHEDULE_FEATURE],
 					});
 					hub.identity = result.agent;
+					reportActivity();
 					return;
 				} catch (error) {
 					pi.logger.warn("omp-connected: registration attempt failed, retrying", {
@@ -264,6 +274,17 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		await registerWithBackoff(hostId, instanceId, hubUrl, token);
 	});
 
+	pi.on("agent_start", () => {
+		if (hub.owner !== pi) return;
+		busy = true;
+		reportActivity();
+	});
+	pi.on("agent_end", () => {
+		if (hub.owner !== pi) return;
+		busy = false;
+		reportActivity();
+	});
+
 	// Keep the owner's context current across in-process session changes.
 	const trackContext = (_event: unknown, ctx: ExtensionContext) => {
 		if (hub.owner === pi) ownerContext = ctx;
@@ -280,6 +301,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 	pi.on("session_shutdown", async () => {
 		if (hub.owner !== pi) return;
 		hub.owner = undefined;
+		busy = false;
 		hub.shuttingDown = true;
 		hub.transport?.close();
 		hub.transport = undefined;

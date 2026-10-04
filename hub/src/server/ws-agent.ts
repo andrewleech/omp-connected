@@ -188,6 +188,16 @@ export function wsAgentPlugin(agentRegistry: AgentRegistry, hostToken: string) {
           sendResult(ws, id, agentRegistry.leaveTeam(registered.id, p.team));
           return;
         }
+        case "agent.activity": {
+          const p = params as { busy?: unknown } | undefined;
+          if (typeof p?.busy !== "boolean") {
+            sendError(ws, id, -32602, "agent.activity requires a boolean busy");
+            return;
+          }
+          agentRegistry.setActivity(registered.id, p.busy);
+          sendResult(ws, id, { ok: true });
+          return;
+        }
         case "agent.list_agents": {
           sendResult(ws, id, { agents: agentRegistry.listAgents() });
           return;

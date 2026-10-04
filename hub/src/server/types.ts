@@ -99,7 +99,8 @@ export interface CollabMethodResult {
  *  learns it by RPC-polling a host); the webui polls for that instead. */
 export type DashboardEvent =
   | { event: "agent.registered"; agent: AgentSummary }
-  | { event: "agent.disconnected"; agentId: string };
+  | { event: "agent.disconnected"; agentId: string }
+  | { event: "agent.activity"; agentId: string; busy: boolean };
 
 // ---------------------------------------------------------------------------
 // Agent-to-agent messaging.
@@ -119,6 +120,9 @@ export interface AgentSummary {
   connectedAt: string;
   teams: string[];
   features: string[]; // advertised at registration, [] if none
+  /** Whether the session is mid-turn; omitted until the extension reports it
+   *  (older extensions never do). */
+  busy?: boolean;
 }
 
 export type AgentMessageType = "message" | "reply";

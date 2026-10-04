@@ -132,3 +132,27 @@ test("clicking a session whose room failed to open retries it", async ({
   await page.getByRole("button", { name: "writer", exact: true }).click();
   await expect(frame).toHaveAttribute("src", /\/collab\/#fixture-control$/);
 });
+
+test("session dots follow the agent's working/idle state live", async ({
+  page,
+  request,
+}) => {
+  await page.goto("/");
+  const writer = page.getByRole("button", { name: "writer", exact: true });
+  await expect(writer.locator(".activity-dot.working")).toBeVisible();
+  // A session with no registered agent has no dot.
+  await expect(
+    page
+      .getByRole("button", { name: "viewer view", exact: true })
+      .locator(".activity-dot"),
+  ).toHaveCount(0);
+
+  await request.post("/__activity?busy=0");
+  await expect(writer.locator(".activity-dot.idle")).toBeVisible();
+  await expect(writer.locator(".activity-dot.working")).toHaveCount(0);
+  // The workspace iframe is untouched by the dot update.
+  await expect(page.locator("[data-collab-frame]")).toHaveAttribute(
+    "src",
+    /\/collab\/#fixture-control$/,
+  );
+});
