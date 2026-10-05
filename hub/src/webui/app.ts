@@ -288,24 +288,45 @@ function createDashboard(root: HTMLElement): void {
     return body as T;
   }
 
+  // Each host's list is applied as soon as it arrives, so one slow host
+  // never holds back the sessions of the others. A host whose listing fails
+  // shows no sessions until a later listing succeeds.
   async function loadSessions(): Promise<void> {
-    const entries = await Promise.all(
+    const byHost = new Map<string, CollabSession[]>();
+    const apply = (settled: boolean): void => {
+      state.sessions = state.hosts.flatMap(
+        (host) => byHost.get(host.hostId) ?? [],
+      );
+      // The fallback pick waits for every host so a late host holding the
+      // remembered session does not cause a switch away and back.
+      if (settled || resolveRememberedSession(state.sessions, state.selected))
+        reconcileSelection();
+      render();
+    };
+    await Promise.all(
       state.hosts.map(async (host) => {
         try {
           const result = await json<{ sessions: CollabSession[] }>(
             `/api/hosts/${encodeURIComponent(host.hostId)}/collab`,
           );
-          return result.sessions.map((session) => ({
-            ...session,
-            host_id: host.hostId,
-          }));
+          byHost.set(
+            host.hostId,
+            result.sessions.map((session) => ({
+              ...session,
+              host_id: host.hostId,
+            })),
+          );
         } catch (error) {
           showStatus(`${host.hostId}: ${(error as Error).message}`, "warning");
-          return [];
+          byHost.set(host.hostId, []);
         }
+        if (byHost.size < state.hosts.length) apply(false);
       }),
     );
-    state.sessions = entries.flat();
+    apply(true);
+  }
+
+  function reconcileSelection(): void {
     const resolved =
       resolveRememberedSession(state.sessions, state.selected) ??
       (state.sessions[0] as CollabSession | undefined) ??
@@ -318,7 +339,7 @@ function createDashboard(root: HTMLElement): void {
       state.selectedSession &&
       sessionKey(state.selectedSession) === sessionKey(resolved)
     ) {
-      // Same room as before this refresh — only update its polled fields
+      // Same room as before this refresh: only update its polled fields
       // (participants, etc.); selectSession() would blank and reload the
       // live iframe for no reason.
       state.selectedSession = resolved;
