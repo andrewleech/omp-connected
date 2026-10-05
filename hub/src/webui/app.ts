@@ -830,7 +830,7 @@ function createDashboard(root: HTMLElement): void {
     );
     const label = root.querySelector("[data-topbar-session]");
     if (label)
-      label.textContent = selected ? displayName(selected) : "No session";
+      label.textContent = selected ? sessionLabel(selected) : "No session";
   }
 
   // Customize the same-origin Collab guest on every frame load (see
