@@ -301,11 +301,7 @@ function createDashboard(root: HTMLElement): void {
           }));
         } catch (error) {
           showStatus(`${host.hostId}: ${(error as Error).message}`, "warning");
-          // A slow or briefly unreachable host keeps the sessions already
-          // known for it; dropping them would deselect the open session.
-          return state.sessions.filter(
-            (session) => session.host_id === host.hostId,
-          );
+          return [];
         }
       }),
     );
