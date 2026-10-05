@@ -7,7 +7,7 @@ import { Elysia } from "elysia";
 import type { AgentRegistry } from "./agent-registry";
 import { RateLimiter } from "./rate-limit";
 
-const COLLAB_TIMEOUT_MS = 15_000;
+const COLLAB_TIMEOUT_MS = 5_000;
 const COLLAB_INSTANCE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 /** Capability URLs are short-lived: a link that leaks or goes unused has a
  *  bounded blast radius. */

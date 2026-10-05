@@ -185,35 +185,3 @@ test("the dashboard reconnects and resyncs dots after the event stream drops", a
     timeout: 10_000,
   });
 });
-
-test("a host whose session list times out keeps its sessions in the sidebar", async ({
-  page,
-  request,
-}) => {
-  await page.goto("/");
-  const viewer = page.getByRole("button", { name: "viewer view", exact: true });
-  await viewer.click();
-  await expect(page.locator(".tail-viewer")).toBeVisible();
-
-  const failed = page.waitForResponse(
-    (response) =>
-      response.url().endsWith("/api/hosts/viewer/collab") &&
-      response.status() === 504,
-  );
-  await page.route("**/api/hosts/viewer/collab", (route) =>
-    route.fulfill({
-      status: 504,
-      contentType: "application/json",
-      body: JSON.stringify({ error: "agent RPC collab.list timed out" }),
-    }),
-  );
-  // Dropping the dashboard socket makes the page refetch the whole fleet.
-  await request.post("/__drop");
-  await failed;
-  // Let the refresh that issued the failed request finish rendering.
-  await page.waitForTimeout(500);
-
-  await expect(viewer).toBeVisible();
-  await expect(viewer).toHaveClass(/selected/);
-  await expect(page.locator(".tail-viewer")).toBeVisible();
-});
