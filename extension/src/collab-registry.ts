@@ -13,6 +13,12 @@
 /** `version` of the `omp collab … --json` output this module understands. */
 const COLLAB_JSON_VERSION = 1;
 
+/** Per-host deadline for omp's discovery query (its default is 1.5s). A
+ *  session busy with a long turn or on a loaded machine answers late, and a
+ *  host that misses the deadline is dropped from listing and link lookup. */
+const QUERY_TIMEOUT_MS = 10_000;
+const REGISTRY_OPTIONS = { timeoutMs: QUERY_TIMEOUT_MS };
+
 type CollabAccess = "view" | "control";
 
 /** One `omp collab list --json` host snapshot. Only the fields this
@@ -35,8 +41,11 @@ type Print = (line: string) => void;
 
 /** Local mirror of `@oh-my-pi/pi-coding-agent/cli/collab-cli`. */
 interface CollabCliModule {
-	runCollabListCommand(args: { json: boolean }, print: Print): Promise<void>;
-	runCollabLinkCommand(args: { selector: string; view: boolean; json: boolean }, print: Print): Promise<void>;
+	runCollabListCommand(args: { json: boolean; registry?: { timeoutMs?: number } }, print: Print): Promise<void>;
+	runCollabLinkCommand(
+		args: { selector: string; view: boolean; json: boolean; registry?: { timeoutMs?: number } },
+		print: Print,
+	): Promise<void>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -62,7 +71,7 @@ function isCollabHost(value: unknown): value is CollabHost {
 function createRegistry(cli: CollabCliModule): CollabRegistry {
 	return {
 		async listCollabHosts() {
-			const output = await runJson((print) => cli.runCollabListCommand({ json: true }, print));
+			const output = await runJson((print) => cli.runCollabListCommand({ json: true, registry: REGISTRY_OPTIONS }, print));
 			const hosts = output.hosts;
 			if (!Array.isArray(hosts) || !hosts.every(isCollabHost)) {
 				throw new Error("malformed omp collab list output");
@@ -71,7 +80,10 @@ function createRegistry(cli: CollabCliModule): CollabRegistry {
 		},
 		async resolveCollabHostLink(instanceId, access) {
 			const output = await runJson((print) =>
-				cli.runCollabLinkCommand({ selector: instanceId, view: access === "view", json: true }, print),
+				cli.runCollabLinkCommand(
+					{ selector: instanceId, view: access === "view", json: true, registry: REGISTRY_OPTIONS },
+					print,
+				),
 			);
 			const { generation, url } = output;
 			if (
