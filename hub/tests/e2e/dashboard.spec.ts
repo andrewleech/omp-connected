@@ -185,3 +185,24 @@ test("the dashboard reconnects and resyncs dots after the event stream drops", a
     timeout: 10_000,
   });
 });
+
+test("sessions from responsive hosts show while another host's listing is still pending", async ({
+  page,
+}) => {
+  let release: () => void = () => {};
+  const hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/hosts/viewer/collab", async (route) => {
+    await hold;
+    await route.fallback();
+  });
+  await page.goto("/");
+  await expect(
+    page.getByRole("button", { name: "writer", exact: true }),
+  ).toBeVisible();
+  release();
+  await expect(
+    page.getByRole("button", { name: "viewer view", exact: true }),
+  ).toBeVisible();
+});
