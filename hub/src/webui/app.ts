@@ -339,7 +339,7 @@ function createDashboard(root: HTMLElement): void {
   }
   async function pollSessions(): Promise<void> {
     // Re-fetch hosts too: a host that registers after page load must appear
-    // without a manual Refresh.
+    // without a manual reload.
     state.hosts = await json<HostSummary[]>("/api/hosts");
     await loadSessions();
     render();
@@ -825,6 +825,12 @@ function createDashboard(root: HTMLElement): void {
     if (rail) renderRail(rail);
     if (workspace) renderWorkspace(workspace);
     if (inspector) renderInspector(inspector);
+    const selected = state.sessions.find(
+      (session) => sessionKey(session) === state.selected,
+    );
+    const label = root.querySelector("[data-topbar-session]");
+    if (label)
+      label.textContent = selected ? displayName(selected) : "No session";
   }
 
   // Customize the same-origin Collab guest on every frame load (see
@@ -864,10 +870,6 @@ function createDashboard(root: HTMLElement): void {
   root.addEventListener("click", (event) => {
     const target = (event.target as HTMLElement).closest<HTMLElement>("button");
     if (!target) return;
-    if (target.matches("[data-refresh]")) {
-      void refresh().catch((error) => showStatus(error.message, "warning"));
-      return;
-    }
     if (target.matches("[data-session-drawer-toggle]")) {
       setDrawer("left", !leftDrawerOpen, target);
       return;

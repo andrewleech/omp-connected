@@ -22,10 +22,10 @@ select, textarea { border: 1px solid #3c4b59; border-radius: .4rem; background: 
 textarea { min-height: 7rem; resize: vertical; }
 .omp-shell { display: grid; grid-template-columns: minmax(14rem, 19rem) minmax(0, 1fr) minmax(17rem, 24rem); grid-template-rows: auto minmax(0, 1fr); height: 100vh; height: 100dvh; overflow: hidden; }
 .topbar { align-items: center; background: #17212b; border-bottom: 1px solid #344453; display: flex; gap: 1rem; grid-column: 1 / -1; justify-content: space-between; padding: .7rem 1rem; }
-.brand { font-weight: 700; letter-spacing: .03em; }.brand-compact { display: none; }
+.brand { font-weight: 700; letter-spacing: .03em; }
 .status { color: #b7c4cf; font-size: .9rem; margin-left: auto; }
 .status.ok { color: #91d9b3; }.status.warning { color: #ffc776; }
-.drawer-actions { display: none; gap: .4rem; }
+.drawer-toggle, .topbar-session { display: none; }
 .drawer-header { align-items: center; display: none; justify-content: space-between; margin-bottom: .8rem; }
 .session-rail, .inspector { background: #131a21; overflow: auto; padding: .8rem; }
 .session-rail { border-right: 1px solid #344453; }.inspector { border-left: 1px solid #344453; }
@@ -62,10 +62,13 @@ button.small { font-size: .78rem; padding: .2rem .45rem; }button.danger { border
   .omp-shell { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); isolation: isolate; position: relative; }
   .topbar { grid-column: 1; gap: .5rem; padding: calc(.55rem + env(safe-area-inset-top)) max(.7rem, env(safe-area-inset-right)) .55rem max(.7rem, env(safe-area-inset-left)); }
   .status { display: none; }
-  .brand-wide { display: none; }
-  .brand-compact { display: inline; }
-  .drawer-actions { display: flex; }
-  .drawer-actions button { padding: .35rem .5rem; }
+  .drawer-toggle { display: inline-block; flex-shrink: 0; padding: .35rem .5rem; }
+  .topbar { justify-content: space-between; }
+  .brand { display: none; }
+  .topbar-session { align-items: center; display: flex; flex: 1; gap: .5rem; justify-content: center; min-width: 0; }
+  .topbar-brand { flex-shrink: 0; font-weight: 700; letter-spacing: .03em; }
+  .topbar-sep { align-self: stretch; background: #526577; flex-shrink: 0; width: 1px; }
+  .topbar-session-name { color: #cdd8e1; font-size: .9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .workspace { grid-column: 1; grid-row: 2; padding: .65rem max(.65rem, env(safe-area-inset-right)) calc(.65rem + env(safe-area-inset-bottom)) max(.65rem, env(safe-area-inset-left)); }
   .workspace-header { align-items: flex-start; }
   .workspace-title { min-width: 0; }
@@ -78,7 +81,7 @@ button.small { font-size: .78rem; padding: .2rem .45rem; }button.danger { border
   .drawer-backdrop { background: rgba(0,0,0,.58); border: 0; inset: 0; margin: 0; padding: 0; position: fixed; width: 100%; z-index: 5; }
   .drawer-backdrop[hidden] { display: none; }
 }
-@media (max-width: 380px) { .brand { font-size: .9rem; }.drawer-actions button { padding: .3rem .4rem; } }
+@media (max-width: 380px) { .brand { font-size: .9rem; }.drawer-toggle { padding: .3rem .4rem; } }
 .tail-viewer { display: flex; flex-direction: column; flex: 1; min-height: 0; border: 1px solid #178fb9; border-radius: .4rem; background: #101317; overflow: hidden; font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace; font-size: 12px; line-height: 18px; }
 .tail-status { padding: .4rem .7rem; font-size: 11px; color: #777d88; border-bottom: 1px solid rgba(255,255,255,.07); flex-shrink: 0; }.tail-status.ok { color: #89d281; }.tail-status.warning { color: #e4c00f; }
 .tail-scroll { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.15) transparent; }
@@ -110,7 +113,7 @@ button.small { font-size: .78rem; padding: .2rem .45rem; }button.danger { border
 </head>
 <body>
 <main class="omp-shell" data-omp-dashboard data-left-drawer-open="false" data-right-drawer-open="false">
-<header class="topbar"><span class="brand"><span class="brand-wide">OMP Connected</span><span class="brand-compact">OMPC</span></span><span class="status" data-status>Loading fleet…</span><div class="drawer-actions"><button type="button" data-session-drawer-toggle aria-controls="session-drawer" aria-expanded="false">Sessions</button><button type="button" data-inspector-drawer-toggle aria-controls="inspector-drawer" aria-expanded="false">Inspector</button></div><button type="button" data-refresh>Refresh</button></header>
+<header class="topbar"><button type="button" class="drawer-toggle" data-session-drawer-toggle aria-controls="session-drawer" aria-expanded="false">Sessions</button><span class="brand">OMP Connected</span><span class="status" data-status>Loading fleet…</span><span class="topbar-session"><span class="topbar-brand">ompc</span><span class="topbar-sep" aria-hidden="true"></span><span class="topbar-session-name" data-topbar-session>No session</span></span><button type="button" class="drawer-toggle" data-inspector-drawer-toggle aria-controls="inspector-drawer" aria-expanded="false">Inspector</button></header>
 <aside id="session-drawer" class="session-rail" aria-label="Sessions" data-session-rail></aside>
 <section class="workspace" aria-label="Selected OMP session" data-workspace><iframe class="collab-frame" data-collab-frame title="OMP Collab session" referrerpolicy="no-referrer"></iframe></section>
 <aside id="inspector-drawer" class="inspector" aria-label="Inspector" data-inspector></aside>

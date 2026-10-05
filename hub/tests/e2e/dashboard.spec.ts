@@ -39,7 +39,23 @@ test("mobile drawers return focus and do not replace the control iframe", async 
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
-  await expect(page.getByText("OMPC", { exact: true })).toBeVisible();
+  await expect(page.locator(".topbar-brand")).toHaveText("ompc");
+  await expect(page.locator("[data-topbar-session]")).not.toHaveText(
+    "No session",
+  );
+  const bar = await page.locator(".topbar").boundingBox();
+  const left = await page.locator("[data-session-drawer-toggle]").boundingBox();
+  const right = await page
+    .locator("[data-inspector-drawer-toggle]")
+    .boundingBox();
+  const title = await page.locator(".topbar-session").boundingBox();
+  if (!bar || !left || !right || !title) throw new Error("topbar not laid out");
+  expect(left.x).toBeLessThan(title.x);
+  expect(right.x).toBeGreaterThan(title.x + title.width - 1);
+  expect(right.x + right.width).toBeGreaterThan(bar.width - 20);
+  await expect(
+    page.getByRole("button", { name: "Refresh", exact: true }),
+  ).toHaveCount(0);
   const frame = page.locator("[data-collab-frame]");
   await expect(frame).toHaveAttribute("src", /\/collab\/#fixture-control$/);
   const initialSource = await frame.getAttribute("src");
