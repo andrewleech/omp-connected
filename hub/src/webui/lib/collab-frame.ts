@@ -6,6 +6,8 @@
 //   pull-to-refresh; restore default chaining.
 // - The dashboard owns session selection, so hide the guest's own
 //   "leave session" button.
+// - Text selection gets an explicit high-contrast highlight, and the dark
+//   theme's faint text is lightened for legibility.
 // - Pinch over the guest scales the transcript text (CSS `zoom` on each
 //   transcript row, so lines reflow) instead of zooming the whole page. The
 //   scale persists across frames and reloads.
@@ -18,6 +20,9 @@ const GUEST_CSS = `
 html, body { overscroll-behavior-y: auto; touch-action: pan-x pan-y; }
 .sh-header button[title="leave session"] { display: none; }
 .tr-root > * { zoom: var(--omp-text-scale, 1); }
+::selection { background: #ffd479; color: #101317; }
+:root[data-theme="dark"] { --fg-faint: #9a9aa4; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme]) { --fg-faint: #9a9aa4; } }
 `;
 
 export function clampTextScale(value: number): number {
