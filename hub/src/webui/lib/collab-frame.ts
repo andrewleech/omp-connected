@@ -20,7 +20,7 @@ const GUEST_CSS = `
 html, body { overscroll-behavior-y: auto; touch-action: pan-x pan-y; }
 .sh-header button[title="leave session"] { display: none; }
 .tr-root > * { zoom: var(--omp-text-scale, 1); }
-::selection { background: #ffd479; color: #101317; }
+::selection { background: #8e2c6b; color: #fff; }
 :root[data-theme="dark"] { --fg-faint: #9a9aa4; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme]) { --fg-faint: #9a9aa4; } }
 `;
