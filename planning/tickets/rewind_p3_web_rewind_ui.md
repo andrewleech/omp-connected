@@ -6,7 +6,7 @@ Written: 2026-09-30 at upstream 81c851de5f
 Revalidated: pending
 
 ## Context
-Design R9 to R11 and Q5. This is the user-visible feature: go back to an earlier prompt from the web UI, including on a phone, and get that prompt back in the composer to edit and resend.
+Design R9 to R13 and Q5, Q8, Q9. A writable guest can rewind the host session from the web UI or fork a separate named session from a prompt, including on a phone.
 
 ## Scope
 In scope:
@@ -20,7 +20,7 @@ Out of scope:
 - the sibling-branch strip;
 - Esc interrupting a turn (Q5);
 - non-prompt targets (R11);
-- fork host operation and wire contract until Q8 is settled.
+- fork-file creation, launcher invocation and host/wire changes (Q9).
 
 ## Files and anchors
 - `src/lib/client.ts`:
@@ -50,7 +50,7 @@ Out of scope:
   - Only target prompts expose the actions; the menu is available only to guests who can rewind.
 - **Menu.** Right-click opens the menu on desktop; long-press opens it on touch screens. It offers "Rewind to before this prompt" and "Fork new session from this point". There is no persistent Rewind button.
 - **Rewind.** Available only when the host is idle and no `ui-request` or autocomplete is open. Esc-Esc remains an optional desktop shortcut for selecting a rewind target. Selecting rewind sends the entry id; on success, the selected prompt's draft replaces composer text and receives focus.
-- **Fork.** Keep the menu action as the intended affordance, but do not implement a host operation or wire frame until Q8 defines the session lifecycle and contract.
+- **Fork.** Ask for a session name, then start `ompc --detach <name> --resume <new-session-file>`. The new process owns a distinct session file; the original process and file remain untouched. Once the extension registers it, the hub discovery flow adds it to the WebUI list for the user to select. Q9 must determine how OMP safely creates the selected-prompt copy; do not raw-truncate a live session file.
 - A rewind shows a pending state until `rewind-result` arrives.
 - If images came back and this build can't attach them, show a notice "N images from that prompt weren't restored".
 - On error, show a notice without losing the selected target.
@@ -68,8 +68,8 @@ Out of scope:
   - a single Esc, or Esc with text, does not start rewind.
 - **`test/transcript.test.tsx`:**
   - right-clicking a target prompt opens the menu; a long-press opens the same menu on touch;
-  - the menu offers rewind and fork only for eligible prompt rows;
-  - choosing rewind sends the expected entry id and a successful result restores the draft.
+  - choosing rewind sends the expected entry id and a successful result restores the draft;
+  - fork asks for a name, starts a separate process from a distinct session file, leaves the original session available, and adds the registered new session to the WebUI list;
 - **Browser check** against a live fleet host through the dashboard (control mode):
   - desktop 1440x900: open a prompt's context menu and rewind; also check the Esc-Esc shortcut;
   - iPhone 13 viewport: long-press a prompt to open the menu, then rewind and check the draft;
@@ -79,4 +79,4 @@ Out of scope:
 Default. The implementer must read `skill://frontend-design` first, and match the existing collab-web look rather than add a new style.
 
 ## Open questions
-Q3 (images), Q5 (Esc to interrupt), Q8 (fork-session contract).
+Q3 (images), Q5 (Esc to interrupt), Q9 (safe selected-prompt fork and launcher).

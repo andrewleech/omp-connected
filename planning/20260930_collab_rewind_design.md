@@ -98,9 +98,10 @@ B1 to B3 are pre-existing and independent of guest rewind, but guest rewind can'
   - collab-web v1 marks only user-request rows (user messages, collab guest prompts, user-invoked skill prompts), because "go back to before this prompt and let me edit it" is the case that matters on a phone.
 - **R12: branch and PR layout.**
   - PR A, `collab-guest-leaf` off `upstream/main`: R2 to R6. This fixes B1 to B3 and stands alone.
-  - PR B, `collab-guest-rewind` stacked on PR A: R7 to R11, plus the new-session fork operation if Q8 settles its host/wire contract.
+  - PR B, `collab-guest-rewind` stacked on PR A: R7 to R11, plus the new-session fork operation if Q9 settles its host/wire contract.
   - PR #13389 interaction: the "leaf not held" rejoin (R6) needs tail joins. Whichever of PR A and #13389 lands second carries that one hook-up, and until then `ompc-fleet` carries it in its merge.
   - `ompc-fleet` merges all of them for the fleet binary.
+- **R13: new-session fork runs in a separate process.** Selecting "Fork new session from this point" asks for a session name, creates a distinct session file containing the conversation through the selected prompt, and starts `ompc --detach <name> --resume <new-session-file>`. The existing process and its session file stay untouched; the new process acquires its own session file. Once its extension registers the Collab session, the hub's existing discovery path adds it to the WebUI list for the user to select. Never have both processes write the same session file.
 
 ## Wire contract
 
@@ -134,7 +135,8 @@ Replicated entries keep their shape. Only `parentId` is rewritten, per R2.
 | Q5 | Should web Esc interrupt a streaming turn, like the TUI's first Esc? | 3 | Proposed: no, out of scope. Web keeps the Stop button; Esc-Esc remains an idle keyboard shortcut for rewind. |
 | Q6 | Retire the hub's view-mode `CollabTailViewer` in favour of read-only collab-web with tail joins, instead of teaching it R1? | 1 | Open: the ticket fixes it in place (small). Retiring it is a separate hub decision. |
 | Q7 | Who posts in Discord, as CONTRIBUTING.md asks for multi-package changes? | 0 | Open: user action, same as the tail track. |
-| Q8 | What does "Fork new session from this point" mean for session storage, ownership, and the new session's initial branch, and what host action creates it? | 0 (design) | Open: align on the host operation and wire contract before Phase 2; add a host-work ticket if the maintainer agrees to include it. |
+| Q8 | What does "Fork new session from this point" mean for session ownership and how does the user get to it? | 0 (design) | DECIDED 2026-10-01: preserve the current process/file, prompt for a name, start a second `ompc` process on a separate session file, and let the registered session appear in the WebUI list. See R13. |
+| Q9 | How can OMP create a new session file containing only the active-branch history through the selected prompt without switching the original process's active session, and how does the extension safely launch `ompc`? | 0 (design) | Open: CLI `--fork <session>` clones the full history; `AgentSession.fork(entryId)` creates a branch through the selected entry but switches the current process to it. Find a safe API or helper for a separate process; preserve session locks and artifacts, and define launcher invocation. |
 
 ## Coordination
 
@@ -185,7 +187,7 @@ Order: shared_rewind, then host_rewind_frame, then tui_guest_rewind.
 Exit: host tests cover every R8 refusal and the success path, and the TUI selector behaves as before.
 
 ## Phase 3: collab-web rewind UI (PR B)
-Goal: a collab-web user can open a target prompt's context menu on desktop or touch and choose rewind or fork; the fork operation is implemented once Q8 settles its contract.
+Goal: a collab-web user can open a target prompt's context menu on desktop or touch and choose rewind or fork; the separate fork process and selected-prompt copy follow R13 and Q9.
 
 Work items:
 - [rewind_p3_web_rewind_ui](tickets/rewind_p3_web_rewind_ui.md).
