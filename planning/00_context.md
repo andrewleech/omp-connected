@@ -28,4 +28,4 @@ Rules:
 See the [design](archive/collab-tail-snapshot/20260923_collab_tail_snapshot_design.md) and the [roadmap](archive/collab-tail-snapshot/20260923_collab_tail_snapshot_roadmap.md).
 
 ## Third track: Collab rewind
-The saved design is in [the Collab rewind roadmap](20260930_collab_rewind_design.md). The web UI uses per-prompt context menus (right-click on desktop, long-press on touch) for rewind and fork; it has no persistent Rewind button. Esc-Esc remains an optional desktop rewind shortcut. Fork-session semantics are an open design question (Q8) to settle before implementation.
+The saved design is in [the Collab rewind roadmap](20260930_collab_rewind_design.md). The web UI uses per-prompt context menus (right-click on desktop, long-press on touch) for rewind and fork; it has no persistent Rewind button. Esc-Esc remains an optional desktop rewind shortcut. New-session fork runs in a named, separate OMP process and should appear in the session list once registered (R13); the safe selected-prompt copy operation remains open as Q9.

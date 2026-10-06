@@ -35,7 +35,7 @@ In scope:
   - TUI guest esc-esc and collab-web's optional desktop esc-esc shortcut;
   - read-only link: no rewind or fork action;
   - a rewind while streaming is refused;
-  - fork creates a separate session from the selected point without changing the original, after Q8 defines the expected session lifecycle;
+  - fork prompts for a name, starts a distinct process/file, leaves the original session intact and adds the registered session to the WebUI list for selection (after Q9 provides safe point-copy support);
   - a tail-joined guest rewound past its window rejoins.
 
    Record the results in `planning/<date>_rewind_field_test.md`.
