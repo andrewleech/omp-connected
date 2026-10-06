@@ -26,3 +26,6 @@ Rules:
 - The guest owns the byte budget.
 - No content is lost; trimmed content is loaded on demand.
 See the [design](archive/collab-tail-snapshot/20260923_collab_tail_snapshot_design.md) and the [roadmap](archive/collab-tail-snapshot/20260923_collab_tail_snapshot_roadmap.md).
+
+## Third track: Collab rewind
+The saved design is in [the Collab rewind roadmap](20260930_collab_rewind_design.md). The web UI uses per-prompt context menus (right-click on desktop, long-press on touch) for rewind and fork; it has no persistent Rewind button. Esc-Esc remains an optional desktop rewind shortcut. Fork-session semantics are an open design question (Q8) to settle before implementation.

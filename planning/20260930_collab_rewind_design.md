@@ -9,7 +9,7 @@ All line anchors are at `upstream/main` 81c851de5f unless marked otherwise. Coll
 
 ## Goal
 
-A writable guest in the Collab web UI (collab-web, which the dashboard embeds in control mode) can do what esc-esc does in the host's TUI: pick an earlier point in the conversation, have the session go back to it, and get the picked prompt's text back in its composer. Every connected guest sees the conversation as it is after the rewind, whoever triggered it.
+A writable guest in collab-web can choose a past user prompt to rewind the host session to before it, restoring the prompt in the guest's composer, or fork a new session from that point. Every connected guest sees the host conversation after a rewind.
 
 Tickets: `tickets/rewind_*.md` (listed per phase below).
 
@@ -89,16 +89,16 @@ B1 to B3 are pre-existing and independent of guest rewind, but guest rewind can'
   - The guest-commands work sets the same precedent ("Extends protocol 3 without a bump").
   - The maintainer may prefer a capability list or a bump (stale PR #10462 proposed `capabilities` with proto 4). Raise it in the issue.
 - **R10: web rewind UI uses the transcript itself.**
-  - collab-web doesn't copy the TUI's fullscreen list. A "rewind mode" marks the selectable rows in the existing transcript.
-  - On desktop, esc-esc with an empty composer enters it: arrow keys move, Enter picks, Esc cancels.
-  - Phones have no Esc, so a visible Rewind button in the composer actions is the main way in, and tapping a marked row picks it.
+  - The transcript is the selector: right-clicking a target prompt opens a context menu, rather than entering a separate rewind mode.
+  - The menu offers "Rewind to before this prompt" and "Fork new session from this point". Rewind follows the TUI semantics; fork-session mechanics are defined by Q8 before implementation.
+  - On touch screens, long-pressing a target prompt opens the same menu. Esc-Esc remains an optional desktop keyboard shortcut for selecting a rewind target; there is no persistent Rewind button.
   - The sibling-branch strip is out of scope: guests don't receive off-branch entries once tail joins are the norm.
 - **R11: web targets are prompts in v1.**
   - The wire frame accepts any transcript entry on the active branch, with the TUI's semantics, so a later UI can widen the target set without a wire change.
   - collab-web v1 marks only user-request rows (user messages, collab guest prompts, user-invoked skill prompts), because "go back to before this prompt and let me edit it" is the case that matters on a phone.
 - **R12: branch and PR layout.**
   - PR A, `collab-guest-leaf` off `upstream/main`: R2 to R6. This fixes B1 to B3 and stands alone.
-  - PR B, `collab-guest-rewind` stacked on PR A: R7 to R11.
+  - PR B, `collab-guest-rewind` stacked on PR A: R7 to R11, plus the new-session fork operation if Q8 settles its host/wire contract.
   - PR #13389 interaction: the "leaf not held" rejoin (R6) needs tail joins. Whichever of PR A and #13389 lands second carries that one hook-up, and until then `ompc-fleet` carries it in its merge.
   - `ompc-fleet` merges all of them for the fleet binary.
 
@@ -131,14 +131,15 @@ Replicated entries keep their shape. Only `parentId` is rewritten, per R2.
 | Q2 | Welcome flag, capability list, or proto bump for `rewind` (R9)? | 0 (issue) | Proposed: welcome flag; the maintainer decides in the issue. |
 | Q3 | Should `rewind-result` carry images? Upstream collab-web can't attach images, and a prompt's images can be large. | 2 | Proposed: send them, bounded by the existing image placeholder rules. A guest that can't attach shows "N images not restored". The fleet build has `collab-web-image-attach`, which can restore them. |
 | Q4 | Refuse a guest rewind while the host is viewing a subagent (`ctx.focusedAgentId`)? The TUI blocks its own double-Esc there (`input-controller.ts:487-497`). | 2 | Open: check whether `renderInitialMessages` against the main session is correct while a subagent view is focused. Refuse if not. |
-| Q5 | Should web Esc interrupt a streaming turn, like the TUI's first Esc? | 3 | Proposed: no, out of scope. Web keeps the Stop button, and Esc only drives rewind mode while idle. |
+| Q5 | Should web Esc interrupt a streaming turn, like the TUI's first Esc? | 3 | Proposed: no, out of scope. Web keeps the Stop button; Esc-Esc remains an idle keyboard shortcut for rewind. |
 | Q6 | Retire the hub's view-mode `CollabTailViewer` in favour of read-only collab-web with tail joins, instead of teaching it R1? | 1 | Open: the ticket fixes it in place (small). Retiring it is a separate hub decision. |
 | Q7 | Who posts in Discord, as CONTRIBUTING.md asks for multi-package changes? | 0 | Open: user action, same as the tail track. |
+| Q8 | What does "Fork new session from this point" mean for session storage, ownership, and the new session's initial branch, and what host action creates it? | 0 (design) | Open: align on the host operation and wire contract before Phase 2; add a host-work ticket if the maintainer agrees to include it. |
 
 ## Coordination
 
 - **guest-commands** (another session, worktree `~/src/oh-my-pi-wt/guest-commands`, branch `collab-guest-commands`, uncommitted on 2026-09-30) edits the same files: `protocol.ts`, `packages/wire/src/index.ts`, `host.ts` `#handleFrame`, collab-web `client.ts` and `Composer.tsx`.
-  - Its slash autocomplete uses Escape to close the suggestions. Rewind mode's esc-esc must yield to an open autocomplete and to an open `ui-request` form.
+  - Its slash autocomplete uses Escape to close the suggestions. The Esc-Esc rewind shortcut must yield to an open autocomplete and to an open `ui-request` form.
   - Before starting phase 2, message that session to agree on frame names and on whose PR lands first.
 - **collab-web-image-attach** (fork only, no upstream PR) changes `Composer.tsx` attachments; see Q3.
 - **PR #13389** (tail-first snapshots): see R12.
@@ -184,8 +185,7 @@ Order: shared_rewind, then host_rewind_frame, then tui_guest_rewind.
 Exit: host tests cover every R8 refusal and the success path, and the TUI selector behaves as before.
 
 ## Phase 3: collab-web rewind UI (PR B)
-
-Goal: rewind from collab-web on desktop and phone.
+Goal: a collab-web user can open a target prompt's context menu on desktop or touch and choose rewind or fork; the fork operation is implemented once Q8 settles its contract.
 
 Work items:
 - [rewind_p3_web_rewind_ui](tickets/rewind_p3_web_rewind_ui.md).
