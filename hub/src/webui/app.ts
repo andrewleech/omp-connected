@@ -289,10 +289,14 @@ function createDashboard(root: HTMLElement): void {
   }
 
   // Each host's list is applied as soon as it arrives, so one slow host
-  // never holds back the sessions of the others. A host whose listing fails
-  // shows no sessions until a later listing succeeds.
+  // never holds back the sessions of the others. Keep its previous list while
+  // a refresh is pending; a failed listing removes that host's sessions.
   async function loadSessions(): Promise<void> {
     const byHost = new Map<string, CollabSession[]>();
+    for (const host of state.hosts) byHost.set(host.hostId, []);
+    for (const session of state.sessions)
+      byHost.get(session.host_id)?.push(session);
+    const settledHosts = new Set<string>();
     const apply = (settled: boolean): void => {
       state.sessions = state.hosts.flatMap(
         (host) => byHost.get(host.hostId) ?? [],
@@ -320,7 +324,8 @@ function createDashboard(root: HTMLElement): void {
           showStatus(`${host.hostId}: ${(error as Error).message}`, "warning");
           byHost.set(host.hostId, []);
         }
-        if (byHost.size < state.hosts.length) apply(false);
+        settledHosts.add(host.hostId);
+        if (settledHosts.size < state.hosts.length) apply(false);
       }),
     );
     apply(true);
@@ -506,7 +511,15 @@ function createDashboard(root: HTMLElement): void {
   }
 
   function renderRail(container: Element): void {
-    container.replaceChildren();
+    const rail = container as HTMLElement;
+    const oldScrollTop = rail.scrollTop;
+    const railTop = rail.getBoundingClientRect().top;
+    const oldAnchor = Array.from(
+      rail.querySelectorAll<HTMLElement>(".session-card"),
+    ).find((card) => card.getBoundingClientRect().bottom > railTop);
+    const anchorKey = oldAnchor?.dataset.sessionKey;
+    const anchorTop = oldAnchor?.getBoundingClientRect().top;
+    rail.replaceChildren();
     const drawerHeader = el("div", { className: "drawer-header" });
     drawerHeader.append(el("strong", { text: "Sessions" }));
     const close = el("button", { type: "button", text: "Close" });
@@ -537,6 +550,7 @@ function createDashboard(root: HTMLElement): void {
           type: "button",
           title: displayName(session),
         }) as HTMLButtonElement;
+        card.dataset.sessionKey = sessionKey(session);
         const busy = state.agents.find(
           (agent) => agent.id === `${session.host_id}:${session.instanceId}`,
         )?.busy;
@@ -591,6 +605,14 @@ function createDashboard(root: HTMLElement): void {
       }
       container.append(section);
     }
+    const newAnchor = anchorKey
+      ? Array.from(rail.querySelectorAll<HTMLElement>(".session-card")).find(
+          (card) => card.dataset.sessionKey === anchorKey,
+        )
+      : undefined;
+    if (newAnchor && anchorTop !== undefined)
+      rail.scrollTop += newAnchor.getBoundingClientRect().top - anchorTop;
+    else rail.scrollTop = oldScrollTop;
   }
 
   function renderWorkspace(container: Element): void {
