@@ -206,3 +206,72 @@ test("sessions from responsive hosts show while another host's listing is still 
     page.getByRole("button", { name: "viewer view", exact: true }),
   ).toBeVisible();
 });
+
+test("session rail refresh preserves its visible position", async ({ page }) => {
+  await page.clock.install();
+  let changed = false;
+  let releaseWriterRefresh = () => {};
+  const writerRefreshHold = new Promise<void>((resolve) => {
+    releaseWriterRefresh = resolve;
+  });
+  await page.route("**/api/hosts/writer/collab", async (route) => {
+    if (changed) await writerRefreshHold;
+    const response = await route.fetch();
+    const body = (await response.json()) as {
+      sessions: Record<string, unknown>[];
+    };
+    body.sessions = [
+      body.sessions[0],
+      ...Array.from({ length: 30 }, (_, index) => ({
+        ...body.sessions[0],
+        instanceId: `room-${index}`,
+        label: changed ? `Room ${index} `.repeat(15) : `Room ${index}`,
+        startedAt: index,
+      })),
+    ];
+    await route.fulfill({ response, json: body });
+  });
+  await page.goto("/");
+  const rail = page.locator("[data-session-rail]");
+  await expect(rail.locator(".session-card")).toHaveCount(32);
+  await rail.evaluate((element) => {
+    element.scrollTop = 500;
+  });
+  const anchor = await rail.evaluate((element) => {
+    const railTop = element.getBoundingClientRect().top;
+    const card = Array.from(
+      element.querySelectorAll<HTMLElement>(".session-card"),
+    ).find((candidate) => candidate.getBoundingClientRect().bottom > railTop);
+    if (!card?.dataset.sessionKey) throw new Error("No visible session card");
+    return {
+      key: card.dataset.sessionKey,
+      top: card.getBoundingClientRect().top,
+    };
+  });
+
+  changed = true;
+  const writerRefreshed = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/hosts/writer/collab") &&
+      response.request().method() === "GET",
+  );
+  const viewerRefreshed = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/hosts/viewer/collab") &&
+      response.request().method() === "GET",
+  );
+  await page.clock.runFor(15_000);
+  await viewerRefreshed;
+  const anchorCard = rail.locator(
+    `.session-card[data-session-key="${anchor.key}"]`,
+  );
+  await expect
+    .poll(() => anchorCard.evaluate((card) => card.getBoundingClientRect().top))
+    .toBeCloseTo(anchor.top);
+
+  releaseWriterRefresh();
+  await writerRefreshed;
+  await expect
+    .poll(() => anchorCard.evaluate((card) => card.getBoundingClientRect().top))
+    .toBeCloseTo(anchor.top);
+});
