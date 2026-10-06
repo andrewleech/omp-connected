@@ -8,12 +8,12 @@ A self-hosted dashboard for all your [Oh My Pi](https://github.com/can1357/oh-my
 
 Each omp session started with `ompc` registers with a hub you run on one always-on host. The hub's dashboard lists every live session grouped by host; pick one and you get the session itself through omp's Collab: the conversation and tool calls as they happen, and a prompt box to steer the agent. Session traffic goes through a private relay on the hub, which only forwards encrypted frames.
 
-![Dashboard on desktop: sessions grouped by host, with a live session open](docs/screenshots/desktop.png)
+![Dashboard on desktop: sessions grouped by host, activity dots and the selected session's file list](docs/screenshots/desktop.png)
 
 <p align="center">
-  <img src="docs/screenshots/mobile-sessions.png" alt="Dashboard on a phone: the sessions drawer" width="280">
+  <img src="docs/screenshots/mobile-sessions.png" alt="Dashboard on a phone: the sessions drawer with busy and idle indicators" width="280">
   &nbsp;&nbsp;
-  <img src="docs/screenshots/mobile-session.png" alt="Dashboard on a phone: a live session" width="280">
+  <img src="docs/screenshots/mobile-session.png" alt="Dashboard on a phone: the selected session's file list" width="280">
 </p>
 
 ## Features
