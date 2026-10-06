@@ -30,12 +30,13 @@ In scope:
 
    Running `ompc` sessions pick up the new binary only after a restart.
 3. **Field test** on hub-host with a throwaway session:
-   - host esc-esc: collab-web (control), hub viewer (view) and a TUI guest all follow;
-   - guest rewind from desktop collab-web and from a phone-sized viewport;
-   - TUI guest esc-esc;
-   - read-only link: no Rewind button;
-   - a rewind while streaming is refused;
-   - a tail-joined guest rewound past its window rejoins.
+  - host esc-esc: collab-web (control), hub viewer (view) and a TUI guest all follow;
+  - guest rewind from a desktop message context menu and a phone-sized long-press menu;
+  - TUI guest esc-esc and collab-web's optional desktop esc-esc shortcut;
+  - read-only link: no rewind or fork action;
+  - a rewind while streaming is refused;
+  - fork creates a separate session from the selected point without changing the original, after Q8 defines the expected session lifecycle;
+  - a tail-joined guest rewound past its window rejoins.
 
    Record the results in `planning/<date>_rewind_field_test.md`.
 4. **PR bodies.** Draft them with the `draft-pr` and `writing-style` skills in `planning/pr-drafts/`: PR A (leaf sync, fixes B1 to B3) and PR B (guest rewind), linking the upstream issue.

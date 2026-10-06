@@ -27,7 +27,8 @@ Draft the issue text and save it to `planning/pr-drafts/collab-rewind-issue.md`.
 - **Proposed feature, part 2.**
   - A `rewind` guest frame with a `rewind-result` reply, needing the write token and refused while streaming.
   - The host runs the same code as its own esc-esc, and the draft goes back to the requesting guest only.
-  - collab-web gets esc-esc on desktop and a Rewind button on mobile.
+  - collab-web gets a per-prompt context menu on desktop and a long-press menu on touch screens, with "Rewind to before this prompt" and "Fork new session from this point". Esc-Esc remains an optional desktop rewind shortcut; there is no persistent Rewind button.
+  - Fork-session storage, ownership and host operation need a maintainer-aligned design decision before implementation (Q8).
 - **Question for the maintainer (design Q2).** A welcome flag vs a capability list vs a `COLLAB_PROTO` bump. Note that #10462 proposed `capabilities` with proto 4, and that the guest-commands work (if it's upstream by then) extends proto 3 without a bump.
 - **Relation to #13389.** The two are independent, but tail-joined guests rejoin when the new leaf is outside their window.
 - **Offer to do the work**, as two PRs.
