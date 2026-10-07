@@ -4,6 +4,7 @@ import type { Component } from "@oh-my-pi/pi-tui";
 import { type AgentSummary, HubTransport } from "./hub-transport.js";
 import { getCollabRegistry } from "./collab-registry.js";
 import { FileService } from "./files-rpc.js";
+import { HOST_SESSIONS_FEATURE, HostSessions } from "./host-sessions.js";
 import { RpcCode, RpcError } from "./protocol.js";
 import { AGENT_MESSAGE_TYPE, type AgentMessage, formatInboundMessage, isReservedIdentity } from "./provenance.js";
 import { PromptScheduler, type ScheduledPrompt } from "./scheduled-prompts.js";
@@ -83,6 +84,41 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 	let files: FileService | undefined;
 	let sessionRpc: SessionRequestHandler | undefined;
 	let scheduler: PromptScheduler | undefined;
+	const hostSessions = new HostSessions({
+		listHistory: async () => {
+			const { SessionManager } = await import("@oh-my-pi/pi-coding-agent");
+			return SessionManager.listAll();
+		},
+		newSessionDir: async (cwd) => {
+			const { SessionManager } = await import("@oh-my-pi/pi-coding-agent");
+			return SessionManager.getDefaultSessionDir(cwd);
+		},
+		isSessionOpen: async (id) => {
+			const { tryAcquireSessionLease } = await import("@oh-my-pi/pi-coding-agent");
+			const lease = tryAcquireSessionLease(id);
+			if (!lease) return true;
+			lease.release();
+			return false;
+		},
+		acquireLaunchLock: async () => {
+			const { tryAcquireSessionLease } = await import("@oh-my-pi/pi-coding-agent");
+			const lease = tryAcquireSessionLease("omp-connected-host-launch");
+			return lease ? () => lease.release() : undefined;
+		},
+		listOpen: async () => {
+			const registry = await getCollabRegistry();
+			if (!registry) throw new RpcError(RpcCode.Internal, "Collab registry not available");
+			return registry.listCollabHosts();
+		},
+		currentSessionId: () => ownerContext?.sessionManager.getSessionId(),
+	});
+	function rememberSession(ctx: ExtensionContext): void {
+		void hostSessions.remember(ctx.sessionManager.getSessionId(), process.cwd(), ompcSession).catch((error) => {
+			pi.logger.warn("omp-connected: could not remember the ompc session name", {
+				err: error instanceof Error ? error.message : String(error),
+			});
+		});
+	}
 	/** True between the owner's agent_start and agent_end. */
 	let busy = false;
 
@@ -121,6 +157,8 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		params: unknown,
 		afterReply: (callback: () => void) => void,
 	): Promise<unknown> {
+		if (method === "host.sessions.list") return hostSessions.list();
+		if (method === "host.sessions.start") return hostSessions.start(params);
 		if (!sessionRpc) throw new RpcError(RpcCode.Internal, "the session is not ready");
 		const result = await sessionRpc(method, params);
 		if (method === "session.exit") {
@@ -181,7 +219,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 						pid: process.pid,
 						cwd: process.cwd(),
 						label: ompcSession,
-						features: [SESSION_FEATURE, SCHEDULE_FEATURE, EXIT_FEATURE],
+						features: [SESSION_FEATURE, SCHEDULE_FEATURE, EXIT_FEATURE, HOST_SESSIONS_FEATURE],
 					});
 					hub.identity = result.agent;
 					reportActivity();
@@ -228,6 +266,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		hub.owner = pi;
 		hub.shuttingDown = false;
 		ownerContext = ctx;
+		rememberSession(ctx);
 		await files?.dispose();
 		files = undefined;
 		sessionRpc = undefined;
@@ -297,7 +336,10 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 
 	// Keep the owner's context current across in-process session changes.
 	const trackContext = (_event: unknown, ctx: ExtensionContext) => {
-		if (hub.owner === pi) ownerContext = ctx;
+		if (hub.owner === pi) {
+			ownerContext = ctx;
+			rememberSession(ctx);
+		}
 	};
 	pi.on("session_switch", (event, ctx) => {
 		if (hub.owner !== pi) return;

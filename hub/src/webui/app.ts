@@ -19,6 +19,7 @@ import {
   scheduleApi,
 } from "./lib/scheduled-send";
 import { EXIT_FEATURE, sessionApiBase } from "./lib/session-api";
+import { SessionLauncher } from "./lib/session-launcher";
 import { SessionPane } from "./lib/session-pane";
 import {
   type CollabSession,
@@ -173,6 +174,12 @@ function createDashboard(root: HTMLElement): void {
   let leftDrawerOpen = false;
   let rightDrawerOpen = false;
   let drawerTrigger: HTMLElement | null = null;
+  const launcher = new SessionLauncher((label) => {
+    showStatus(`Started ${label}; waiting for it to register…`, "ok");
+    void pollSessions().catch((error: unknown) =>
+      showStatus((error as Error).message, "warning"),
+    );
+  });
   const sessionPane = new SessionPane({ showStatus });
   const filesPane = new FilesPane({ showStatus }, (session) =>
     sessionPane.cwdFor(session),
@@ -569,9 +576,37 @@ function createDashboard(root: HTMLElement): void {
       render();
     };
     container.append(addGroup);
-    for (const group of groupSessions(state.sessions, state.groups)) {
+    const groups = groupSessions(state.sessions, state.groups);
+    for (const host of state.hosts) {
+      if (!groups.some((group) => !group.custom && group.name === host.hostId))
+        groups.push({
+          id: `host:${host.hostId}`,
+          name: host.hostId,
+          custom: false,
+          sessions: [],
+        });
+    }
+    for (const group of groups) {
       const section = el("div", { className: "session-group" });
-      section.append(el("h2", { text: group.name }));
+      const heading = el("div", { className: "session-group-heading" });
+      heading.append(el("h2", { text: group.name }));
+      if (!group.custom) {
+        const start = el("button", {
+          type: "button",
+          text: "+",
+          title: `Start session on ${group.name}`,
+        }) as HTMLButtonElement;
+        start.className = "host-start-session";
+        start.setAttribute("aria-label", `Start session on ${group.name}`);
+        start.onclick = () =>
+          void launcher.open(
+            group.name,
+            state.sessions.find((session) => session.host_id === group.name)
+              ?.cwd,
+          );
+        heading.append(start);
+      }
+      section.append(heading);
       if (group.sessions.length === 0)
         section.append(el("p", { className: "empty", text: "No sessions" }));
       for (const session of group.sessions) {

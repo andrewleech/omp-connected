@@ -27,15 +27,10 @@ One WebSocket connection per `omp-connected` extension instance,
 JSON-RPC 2.0 framed. The extension always speaks first with
 `agent.register`; after that the server dispatches `agent.*` calls from
 the extension (the agent, not the server, drives most calls), and the
-server may itself push three kinds of server-initiated request over that
-same connection: `agent.message` when another agent sends to this one,
-`collab.list`/`collab.link` to serve host-level Collab discovery
-through whichever agent connection is currently live for a hostId
-(there is no separate host-registration connection), and `session.*`/`files.*`
-calls addressed to one specific agent for the dashboard's Session and Files tabs.
+server may itself push server-initiated requests over that same connection: `agent.message` when another agent sends to this one, `collab.list`/`collab.link` for host-level Collab discovery through a live connection for the hostId (there is no separate host-registration connection), `host.sessions.*` for history and launching through a capable connection, and `session.*`/`files.*` calls addressed to one specific agent for the dashboard's Session and Files tabs.
 All push kinds are JSON-RPC *requests*; the extension's `{result: ...}`/`{error: ...}`
 reply, matched on the request's own id, is both the delivery
-confirmation and (for the collab, session and files calls) the RPC result itself.
+confirmation and (for collab, host session, session and file calls) the RPC result itself.
 
 ```ts
 interface JsonRpcRequest<M extends string = string, P = unknown> { jsonrpc: "2.0"; id: string; method: M; params: P; }
@@ -127,6 +122,19 @@ An extension that also advertises `session.schedule.v1` holds prompts queued fro
 ```
 
 `delayMs` is a whole number of milliseconds up to 7 days, `text` at most 100,000 characters, and at most 20 prompts wait per session. All three need `control` access, like the other methods. The session re-reads the wall clock at least once a minute, so a host that sleeps through a due time sends the prompt when it wakes.
+
+### Host session history and launching (`host.sessions.v1`)
+
+A capable connected extension answers host-wide history and launch requests. The hub chooses the longest-connected agent advertising `host.sessions.v1`, rather than an older extension on the same host. The extension requires a local control share, reads OMP's own history, excludes open conversation UUIDs (including ownership leases without a Collab share), and resolves a selected UUID to its local journal before launching. A host with no connected extension cannot be started remotely.
+
+```ts
+"host.sessions.list" {} -> { sessions: { sessionId; cwd; title; modifiedAt; name?: string }[] }
+"host.sessions.start" { cwd; name; sessionId?: string } -> { ok: true; label }
+```
+
+`modifiedAt` is epoch milliseconds, history is newest-first, and `name` is the remembered `ompc` suffix, not the conversation title. Path accepts an absolute directory or `~/...`; a blank name starts the directory's bare `ompc` name. The combined directory basename and suffix must meet the launcher's 64-character name rule. Launching uses detached `ompc --new`, so a live name collision returns 409 rather than attaching. Selecting a conversation already open or starting also returns 409. A new conversation bypasses OMP's configured auto-resume. Successful launch means tmux accepted the process, its extension then registers through the normal flow.
+
+REST: `GET /api/hosts/:id/session-history` and `POST /api/hosts/:id/sessions` expose those results and parameters. Requests share a host limit of 20 per 10 seconds, with a 30-second RPC deadline. A disconnected host answers 404, no capable extension answers 501, and remote errors use the session RPC HTTP mapping.
 
 **No independent identity check.** `agent.register` is token-gated
 only: `hostId`, `instanceId`, `cwd`, and `label` are the extension's own
