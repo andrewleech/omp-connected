@@ -15,6 +15,7 @@ import { type Context, Elysia } from "elysia";
 import { AgentCallError, type AgentRegistry } from "./agent-registry";
 import { RateLimiter } from "./rate-limit";
 import {
+  EXIT_FEATURE,
   type FilesStatResult,
   MAX_SCHEDULED_TEXT,
   MAX_SCHEDULE_DELAY_MS,
@@ -356,6 +357,9 @@ export function sessionRpcRoutes(
 
     .post("/:id/sessions/:instanceId/abort", ({ params, set }) =>
       control(set, params, "session.abort", {}),
+    )
+    .post("/:id/sessions/:instanceId/exit", ({ params, set }) =>
+      control(set, params, "session.exit", {}, EXIT_FEATURE),
     )
 
     .post("/:id/sessions/:instanceId/compact", ({ params, body, set }) => {

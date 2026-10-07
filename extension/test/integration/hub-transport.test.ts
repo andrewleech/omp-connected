@@ -90,6 +90,33 @@ test("a server-pushed agent.message request is delivered inbound and acked", asy
 	transport.close();
 });
 
+test("a pushed exit can close the transport after its success reply is sent", async () => {
+	let socket: ServerWebSocket<unknown> | undefined;
+	const reply = Promise.withResolvers<unknown>();
+	const hub = startHub((client, frame) => {
+		socket = client;
+		if (frame.method === "agent.register") {
+			respond(client, frame.id, { ok: true, agent: { id: "a" } });
+		} else if (frame.id === "exit-1") {
+			reply.resolve(frame);
+		}
+	});
+	let transport: HubTransport;
+	transport = new HubTransport(
+		`http://localhost:${hub.port}`,
+		"secret-token",
+		() => undefined,
+		undefined,
+		async (_method, _params, afterReply) => {
+			afterReply(() => transport.close());
+			return { ok: true };
+		},
+	);
+	await transport.register({ hostId: "user@hub-host", instanceId: "inst-1", pid: 1, cwd: "/tmp" });
+	socket?.send(JSON.stringify({ jsonrpc: "2.0", id: "exit-1", method: "session.exit", params: {} }));
+	expect(await reply.promise).toMatchObject({ result: { ok: true } });
+});
+
 test("transport rejects pending work on close and reconnects through a new socket", async () => {
 	let connections = 0;
 	const hub = startHub((socket, request) => {

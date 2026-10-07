@@ -18,6 +18,59 @@ test("opens writable sessions in Collab control by default", async ({
   ).toHaveCount(0);
 });
 
+test("exit requires confirmation and removes the session only after acceptance", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const writer = page.getByRole("button", { name: "writer", exact: true });
+  await writer.click({ button: "right" });
+  const exit = page.getByRole("button", { name: "Exit session" });
+  await expect(exit).toBeEnabled();
+  page.once("dialog", (dialog) => {
+    expect(dialog.message()).toContain('Exit "writer"?');
+    void dialog.dismiss();
+  });
+  await exit.click();
+  await expect(writer).toBeVisible();
+
+  await writer.click({ button: "right" });
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page.getByRole("button", { name: "Exit session" }).click();
+  await expect(writer).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "viewer view", exact: true }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "viewer view", exact: true }).click({
+    button: "right",
+  });
+  await expect(
+    page.getByRole("button", { name: "Exit session" }),
+  ).toBeDisabled();
+});
+
+test("old control-shared sessions cannot offer exit before their extension restarts", async ({
+  page,
+}) => {
+  await page.route("**/api/hosts/writer/collab", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as {
+      sessions: { features: string[] }[];
+    };
+    const writer = body.sessions[0];
+    if (!writer) throw new Error("Fixture writer session missing");
+    writer.features = ["session.v1"];
+    await route.fulfill({ response, json: body });
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "writer", exact: true }).click({
+    button: "right",
+  });
+  await expect(
+    page.getByRole("button", { name: "Exit session" }),
+  ).toBeDisabled();
+});
+
 test("does not install a stale control result after selecting a view-only room", async ({
   page,
 }) => {

@@ -18,7 +18,7 @@ import {
   attachScheduledSend,
   scheduleApi,
 } from "./lib/scheduled-send";
-import { sessionApiBase } from "./lib/session-api";
+import { EXIT_FEATURE, sessionApiBase } from "./lib/session-api";
 import { SessionPane } from "./lib/session-pane";
 import {
   type CollabSession,
@@ -65,6 +65,7 @@ interface ContextMenuItem {
   label: string;
   onSelect: () => void;
   disabled?: boolean;
+  danger?: boolean;
 }
 
 let activeContextMenu: HTMLElement | null = null;
@@ -78,7 +79,7 @@ function openContextMenu(x: number, y: number, items: ContextMenuItem[]): void {
   closeContextMenu();
   const menu = el("ul", { className: "ctx-menu" });
   for (const item of items) {
-    const li = el("li");
+    const li = el("li", { className: item.danger ? "ctx-danger" : "" });
     const button = el("button", {
       type: "button",
       text: item.label,
@@ -470,6 +471,27 @@ function createDashboard(root: HTMLElement): void {
     }
   }
 
+  async function exitSession(session: CollabSession): Promise<void> {
+    if (
+      !window.confirm(
+        `Exit "${sessionLabel(session)}"? This closes OMP and its ompc tmux session, if present.`,
+      )
+    )
+      return;
+    try {
+      await json(
+        `${sessionApiBase(session.host_id, session.instanceId)}/exit`,
+        { method: "POST" },
+      );
+      showStatus(`Exit requested for ${sessionLabel(session)}`, "ok");
+      void pollSessions().catch((error: unknown) =>
+        showStatus((error as Error).message, "warning"),
+      );
+    } catch (error) {
+      showStatus((error as Error).message, "warning");
+    }
+  }
+
   function sessionMenuItems(session: CollabSession): ContextMenuItem[] {
     const items: ContextMenuItem[] = [
       {
@@ -506,6 +528,14 @@ function createDashboard(root: HTMLElement): void {
         state.groups.push(group);
         setGroup(session, group.id);
       },
+    });
+    items.push({
+      label: "Exit session",
+      danger: true,
+      disabled:
+        session.access !== "control" ||
+        !session.features?.includes(EXIT_FEATURE),
+      onSelect: () => void exitSession(session),
     });
     return items;
   }

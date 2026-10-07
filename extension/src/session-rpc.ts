@@ -11,6 +11,8 @@ export const SESSION_FEATURE = "session.v1";
 /** Advertised alongside SESSION_FEATURE when the session.schedule_prompt,
  *  session.scheduled and session.cancel_scheduled methods are served. */
 export const SCHEDULE_FEATURE = "session.schedule.v1";
+/** Advertised only by extensions that can gracefully exit their owner session. */
+export const EXIT_FEATURE = "session.exit.v1";
 
 export type CollabAccess = "view" | "control";
 
@@ -175,6 +177,10 @@ export function createSessionRpc(deps: SessionRpcDeps): SessionRequestHandler {
 		},
 		"session.abort"() {
 			requireContext().abort();
+			return { ok: true };
+		},
+		"session.exit"() {
+			requireContext();
 			return { ok: true };
 		},
 		"session.compact"(params) {

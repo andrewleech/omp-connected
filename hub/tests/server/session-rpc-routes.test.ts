@@ -59,7 +59,7 @@ function registerSessionAgent(
       instanceId: options.instanceId ?? "inst-1",
       pid: 1,
       cwd: "/work",
-      features: options.features ?? ["session.v1"],
+      features: options.features ?? ["session.v1", "session.exit.v1"],
     },
     conn,
   );
@@ -302,6 +302,7 @@ describe("session-rpc-routes: info, controls, listing", () => {
 
     const responses = await Promise.all([
       app.handle(post("abort")),
+      app.handle(post("exit")),
       app.handle(post("compact")),
       app.handle(post("compact", { instructions: "x".repeat(4000) })),
       app.handle(post("model", { provider: "anthropic", id: "opus" })),
@@ -315,6 +316,7 @@ describe("session-rpc-routes: info, controls, listing", () => {
     }
     expect(calls).toEqual([
       { method: "session.abort", params: {} },
+      { method: "session.exit", params: {} },
       { method: "session.compact", params: {} },
       { method: "session.compact", params: { instructions: "x".repeat(4000) } },
       {
@@ -351,6 +353,20 @@ describe("session-rpc-routes: info, controls, listing", () => {
       new Request(`${BASE}/other/abort`, { method: "POST" }),
     );
     expect(otherSession.status).toBe(200);
+  });
+
+  test("exit requires its advertised capability, even on a session.v1 extension", async () => {
+    const registry = new AgentRegistry();
+    const calls = registerSessionAgent(registry, () => ({ ok: true }), {
+      features: ["session.v1"],
+    });
+    const response = await sessionRpcRoutes(registry).handle(post("exit"));
+    expect(response.status).toBe(501);
+    expect(await response.json()).toEqual({
+      error:
+        "session's omp-connected extension does not support session.exit.v1; restart the session to update it",
+    });
+    expect(calls).toEqual([]);
   });
 });
 

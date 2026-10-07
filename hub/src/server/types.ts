@@ -318,6 +318,8 @@ export const SESSION_FEATURE = "session.v1";
  *  session.schedule_prompt / session.scheduled / session.cancel_scheduled
  *  methods (prompts the session sends itself at a later time). */
 export const SCHEDULE_FEATURE = "session.schedule.v1";
+/** Advertised with SESSION_FEATURE by extensions that can exit their owner. */
+export const EXIT_FEATURE = "session.exit.v1";
 /** The extension's limits for a scheduled prompt. */
 export const MAX_SCHEDULED_TEXT = 100_000;
 export const MAX_SCHEDULE_DELAY_MS = 7 * 24 * 60 * 60 * 1000;
@@ -422,6 +424,7 @@ export interface ScheduledPromptResult {
 export interface SessionMethodParams {
   "session.info": Record<string, never>;
   "session.abort": Record<string, never>;
+  "session.exit": Record<string, never>;
   "session.compact": { instructions?: string };
   "session.set_model": { provider: string; id: string };
   "session.set_thinking": { level: string };
@@ -439,6 +442,7 @@ export interface SessionMethodParams {
 export interface SessionMethodResult {
   "session.info": SessionInfoResult;
   "session.abort": OkResult;
+  "session.exit": OkResult;
   "session.compact": OkResult;
   "session.set_model": OkResult;
   "session.set_thinking": OkResult;
