@@ -1,16 +1,17 @@
+import type { ServerWebSocket } from "bun";
 import { afterEach, expect, mock, test } from "bun:test";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 
 mock.module("../../src/collab-registry.js", () => ({
 	getCollabRegistry: async () => ({
-		listCollabHosts: async () => [{ instanceId: "inst-1", pid: process.pid }],
+		listCollabHosts: async () => [{ instanceId: "inst-1", pid: process.pid, access: "control" }],
 	}),
 }));
 
 // Imported after mock.module so index.ts binds the stubbed Collab registry.
 const { registerOmpConnected } = await import("../../src/index.js");
 
-type Handler = () => unknown;
+type Handler = (event?: unknown, context?: unknown) => unknown;
 type Tool = { name: string; execute: (id: string, params: unknown) => Promise<{ content: { text: string }[] }> };
 
 /** The slice of ExtensionAPI the extension touches, recording what it registers. */
@@ -28,7 +29,7 @@ function fakeSession() {
 	};
 	registerOmpConnected(pi as unknown as ExtensionAPI);
 	return {
-		emit: async (event: string) => handlers.get(event)?.(),
+		emit: async (event: string, context?: unknown) => handlers.get(event)?.({}, context),
 		identity: async () => JSON.parse((await tools.get("ompc_identity")!.execute("t", {})).content[0].text),
 	};
 }
@@ -79,6 +80,39 @@ test("a subagent in the same process shares the parent's hub registration instea
 	expect(await parent.identity()).toMatchObject({ registered: true });
 
 	await parent.emit("session_shutdown");
+});
+
+test("a successful exit request shuts down the owning session after answering the hub", async () => {
+	let socket: ServerWebSocket<unknown> | undefined;
+	const reply = Promise.withResolvers<unknown>();
+	const shutdown = Promise.withResolvers<void>();
+	const server = Bun.serve({
+		port: 0,
+		fetch(request, server) {
+			if (server.upgrade(request)) return;
+			return new Response("not found", { status: 404 });
+		},
+		websocket: {
+			message(client, message) {
+				const frame = JSON.parse(String(message)) as { id: string; method?: string; result?: unknown };
+				socket = client;
+				if (frame.method === "agent.register") {
+					client.send(JSON.stringify({ jsonrpc: "2.0", id: frame.id, result: { ok: true, agent: { id: "host:inst-1" } } }));
+				} else if (frame.id === "exit-1") {
+					reply.resolve(frame.result);
+				}
+			},
+		},
+	});
+	servers.push(server);
+	process.env.OMP_HUB_URL = `http://localhost:${server.port}`;
+	process.env.OMP_HUB_HOST_TOKEN = "secret-token";
+	const session = fakeSession();
+	await session.emit("session_start", { shutdown: () => shutdown.resolve(), hasUI: false });
+	socket?.send(JSON.stringify({ jsonrpc: "2.0", id: "exit-1", method: "session.exit", params: {} }));
+	expect(await reply.promise).toEqual({ ok: true });
+	await shutdown.promise;
+	await session.emit("session_shutdown");
 });
 
 test("the owning session reports turn start/end to the hub and a subagent's turns are ignored", async () => {

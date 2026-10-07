@@ -10,6 +10,7 @@ import { PromptScheduler, type ScheduledPrompt } from "./scheduled-prompts.js";
 import {
 	createAccessCache,
 	createSessionRpc,
+	EXIT_FEATURE,
 	SCHEDULE_FEATURE,
 	SESSION_FEATURE,
 	type SessionRequestHandler,
@@ -115,9 +116,18 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		}
 	}
 
-	async function handleHubRequest(method: string, params: unknown): Promise<unknown> {
+	async function handleHubRequest(
+		method: string,
+		params: unknown,
+		afterReply: (callback: () => void) => void,
+	): Promise<unknown> {
 		if (!sessionRpc) throw new RpcError(RpcCode.Internal, "the session is not ready");
-		return sessionRpc(method, params);
+		const result = await sessionRpc(method, params);
+		if (method === "session.exit") {
+			const ctx = ownerContext;
+			if (ctx) afterReply(() => ctx.shutdown());
+		}
+		return result;
 	}
 
 	/** This session's Collab access, cached for the request gate. The lookup
@@ -171,7 +181,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 						pid: process.pid,
 						cwd: process.cwd(),
 						label: ompcSession,
-						features: [SESSION_FEATURE, SCHEDULE_FEATURE],
+						features: [SESSION_FEATURE, SCHEDULE_FEATURE, EXIT_FEATURE],
 					});
 					hub.identity = result.agent;
 					reportActivity();

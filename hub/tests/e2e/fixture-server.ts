@@ -17,7 +17,7 @@ const sessions = {
     sessionName: "Writable room",
     cwd: "/work/writer",
     participants: 2,
-    features: ["session.v1", "session.schedule.v1"],
+    features: ["session.v1", "session.schedule.v1", "session.exit.v1"],
   },
   viewer: {
     instanceId: "viewer-room",
@@ -80,7 +80,9 @@ const scheduled: {
   createdAt: number;
 }[] = [];
 
+let writerExited = false;
 function resetWriter(): void {
+  writerExited = false;
   writerInfo.model = models[0];
   writerInfo.thinkingLevel = "medium";
   files.clear();
@@ -127,6 +129,10 @@ async function writerSessionApi(
   route: string,
 ): Promise<Response> {
   const path = url.searchParams.get("path") ?? "";
+  if (route === "/exit" && request.method === "POST") {
+    writerExited = true;
+    return json({ ok: true });
+  }
   if (route === "/info") return json(writerInfo);
   if (route === "/model" && request.method === "POST") {
     const body = (await request.json()) as { provider: string; id: string };
@@ -253,7 +259,7 @@ Bun.serve({
     if (url.pathname === "/api/hosts")
       return json([{ hostId: "writer" }, { hostId: "viewer" }]);
     if (url.pathname === "/api/hosts/writer/collab")
-      return json({ sessions: [sessions.writer] });
+      return json({ sessions: writerExited ? [] : [sessions.writer] });
     if (url.pathname === "/api/hosts/viewer/collab")
       return json({ sessions: [sessions.viewer] });
     const writerApi = "/api/hosts/writer/sessions/writer-room";

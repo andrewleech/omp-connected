@@ -3,6 +3,7 @@
 // dashboard's Session and Files inspector tabs are built on.
 
 export const SESSION_FEATURE = "session.v1";
+export const EXIT_FEATURE = "session.exit.v1";
 export const NEEDS_UPDATE_NOTE =
   "Controls need the updated omp-connected extension; restart this session to enable them.";
 export const VIEW_ONLY_FILES_NOTE = "Files need a control-shared session.";

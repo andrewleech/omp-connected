@@ -23,9 +23,13 @@ export interface AgentRegisterResult {
 
 type InboundHandler = (message: AgentMessage) => void;
 
-/** Answers a hub-pushed request the transport does not handle itself;
- *  throws RpcError (or anything else, replied as internal) on failure. */
-export type PushRequestHandler = (method: string, params: unknown) => Promise<unknown>;
+/** Answers a hub-pushed request. `afterReply` runs only after its successful
+ *  response is sent, for actions that end the owning session. */
+export type PushRequestHandler = (
+	method: string,
+	params: unknown,
+	afterReply: (callback: () => void) => void,
+) => Promise<unknown>;
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const CONNECT_TIMEOUT_MS = 10_000;
@@ -250,18 +254,28 @@ export class HubTransport {
 	 *  on a newer connection that did not receive the request. */
 	private async answerPush(socket: WebSocket, id: string, method: string, params: unknown): Promise<void> {
 		let reply: Record<string, unknown>;
+		let onReply: (() => void) | undefined;
 		try {
 			if (!this.onRequest) throw new RpcError(RpcCode.MethodNotFound, `unknown method '${method}'`);
-			reply = { jsonrpc: "2.0", id, result: await this.onRequest(method, params) };
+			reply = {
+				jsonrpc: "2.0",
+				id,
+				result: await this.onRequest(method, params, (callback) => {
+					onReply = callback;
+				}),
+			};
 		} catch (error) {
 			reply = { jsonrpc: "2.0", id, error: toErrorPayload(error) };
+			onReply = undefined;
 		}
 		if (socket.readyState !== WebSocket.OPEN) return;
 		try {
 			socket.send(JSON.stringify(reply));
 		} catch {
 			// Best-effort: the hub times the request out.
+			return;
 		}
+		onReply?.();
 	}
 
 	private async handleCollabPush(id: string, method: string, params: unknown): Promise<void> {

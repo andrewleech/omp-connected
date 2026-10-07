@@ -145,6 +145,7 @@ test("a view-only session answers session.info but refuses every other method as
 	const { handle, calls } = harness({ access: "view" });
 	const gated: [string, unknown][] = [
 		["session.abort", {}],
+		["session.exit", {}],
 		["session.compact", {}],
 		["session.set_model", { provider: "openai", id: "gpt-plain" }],
 		["session.set_thinking", { level: "low" }],
@@ -163,6 +164,12 @@ test("a view-only session answers session.info but refuses every other method as
 	}
 	expect(calls.abort).toBe(0);
 	expect(await fs.readdir(root)).toEqual([]);
+});
+
+test("exit requires a live control-shared owner session", async () => {
+	const { handle } = harness();
+	expect(await handle("session.exit", {})).toEqual({ ok: true });
+	expect(await rpcCode(harness({ access: "view" }).handle("session.exit", {}))).toBe(RpcCode.Forbidden);
 });
 
 test("an unknown method is -32601 regardless of access", async () => {
