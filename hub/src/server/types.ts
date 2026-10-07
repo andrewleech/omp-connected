@@ -79,11 +79,7 @@ export interface CollabLinkResult {
   expiresAt: number;
 }
 
-/** The only two RPCs the server ever calls *on* a connected agent, to serve
- *  host-level Collab discovery through whichever `/ws/agent` connection is
- *  currently live for that hostId (see AgentRegistry.callOnHost). */
-export type CollabMethod = "collab.list" | "collab.link";
-
+/** Host-level Collab discovery through a connected extension. */
 export interface CollabMethodParams {
   "collab.list": CollabListParams;
   "collab.link": CollabLinkParams;
@@ -93,6 +89,29 @@ export interface CollabMethodResult {
   "collab.list": CollabListResult;
   "collab.link": CollabLinkResult;
 }
+
+export const HOST_SESSIONS_FEATURE = "host.sessions.v1";
+
+export interface PastSession {
+  sessionId: string;
+  cwd: string;
+  title: string;
+  modifiedAt: number;
+  /** ompc suffix, not the conversation title; absent when unknown. */
+  name?: string;
+}
+
+export interface HostMethodParams extends CollabMethodParams {
+  "host.sessions.list": Record<string, never>;
+  "host.sessions.start": { cwd: string; name: string; sessionId?: string };
+}
+
+export interface HostMethodResult extends CollabMethodResult {
+  "host.sessions.list": { sessions: PastSession[] };
+  "host.sessions.start": { ok: true; label: string };
+}
+
+export type HostMethod = keyof HostMethodParams;
 
 /** Server -> dashboard push. Narrow and server-known-true only — no generic
  *  event bus. Collab *session* state is never pushed (the server only ever

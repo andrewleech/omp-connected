@@ -32,10 +32,10 @@ import {
   type AgentSummary,
   type AgentTeamMember,
   type AgentTeamSummary,
-  type CollabMethod,
-  type CollabMethodParams,
-  type CollabMethodResult,
   type DashboardEvent,
+  type HostMethod,
+  type HostMethodParams,
+  type HostMethodResult,
   type JsonRpcRequest,
   type SessionMethod,
   type SessionMethodParams,
@@ -269,22 +269,21 @@ export class AgentRegistry {
     return [...ids].sort();
   }
 
-  /** Forwards a Collab RPC to one currently-connected agent on `hostId` and
-   *  awaits its JSON-RPC reply. The answer is host-wide (Collab session
-   *  state, not agent-messaging state), so any live connection can answer;
-   *  the longest-connected one is asked, because an agent that keeps
-   *  reconnecting always has a fresh `connectedAt` and would otherwise drop
-   *  every call routed to it. */
-  async callOnHost<M extends CollabMethod>(
+  /** Forwards a host-wide RPC to the longest-connected capable agent.
+   *  A capability filter leaves older extensions eligible for Collab calls
+   *  while directing host management to extensions that implement it. */
+  async callOnHost<M extends HostMethod>(
     hostId: string,
     method: M,
-    params: CollabMethodParams[M],
+    params: HostMethodParams[M],
     timeoutMs: number,
-  ): Promise<CollabMethodResult[M]> {
+    feature?: string,
+  ): Promise<HostMethodResult[M]> {
     this.pruneExpired();
     let entry: AgentEntry | undefined;
     for (const candidate of this.agents.values()) {
       if (candidate.hostId !== hostId || candidate.conn === undefined) continue;
+      if (feature && !candidate.features.includes(feature)) continue;
       if (!entry || candidate.connectedAt < entry.connectedAt)
         entry = candidate;
     }

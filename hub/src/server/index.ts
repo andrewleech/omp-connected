@@ -8,6 +8,7 @@ import { agentRpcRoutes } from "./agent-rpc-routes";
 import { collabRpcRoutes } from "./collab-rpc-routes";
 import { loadConfig } from "./config";
 import { dashboardEventsPlugin } from "./dashboard-events";
+import { hostSessionRoutes } from "./host-session-routes";
 import { MAX_UPLOAD_BYTES, sessionRpcRoutes } from "./session-rpc-routes";
 import { wsAgentPlugin } from "./ws-agent";
 
@@ -62,6 +63,7 @@ export function createHub(options: CreateHubOptions = {}): Hub {
       revalidatedFile(`${webuiRoot}/manifest.webmanifest`),
     )
     .use(collabRpcRoutes(agentRegistry))
+    .use(hostSessionRoutes(agentRegistry))
     .use(sessionRpcRoutes(agentRegistry))
     .use(agentRpcRoutes(agentRegistry, osHostname()))
     .use(wsAgentPlugin(agentRegistry, hostToken))

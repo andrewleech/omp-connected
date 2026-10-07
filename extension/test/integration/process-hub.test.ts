@@ -29,7 +29,10 @@ function fakeSession() {
 	};
 	registerOmpConnected(pi as unknown as ExtensionAPI);
 	return {
-		emit: async (event: string, context?: unknown) => handlers.get(event)?.({}, context),
+		emit: async (event: string, context?: unknown) => handlers.get(event)?.({}, {
+			sessionManager: { getSessionId: () => "test-session" },
+			...(context as Record<string, unknown> | undefined),
+		}),
 		identity: async () => JSON.parse((await tools.get("ompc_identity")!.execute("t", {})).content[0].text),
 	};
 }

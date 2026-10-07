@@ -80,9 +80,29 @@ const scheduled: {
   createdAt: number;
 }[] = [];
 
+const launched: (typeof sessions.writer & {
+  label: string;
+  sessionId: string;
+})[] = [];
+const history = [
+  {
+    sessionId: "past-new",
+    cwd: "/work/project",
+    title: "Recent conversation",
+    modifiedAt: 1_800_000_000_000,
+    name: "review",
+  },
+  {
+    sessionId: "past-old",
+    cwd: "/work/other",
+    title: "Older conversation",
+    modifiedAt: 1_700_000_000_000,
+  },
+];
 let writerExited = false;
 function resetWriter(): void {
   writerExited = false;
+  launched.length = 0;
   writerInfo.model = models[0];
   writerInfo.thinkingLevel = "medium";
   files.clear();
@@ -259,9 +279,56 @@ Bun.serve({
     if (url.pathname === "/api/hosts")
       return json([{ hostId: "writer" }, { hostId: "viewer" }]);
     if (url.pathname === "/api/hosts/writer/collab")
-      return json({ sessions: writerExited ? [] : [sessions.writer] });
+      return json({
+        sessions: [...(writerExited ? [] : [sessions.writer]), ...launched],
+      });
     if (url.pathname === "/api/hosts/viewer/collab")
       return json({ sessions: [sessions.viewer] });
+    if (url.pathname === "/api/hosts/writer/session-history")
+      return json({
+        sessions: history.filter(
+          (entry) =>
+            !launched.some((session) => session.sessionId === entry.sessionId),
+        ),
+      });
+    if (url.pathname === "/api/hosts/viewer/session-history")
+      return Response.json(
+        {
+          error:
+            "This host needs a control-shared OMP session to list or start sessions.",
+        },
+        { status: 403 },
+      );
+    if (
+      url.pathname === "/api/hosts/writer/sessions" &&
+      request.method === "POST"
+    ) {
+      const body = (await request.json()) as {
+        cwd: string;
+        name: string;
+        sessionId?: string;
+      };
+      const label =
+        body.cwd.split("/").pop() + (body.name ? `.${body.name}` : "");
+      if (launched.some((session) => session.label === label))
+        return Response.json(
+          { error: "This ompc name already exists." },
+          { status: 409 },
+        );
+      const session = {
+        ...sessions.writer,
+        cwd: body.cwd,
+        label,
+        instanceId: `launched-${launched.length}`,
+        sessionId: body.sessionId ?? `new-${launched.length}`,
+        sessionName: body.sessionId
+          ? (history.find((session) => session.sessionId === body.sessionId)
+              ?.title ?? "")
+          : "New conversation",
+      };
+      launched.push(session);
+      return json({ ok: true, label });
+    }
     const writerApi = "/api/hosts/writer/sessions/writer-room";
     if (url.pathname.startsWith(`${writerApi}/`))
       return writerSessionApi(
