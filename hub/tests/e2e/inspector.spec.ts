@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("Session tab shows the session and switches its model", async ({
+test("Session tab searches available models and switches its model", async ({
   page,
 }) => {
   await page.goto("/");
@@ -13,22 +13,20 @@ test("Session tab shows the session and switches its model", async ({
     "42k / 200k tokens (21%)",
   );
 
-  const modelRequest = page.waitForRequest(
-    (request) =>
-      request.url().endsWith("/sessions/writer-room/model") &&
-      request.method() === "POST",
-  );
-  await pane
-    .getByLabel("Model")
-    .selectOption(JSON.stringify(["openai", "gpt-b"]));
-  expect((await modelRequest).postDataJSON()).toEqual({
-    provider: "openai",
-    id: "gpt-b",
-  });
+  const modelSearch = pane.getByRole("combobox", { name: "Search models" });
+  await modelSearch.fill("OPENAI");
+  await expect(
+    pane.getByRole("option", { name: "GPT B (openai)", exact: true }),
+  ).toBeVisible();
+  await expect(
+    pane.getByRole("option", { name: "Claude A (anthropic)", exact: true }),
+  ).not.toBeVisible();
+  await modelSearch.press("Enter");
   await expect(pane.locator('[data-info="model"]')).toHaveText(
     "GPT B (openai)",
   );
-  await expect(pane.getByLabel("Model")).toBeEnabled();
+  await expect(modelSearch).toBeEnabled();
+  await expect(modelSearch).toHaveValue("GPT B");
 });
 
 test("Session tab keeps typed compact instructions across a fleet poll", async ({
