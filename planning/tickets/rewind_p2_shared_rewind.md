@@ -3,7 +3,7 @@
 Phase: 2
 Depends on: phase 1 merged into the `collab-guest-rewind` base
 Written: 2026-09-30 at upstream 81c851de5f
-Revalidated: pending
+Revalidated: 2026-10-08 (selector rewind tests pass; broad Collab controller tests fail/time out; live host not checked)
 
 ## Context
 Design R7. A guest rewind must run the same steps as the TUI's esc-esc, so the host's TUI redraws identically, but it must not touch the host's editor or the selector overlay. Today those steps live in a private method that also closes the overlay and sets the editor draft.

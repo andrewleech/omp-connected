@@ -6,7 +6,7 @@ Written: 2026-09-30 at omp-connected 66a1466ed9, fork `ompc-fleet` f75ae39637
 Revalidated: 2026-10-08 (fork checks passed at `1c139512b0`; local guest build and hub restart passed; fleet binary rollout, live field test and upstream PR approval remain pending)
 
 ## Context
-The fleet runs a fork build from the local-only `ompc-fleet` branch (the binary at `~/.local/share/omp-connected/omp`, selected by `OMP_BIN` in `omp-host.env`). The hub serves collab-web built from the fork checkout.
+The fleet runs a fork build from the mbm-managed `ompc-fleet` branch (the binary at `~/.local/share/omp-connected/omp`, selected by `OMP_BIN` in `omp-host.env`). The hub serves collab-web built from the same fork checkout.
 
 ## Scope
 In scope:
@@ -18,9 +18,9 @@ In scope:
 
 ## Steps
 1. **Merge.**
-   - Check out `ompc-fleet` in `~/src/oh-my-pi`; don't create a worktree.
-   - Merge both branches. If #13389 hasn't landed upstream, add the R6 tail rejoin hook-up in the merge commit or as a fleet-only commit.
-   - Run `tsgo`, `bun test test/collab` (coding-agent) and `bun test` (collab-web).
+   - Use a clean fork checkout or the existing release-refresh checkout, preserving any other session's active work.
+   - Include `collab-guest-leaf`, `collab-guest-rewind` and `collab-guest-prompt-history` with the other fleet features in the local mbm config. Rebuild onto the selected upstream release tag with `mbm rebase --config <config> --target <tag>`, resolve conflicts and resume.
+   - Keep compatibility fixes on feature branches or in merge conflict resolutions, never ordinary commits on the machine-managed fleet branch. Run `tsgo`, `bun test test/collab` (coding-agent) and `bun test` (collab-web) before publishing.
 2. **Rebuild.** Rebuild the fleet binary the way the previous fleet build was made, and record the command in the phase report. Then rebuild and restart the hub:
 
    ```sh

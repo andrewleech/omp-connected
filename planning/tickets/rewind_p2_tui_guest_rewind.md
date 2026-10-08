@@ -3,7 +3,7 @@
 Phase: 2
 Depends on: rewind_p2_host_rewind_frame, rewind_p1_tui_guest_leaf
 Written: 2026-09-30 at upstream 81c851de5f
-Revalidated: pending
+Revalidated: 2026-10-08 (guest branch-render and rewind tests pass; broader Collab controller tests fail/time out)
 
 ## Context
 Design R7 and R9. A TUI guest (`/join`) gets the same esc-esc as the host: its selector lists its replica's active branch, which phase 1 made correct, and picking sends `rewind` instead of calling `navigateTree` locally.

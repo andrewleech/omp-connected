@@ -3,7 +3,7 @@
 Phase: 3
 Depends on: rewind_p2_host_rewind_frame, rewind_p1_web_leaf
 Written: 2026-09-30 at upstream 81c851de5f
-Revalidated: pending
+Implementation: implementation, local validation and browser smoke complete; live fleet verification and rollout remain pending.
 
 ## Context
 Design R9 to R13 and Q5, Q8, Q9. A writable guest can rewind the host session from the web UI or fork a separate named session from a prompt, including on a phone.
@@ -12,15 +12,16 @@ Design R9 to R13 and Q5, Q8, Q9. A writable guest can rewind the host session fr
 In scope:
 - client API `sendRewind`;
 - per-prompt context menu for rewind and fork;
-- rewind draft restoration;
+- rewind draft and image restoration;
+- selected-branch copy and safe `ompc --new` invocation for fork;
 - touch and keyboard interaction;
-- compact-layout styling.
+- compact-layout styling;
+- host and wire integration for the browser actions.
 
 Out of scope:
 - the sibling-branch strip;
 - Esc interrupting a turn (Q5);
-- non-prompt targets (R11);
-- fork-file creation, launcher invocation and host/wire changes (Q9).
+- non-prompt targets (R11).
 
 ## Files and anchors
 - `src/lib/client.ts`:
@@ -47,10 +48,10 @@ Out of scope:
   - Never send without `welcome.rewind`.
 - **Targets** (R11): published entries that are user requests, meaning `message` with role `user`, or `custom_message` whose message is a user-turn initiator (collab guest prompts, user-invoked skill prompts).
   - collab-web depends only on `pi-utils` and `pi-wire` (not `pi-tui`, where `isUserRequestEntry` lives), so port the predicate with a test that pins it to the same cases. If the maintainer prefers, move it into `pi-wire` for both sides instead.
-  - Only target prompts expose the actions; the menu is available only to guests who can rewind.
+  - Only target prompts expose the actions; the guest must have a writable link and the host must be idle, with no `ui-request` or command suggestions open.
 - **Menu.** Right-click opens the menu on desktop; long-press opens it on touch screens. It offers "Rewind to before this prompt" and "Fork new session from this point". There is no persistent Rewind button.
-- **Rewind.** Available only when the host is idle and no `ui-request` or autocomplete is open. Esc-Esc remains an optional desktop shortcut for selecting a rewind target. Selecting rewind sends the entry id; on success, the selected prompt's draft replaces composer text and receives focus.
-- **Fork.** Ask for a session name, then start `ompc --detach <name> --resume <new-session-file>`. The new process owns a distinct session file; the original process and file remain untouched. Once the extension registers it, the hub discovery flow adds it to the WebUI list for the user to select. Q9 must determine how OMP safely creates the selected-prompt copy; do not raw-truncate a live session file.
+- **Rewind.** Esc-Esc remains an optional desktop shortcut for selecting a rewind target. Selecting rewind sends the entry id; on success, the selected prompt's draft replaces composer text and receives focus.
+- **Fork.** Ask for a session name, copy the selected active-branch history through that prompt into a separate session file, then start `ompc --detach --new <name> --resume <session-file>`. The original process and file remain untouched. The host passes arguments without shell interpolation; the new session appears in the WebUI after registration.
 - A rewind shows a pending state until `rewind-result` arrives.
 - If images came back and this build can't attach them, show a notice "N images from that prompt weren't restored".
 - On error, show a notice without losing the selected target.

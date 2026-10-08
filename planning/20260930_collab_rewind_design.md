@@ -71,7 +71,7 @@ B1 to B3 are pre-existing and independent of guest rewind, but guest rewind can'
 - **R5: the welcome carries the leaf.** `welcome.leafId?: string | null` holds the host's leaf mapped per R2. If it's absent, the host is older, and the guest keeps today's "last entry is the leaf" behaviour. This fixes B2 for full-snapshot joins.
 - **R6: a leaf the guest doesn't hold means resync.** If a `leaf` frame names an entry the guest doesn't have, it rejoins. That can only happen to a tail-joined guest (PR #13389), which already has an in-session rejoin that keeps the old transcript on screen until the new tail lands (`collab-web/src/lib/client.ts:156-157,359-366,640-660` at abc0446c69). The TUI guest holds the full tree, so for it a missing leaf is a host bug: log it and resync through the existing reconnect path (`collab/guest.ts:290-313`).
 - **R7: guests request a rewind; the host runs the TUI's rewind.**
-  - New guest frame `{ t: "rewind"; reqId; entryId }` and targeted reply `{ t: "rewind-result"; reqId; draft?; images?; error? }`.
+  - New guest frame `{ t: "rewind"; reqId; entryId }` and targeted reply `{ t: "rewind-result"; reqId; draft?; images?; replaceDraft?; error? }`.
   - Exactly one reply per request, following the `command`/`command-result` pattern in the concurrent guest-commands work.
   - The host runs the same code path as the TUI selector, pulled out of `SelectorController` into a shared function, so the host's TUI redraws exactly as it does for a local esc-esc.
   - The draft goes only to the guest that asked, never into the host's editor. The host shows a notice `<guest> rewound the conversation`, the way guest commands show `<guest> ran /cmd`.
@@ -89,8 +89,9 @@ B1 to B3 are pre-existing and independent of guest rewind, but guest rewind can'
   - The guest-commands work sets the same precedent ("Extends protocol 3 without a bump").
   - The maintainer may prefer a capability list or a bump (stale PR #10462 proposed `capabilities` with proto 4). Raise it in the issue.
 - **R10: web rewind UI uses the transcript itself.**
-  - The transcript is the selector: right-clicking a target prompt opens a context menu, rather than entering a separate rewind mode.
-  - The menu offers "Rewind to before this prompt" and "Fork new session from this point". Rewind follows the TUI semantics; fork-session mechanics are defined by Q8 before implementation.
+  - The transcript is the selector: right-clicking an eligible prompt opens a context menu, rather than entering a separate rewind mode.
+  - The menu offers "Rewind to before this prompt" and "Fork new session from this point". Rewind follows the TUI semantics; fork-session mechanics follow R13.
+  - Actions are available only for user-authored prompt rows on the active branch when the guest has a writable host link and the host is idle with no open UI request or command suggestions.
   - On touch screens, long-pressing a target prompt opens the same menu. Esc-Esc remains an optional desktop keyboard shortcut for selecting a rewind target; there is no persistent Rewind button.
   - The sibling-branch strip is out of scope: guests don't receive off-branch entries once tail joins are the norm.
 - **R11: web targets are prompts in v1.**
@@ -98,10 +99,10 @@ B1 to B3 are pre-existing and independent of guest rewind, but guest rewind can'
   - collab-web v1 marks only user-request rows (user messages, collab guest prompts, user-invoked skill prompts), because "go back to before this prompt and let me edit it" is the case that matters on a phone.
 - **R12: branch and PR layout.**
   - PR A, `collab-guest-leaf` off `upstream/main`: R2 to R6. This fixes B1 to B3 and stands alone.
-  - PR B, `collab-guest-rewind` stacked on PR A: R7 to R11, plus the new-session fork operation if Q9 settles its host/wire contract.
+  - PR B, `collab-guest-rewind` stacked on PR A: R7 to R11, plus the new-session fork operation.
   - PR #13389 interaction: the "leaf not held" rejoin (R6) needs tail joins. Whichever of PR A and #13389 lands second carries that one hook-up, and until then `ompc-fleet` carries it in its merge.
   - `ompc-fleet` merges all of them for the fleet binary.
-- **R13: new-session fork runs in a separate process.** Selecting "Fork new session from this point" asks for a session name, creates a distinct session file containing the conversation through the selected prompt, and starts `ompc --detach <name> --resume <new-session-file>`. The existing process and its session file stay untouched; the new process acquires its own session file. Once its extension registers the Collab session, the hub's existing discovery path adds it to the WebUI list for the user to select. Never have both processes write the same session file.
+- **R13: new-session fork runs in a separate process.** Selecting "Fork new session from this point" asks for a session name, copies the active branch through the selected prompt into a distinct session file, and starts `ompc --detach --new <name> --resume <session-file>`. The existing process and its session file stay untouched; the new process acquires its own session file. The host passes arguments without shell interpolation. Once its extension registers the Collab session, the hub's existing discovery path adds it to the WebUI list for the user to select. Never have both processes write the same session file.
 
 ## Wire contract
 
@@ -119,7 +120,7 @@ rewind?: true;          // writable peer on a host that serves `rewind` (R9)
 | { t: "rewind"; reqId: number; entryId: string }
 
 // HostFrame, targeted: exactly one per rewind request
-| { t: "rewind-result"; reqId: number; draft?: string; images?: ImageContent[]; error?: string }
+| { t: "rewind-result"; reqId: number; draft?: string; images?: ImageContent[]; replaceDraft?: boolean; error?: string }
 ```
 
 Replicated entries keep their shape. Only `parentId` is rewritten, per R2.
@@ -130,13 +131,13 @@ Replicated entries keep their shape. Only `parentId` is rewritten, per R2.
 |---|---|---|---|
 | Q1 | Split R2 (parent links) into its own PR, since it fixes B3 on its own? | 1 | Proposed: first commit of PR A; split if the maintainer asks. |
 | Q2 | Welcome flag, capability list, or proto bump for `rewind` (R9)? | 0 (issue) | Proposed: welcome flag; the maintainer decides in the issue. |
-| Q3 | Should `rewind-result` carry images? Upstream collab-web can't attach images, and a prompt's images can be large. | 2 | Proposed: send them, bounded by the existing image placeholder rules. A guest that can't attach shows "N images not restored". The fleet build has `collab-web-image-attach`, which can restore them. |
-| Q4 | Refuse a guest rewind while the host is viewing a subagent (`ctx.focusedAgentId`)? The TUI blocks its own double-Esc there (`input-controller.ts:487-497`). | 2 | Open: check whether `renderInitialMessages` against the main session is correct while a subagent view is focused. Refuse if not. |
+| Q3 | Should `rewind-result` carry images? | 2 | Decided: return prompt text and images with `replaceDraft`; collab-web restores them as composer attachments and its image decode notice reports images that cannot be reattached. |
+| Q4 | Refuse a guest rewind while the host is viewing a subagent (`ctx.focusedAgentId`)? | 2 | Decided: refuse. The main-session rewind helper must not rebuild the transcript while a subagent view is focused. |
 | Q5 | Should web Esc interrupt a streaming turn, like the TUI's first Esc? | 3 | Proposed: no, out of scope. Web keeps the Stop button; Esc-Esc remains an idle keyboard shortcut for rewind. |
 | Q6 | Retire the hub's view-mode `CollabTailViewer` in favour of read-only collab-web with tail joins, instead of teaching it R1? | 1 | Open: the ticket fixes it in place (small). Retiring it is a separate hub decision. |
 | Q7 | Who posts in Discord, as CONTRIBUTING.md asks for multi-package changes? | 0 | Open: user action, same as the tail track. |
 | Q8 | What does "Fork new session from this point" mean for session ownership and how does the user get to it? | 0 (design) | DECIDED 2026-10-01: preserve the current process/file, prompt for a name, start a second `ompc` process on a separate session file, and let the registered session appear in the WebUI list. See R13. |
-| Q9 | How can OMP create a new session file containing only the active-branch history through the selected prompt without switching the original process's active session, and how does the extension safely launch `ompc`? | 0 (design) | Open: CLI `--fork <session>` clones the full history; `AgentSession.fork(entryId)` creates a branch through the selected entry but switches the current process to it. Find a safe API or helper for a separate process; preserve session locks and artifacts, and define launcher invocation. |
+| Q9 | How can OMP create a session file containing only the active-branch history through the selected prompt without switching the original process's active session, and how does the extension safely launch `ompc`? | 0 (design) | DECIDED and implemented: copy the selected branch into a distinct session file through the SessionManager fork-copy API, then invoke `ompc --detach --new <name> --resume <session-file>` with argument-based spawning, not shell interpolation. The original process and file remain unchanged; registration and hub discovery expose the new session. |
 
 ## Coordination
 
@@ -172,6 +173,7 @@ Work items:
 Order: wire_chain, then host_leaf, then the three guests in parallel.
 
 Exit: phase 0's tests pass; fork checks are clean (`tsgo`, `oxlint`, `oxfmt`, `bun test test/collab`, collab-web `bun test`); a live host rewind on the fleet shows correctly in collab-web and in the hub viewer.
+Implementation status: leaf sync is implemented across the host, TUI guest, browser guest and hub viewer. Focused fork tests and the full hub test suite pass; live fleet verification remains pending.
 
 ## Phase 2: Guest rewind on the host (PR B)
 
@@ -186,8 +188,11 @@ Order: shared_rewind, then host_rewind_frame, then tui_guest_rewind.
 
 Exit: host tests cover every R8 refusal and the success path, and the TUI selector behaves as before.
 
+Implementation status: the shared rewind helper, host protocol, TUI guest request/result path and selector integration are implemented. The full Collab, session-tree and rewind-selector run passes 358 tests with 2010 expectations; `bun run check` and `bun run build` pass. The controller test passes all 52 cases. Separate InputController and skill-injection test files fail during module initialisation with `ReferenceError: Cannot access 'BUILTIN_SLASH_COMMANDS_INTERNAL' before initialization`; no clean-baseline comparison has been made. Live host verification remains pending.
+
 ## Phase 3: collab-web rewind UI (PR B)
 Goal: a collab-web user can open a target prompt's context menu on desktop or touch and choose rewind or fork; the separate fork process and selected-prompt copy follow R13 and Q9.
+Implementation status: context-menu actions, active-branch rendering, composer restoration, selected-branch copy and the `ompc --new` launcher path are implemented. Collab-web tests, type checks, build and local desktop/touch/keyboard browser smoke pass. Live fleet verification and rollout remain pending.
 
 Work items:
 - [rewind_p3_web_rewind_ui](tickets/rewind_p3_web_rewind_ui.md).

@@ -3,7 +3,7 @@
 Phase: 1
 Depends on: rewind_p1_host_leaf
 Written: 2026-09-30 at upstream 81c851de5f
-Revalidated: pending
+Revalidated: 2026-10-08 (guest branch-render, mid-stream and missing-leaf recovery tests; live fleet not checked)
 
 ## Context
 Design R1, R5 and R6. The TUI guest's replica `SessionManager` already moves its leaf to each ingested entry. What it's missing:

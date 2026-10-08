@@ -257,7 +257,37 @@ interface SessionEntry {
   [key: string]: unknown;
 }
 
+/** Resolve the active branch within the buffered transcript. Missing ancestors
+ * are a tail-window boundary; a missing leaf or a cycle is unavailable. */
+export function activeBranchEntries(
+  entries: SessionEntry[],
+  leafId: string | null | undefined,
+): SessionEntry[] | null {
+  if (leafId === undefined) return entries;
+  if (leafId === null) return [];
+  const byId = new Map<string, SessionEntry>();
+  for (const entry of entries) {
+    if (typeof entry.id === "string") byId.set(entry.id, entry);
+  }
+  const branch = new Set<string>();
+  let id: string | null = leafId;
+  while (id !== null) {
+    const entry = byId.get(id);
+    if (!entry) {
+      if (branch.size === 0) return null;
+      break;
+    }
+    if (branch.has(id)) return null;
+    branch.add(id);
+    id = typeof entry.parentId === "string" ? entry.parentId : null;
+  }
+  return entries.filter(
+    (entry) => typeof entry.id === "string" && branch.has(entry.id),
+  );
+}
+
 const PREVIEW_LINES = 8;
+
 const CONTENT_TOOLS: Record<string, true> = {
   edit: true,
   write: true,
@@ -504,6 +534,9 @@ export class CollabTailViewer {
   #ws: WebSocket | null = null;
   #allEntries: SessionEntry[] = [];
   #totalReceived = 0;
+  #leafId: string | null | undefined;
+  #branchUnavailable = false;
+
   #renderedCount = 0;
   #snapshotDone = false;
   #finalSeen = false;
@@ -519,6 +552,13 @@ export class CollabTailViewer {
   #destroyed = false;
   /** Watchdog: fires if no entries arrive for 15s during snapshot. */
   #watchdog: number | null = null;
+
+  #displayEntries(): SessionEntry[] {
+    if (this.#leafId === undefined) return this.#allEntries;
+    const branch = activeBranchEntries(this.#allEntries, this.#leafId);
+    this.#branchUnavailable = branch === null;
+    return branch ?? [];
+  }
 
   constructor(container: HTMLElement) {
     this.#container = container;
@@ -717,7 +757,16 @@ export class CollabTailViewer {
       case "welcome":
         this.#header = (frame.header as Record<string, unknown>) ?? null;
         this.#state = (frame.state as Record<string, unknown>) ?? null;
+        if (frame.leafId === null || typeof frame.leafId === "string")
+          this.#leafId = frame.leafId;
         this.#updateStatus();
+        break;
+      case "leaf":
+        if (frame.leafId === null || typeof frame.leafId === "string") {
+          this.#leafId = frame.leafId;
+          if (this.#snapshotDone) this.#renderTail();
+          this.#updateStatus();
+        }
         break;
       case "snapshot-chunk": {
         const entries = frame.entries as SessionEntry[] | undefined;
@@ -740,12 +789,19 @@ export class CollabTailViewer {
         if (entry) {
           this.#allEntries.push(entry);
           this.#totalReceived++;
+          if (this.#leafId !== undefined && typeof entry.id === "string")
+            this.#leafId = entry.id;
           if (this.#snapshotDone) {
-            const wasAtBottom = this.#isNearBottom();
-            this.#renderedCount++;
-            this.#contentEl.appendChild(renderEntry(entry));
-            if (wasAtBottom) this.#forceScrollBottom();
-            this.#updateLoadMore();
+            if (this.#leafId !== undefined) {
+              this.#renderTail();
+            } else {
+              const wasAtBottom = this.#isNearBottom();
+              this.#renderedCount++;
+              this.#contentEl.appendChild(renderEntry(entry));
+              if (wasAtBottom) this.#forceScrollBottom();
+              this.#updateLoadMore();
+            }
+            this.#updateStatus();
           }
         }
         break;
@@ -781,13 +837,14 @@ export class CollabTailViewer {
 
   #renderTail(): void {
     this.#contentEl.innerHTML = "";
-    const total = this.#allEntries.length;
+    const entries = this.#displayEntries();
+    const total = entries.length;
     const start = Math.max(0, total - INITIAL_TAIL);
     this.#renderedCount = total - start;
     for (let i = start; i < total; i++) {
-      this.#contentEl.appendChild(renderEntry(this.#allEntries[i]));
+      this.#contentEl.appendChild(renderEntry(entries[i]));
     }
-    this.#updateLoadMore();
+    this.#updateLoadMore(total);
     this.#forceScrollBottom();
     const obs = new ResizeObserver(() => {
       this.#forceScrollBottom();
@@ -801,7 +858,8 @@ export class CollabTailViewer {
   }
 
   #loadMore(): void {
-    const total = this.#allEntries.length;
+    const entries = this.#displayEntries();
+    const total = entries.length;
     const alreadyShown = this.#renderedCount;
     const remaining = total - alreadyShown;
     if (remaining <= 0) return;
@@ -811,16 +869,16 @@ export class CollabTailViewer {
     const start = remaining - page;
     const frag = document.createDocumentFragment();
     for (let i = start; i < start + page; i++) {
-      frag.appendChild(renderEntry(this.#allEntries[i]));
+      frag.appendChild(renderEntry(entries[i]));
     }
     this.#contentEl.prepend(frag);
     this.#renderedCount += page;
     this.#scrollEl.scrollTop += this.#scrollEl.scrollHeight - saveScrollHeight;
-    this.#updateLoadMore();
+    this.#updateLoadMore(total);
   }
 
-  #updateLoadMore(): void {
-    const remaining = this.#allEntries.length - this.#renderedCount;
+  #updateLoadMore(total = this.#displayEntries().length): void {
+    const remaining = total - this.#renderedCount;
     if (remaining > 0) {
       this.#loadMoreEl.style.display = "block";
       this.#loadMoreEl.textContent = `▲ Load earlier (${remaining} more)`;
@@ -856,7 +914,13 @@ export class CollabTailViewer {
       this.#statusEl.textContent = parts.join(" · ");
       return;
     }
-    parts.push(`${this.#totalReceived} entries`);
+    if (this.#branchUnavailable) {
+      this.#statusEl.textContent =
+        "Active branch unavailable, reload to resync";
+      this.#statusEl.className = "tail-status warning";
+      return;
+    }
+    parts.push(`${this.#displayEntries().length} entries`);
     this.#statusEl.textContent = parts.join(" · ");
     this.#statusEl.className = "tail-status ok";
   }
