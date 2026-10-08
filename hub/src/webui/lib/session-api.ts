@@ -11,6 +11,31 @@ export const VIEW_ONLY_CONTROLS_NOTE =
   "This session is shared view-only; controls need a control-shared session.";
 export const MAX_COMPACT_INSTRUCTIONS = 4000;
 export const MAX_UPLOAD_BYTES = 256 * 1024 * 1024;
+export const MODEL_ROLES_FEATURE = "session.model_roles.v1";
+
+export interface RoleModel {
+  provider: string;
+  id: string;
+  name: string;
+  thinkingLevels: string[];
+}
+
+export interface ModelRoleInfo {
+  id: string;
+  name: string;
+  selector: string | null;
+  provenance: string | null;
+  globalSelector: string | null;
+  projectSelector: string | null;
+  resolvedModel: ModelRef | null;
+  models: RoleModel[];
+}
+
+export interface ModelRolesInfo {
+  access: "view" | "control";
+  storage: "global" | "project";
+  roles: ModelRoleInfo[];
+}
 
 export interface ModelRef {
   provider: string;
@@ -100,6 +125,13 @@ export function sessionApiBase(hostId: string, instanceId: string): string {
 
 export function supportsSessionV1(session: { features?: string[] }): boolean {
   return session.features?.includes(SESSION_FEATURE) ?? false;
+}
+export function modelRolesApiUrl(hostId: string, instanceId: string): string {
+  return `${sessionApiBase(hostId, instanceId)}/model-roles`;
+}
+
+export function supportsModelRoles(session: { features?: string[] }): boolean {
+  return session.features?.includes(MODEL_ROLES_FEATURE) ?? false;
 }
 
 export interface RequestTicket {

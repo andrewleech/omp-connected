@@ -456,6 +456,8 @@ export interface SessionMethodParams {
   "session.schedule_prompt": { text: string; delayMs: number };
   "session.scheduled": Record<string, never>;
   "session.cancel_scheduled": { id: string };
+  "session.model_roles": Record<string, never>;
+  "session.set_model_role": SetModelRoleParams;
 }
 
 export interface SessionMethodResult {
@@ -474,6 +476,40 @@ export interface SessionMethodResult {
   "session.schedule_prompt": ScheduledPromptResult;
   "session.scheduled": { prompts: ScheduledPromptResult[] };
   "session.cancel_scheduled": OkResult;
+  "session.model_roles": ModelRolesInfo;
+  "session.set_model_role": ModelRolesInfo;
 }
 
 export type SessionMethod = keyof SessionMethodParams;
+
+export const MODEL_ROLES_FEATURE = "session.model_roles.v1";
+
+export interface RoleModel {
+  provider: string;
+  id: string;
+  name: string;
+  thinkingLevels: string[];
+}
+
+export interface ModelRoleInfo {
+  id: string;
+  name: string;
+  selector: string | null;
+  provenance: string | null;
+  globalSelector: string | null;
+  projectSelector: string | null;
+  resolvedModel: SessionModelRef | null;
+  models: RoleModel[];
+}
+
+export interface ModelRolesInfo {
+  access: "view" | "control";
+  storage: "global" | "project";
+  roles: ModelRoleInfo[];
+}
+
+export interface SetModelRoleParams {
+  role: string;
+  selector: string | null;
+  scope?: "global" | "project";
+}

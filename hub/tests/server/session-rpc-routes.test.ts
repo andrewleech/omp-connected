@@ -4,6 +4,7 @@ import {
   FILE_CHUNK_BYTES,
   sessionRpcRoutes,
 } from "@/server/session-rpc-routes";
+import { MODEL_ROLES_FEATURE } from "@/server/types";
 
 const HOST = "user@hub-host";
 const BASE = `http://localhost/api/hosts/${HOST}/sessions`;
@@ -974,5 +975,139 @@ describe("session-rpc-routes: transfer concurrency", () => {
       expect(response.status).toBe(200);
       await response.arrayBuffer();
     }
+  });
+});
+describe("session-rpc-routes: model roles", () => {
+  const info = { access: "view", storage: "global", roles: [] };
+  const url = `${BASE}/inst-1/model-roles`;
+
+  test("reads model role metadata with the role capability", async () => {
+    const registry = new AgentRegistry();
+    const calls = registerSessionAgent(
+      registry,
+      (method) => (method === "session.model_roles" ? info : { ok: true }),
+      { features: ["session.v1", MODEL_ROLES_FEATURE] },
+    );
+    const response = await sessionRpcRoutes(registry).handle(new Request(url));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(info);
+    expect(calls).toEqual([{ method: "session.model_roles", params: {} }]);
+  });
+
+  test("writes through the shared control gate and rate limiter", async () => {
+    const registry = new AgentRegistry();
+    const calls = registerSessionAgent(
+      registry,
+      (method, _params) =>
+        method === "session.set_model_role"
+          ? { ...info, access: "control" }
+          : { ok: true },
+      { features: ["session.v1", MODEL_ROLES_FEATURE] },
+    );
+    const app = sessionRpcRoutes(registry);
+    const body = JSON.stringify({
+      role: "default",
+      selector: null,
+      scope: "project",
+    });
+    const response = await app.handle(
+      new Request(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ...info, access: "control" });
+    expect(calls).toEqual([
+      {
+        method: "session.set_model_role",
+        params: { role: "default", selector: null, scope: "project" },
+      },
+    ]);
+
+    for (let i = 0; i < 19; i++) {
+      expect(
+        (
+          await app.handle(
+            new Request(`${BASE}/inst-1/abort`, { method: "POST" }),
+          )
+        ).status,
+      ).toBe(200);
+    }
+    expect(
+      (
+        await app.handle(
+          new Request(url, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body,
+          }),
+        )
+      ).status,
+    ).toBe(429);
+  });
+
+  test("validates writes and maps extension access and validation errors", async () => {
+    const registry = new AgentRegistry();
+    const calls = registerSessionAgent(registry, () => info, {
+      features: ["session.v1", MODEL_ROLES_FEATURE],
+    });
+    const app = sessionRpcRoutes(registry);
+    const malformed = await app.handle(
+      new Request(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ role: "default", selector: 5 }),
+      }),
+    );
+    expect(malformed.status).toBe(400);
+    expect(calls).toHaveLength(0);
+
+    const forbiddenRegistry = new AgentRegistry();
+    registerSessionAgent(
+      forbiddenRegistry,
+      () => {
+        throw new RpcFault(-32003, "this session is shared view-only");
+      },
+      { features: ["session.v1", MODEL_ROLES_FEATURE] },
+    );
+    const forbidden = await sessionRpcRoutes(forbiddenRegistry).handle(
+      new Request(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ role: "default", selector: null }),
+      }),
+    );
+    expect(forbidden.status).toBe(403);
+
+    const invalidRegistry = new AgentRegistry();
+    registerSessionAgent(
+      invalidRegistry,
+      () => {
+        throw new RpcFault(-32004, "invalid model selector");
+      },
+      { features: ["session.v1", MODEL_ROLES_FEATURE] },
+    );
+    const invalid = await sessionRpcRoutes(invalidRegistry).handle(
+      new Request(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ role: "default", selector: "bad" }),
+      }),
+    );
+    expect(invalid.status).toBe(400);
+  });
+
+  test("returns unsupported when the extension lacks the capability", async () => {
+    const registry = new AgentRegistry();
+    const calls = registerSessionAgent(registry, () => info, {
+      features: ["session.v1"],
+    });
+    const response = await sessionRpcRoutes(registry).handle(new Request(url));
+
+    expect(response.status).toBe(501);
+    expect(calls).toEqual([]);
   });
 });

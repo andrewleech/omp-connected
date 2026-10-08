@@ -18,8 +18,9 @@ wire protocol, and security model.
   separate host-registration process or connection.
 - The server exposes both over REST (`/api/hosts/:id/collab`,
   `/api/hosts/:id/collab/:instanceId/link`, `/api/agents`,
-  `/api/agents/:id/send`) and serves a fleet dashboard at `/` for live session
-  monitoring, session controls, scheduled prompts and working-directory file
+  `/api/agents/:id/send`, `/api/hosts/:id/sessions/:instanceId/model-roles`)
+  and serves a fleet dashboard at `/` for live session monitoring, session
+  controls, model role assignments, scheduled prompts and working-directory file
   access, plus the vendored OMP Collab guest client at `/collab/`.
 - A private relay (`src/relay/relay.ts`) carries the actual encrypted
   Collab terminal bytes between a host and its guests. It runs in the hub

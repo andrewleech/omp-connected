@@ -13,6 +13,8 @@ export const SESSION_FEATURE = "session.v1";
 export const SCHEDULE_FEATURE = "session.schedule.v1";
 /** Advertised only by extensions that can gracefully exit their owner session. */
 export const EXIT_FEATURE = "session.exit.v1";
+/** Advertised only when the running OMP API serves model-role assignment. */
+export const MODEL_ROLES_FEATURE = "session.model_roles.v1";
 
 export type CollabAccess = "view" | "control";
 
@@ -115,6 +117,38 @@ export interface SessionRpcDeps {
 	scheduler: PromptScheduler;
 }
 
+interface ModelRoleConfiguration {
+	storage: "global" | "project";
+	roles: Array<{
+		id: string;
+		name: string;
+		selector: string | null;
+		provenance: string | null;
+		globalSelector: string | null;
+		projectSelector: string | null;
+		resolvedModel: ModelSummary | null;
+		models: Array<{ provider: string; id: string; name: string; thinkingLevels: string[] }>;
+	}>;
+}
+
+interface ModelRoleApi {
+	roles(): ModelRoleConfiguration | Promise<ModelRoleConfiguration>;
+	setRole(role: string, selector: string | null, scope?: "global" | "project"): ModelRoleConfiguration | Promise<ModelRoleConfiguration>;
+}
+
+function roleApi(ctx: ExtensionContext | undefined): ModelRoleApi | undefined {
+	const models = ctx?.models as (ExtensionContext["models"] & Partial<ModelRoleApi>) | undefined;
+	if (typeof models?.roles !== "function" || typeof models.setRole !== "function") return undefined;
+	return models as ModelRoleApi;
+}
+
+export function supportsModelRoles(ctx: ExtensionContext | undefined): boolean {
+	return roleApi(ctx) !== undefined;
+}
+function modelRoleErrorCode(error: unknown): string | undefined {
+	if (!error || typeof error !== "object" || !("code" in error)) return undefined;
+	return typeof error.code === "string" ? error.code : undefined;
+}
 /** Handles one pushed request; throws RpcError for contract failures. */
 export type SessionRequestHandler = (method: string, params: unknown) => Promise<unknown>;
 
@@ -257,6 +291,39 @@ export function createSessionRpc(deps: SessionRpcDeps): SessionRequestHandler {
 			if (!deps.scheduler.cancel(id)) throw new RpcError(RpcCode.NotFound, "no such scheduled prompt; it may have been sent already");
 			return { ok: true };
 		},
+		async "session.model_roles"(): Promise<ModelRoleConfiguration & { access: CollabAccess }> {
+			const api = roleApi(requireContext());
+			if (!api) throw new RpcError(RpcCode.MethodNotFound, "this OMP version does not support model roles");
+			return { ...(await api.roles()), access: await deps.access.current() };
+		},
+		async "session.set_model_role"(params): Promise<ModelRoleConfiguration & { access: CollabAccess }> {
+			const { role, selector, scope } = paramsRecord(params);
+			if (
+				typeof role !== "string" ||
+				role.length === 0 ||
+				!(selector === null || typeof selector === "string") ||
+				(scope !== undefined && scope !== "global" && scope !== "project")
+			) {
+				throw new RpcError(RpcCode.Invalid, "role, selector, and optional scope are invalid");
+			}
+			const api = roleApi(requireContext());
+			if (!api) throw new RpcError(RpcCode.MethodNotFound, "this OMP version does not support model roles");
+			try {
+				return {
+					...(await api.setRole(role, selector, scope)),
+					access: await deps.access.current(),
+				};
+			} catch (error) {
+				const code = modelRoleErrorCode(error);
+				if (code === "unknown_role") {
+					throw new RpcError(RpcCode.NotFound, error instanceof Error ? error.message : String(error));
+				}
+				if (["invalid_selector", "invalid_scope", "ineligible_model", "unsupported_thinking_level"].includes(code ?? "")) {
+					throw new RpcError(RpcCode.Invalid, error instanceof Error ? error.message : String(error));
+				}
+				throw error;
+			}
+		},
 		"files.list": (params) => files.list(params),
 		"files.stat": (params) => files.stat(params),
 		"files.read": (params) => files.read(params),
@@ -268,7 +335,7 @@ export function createSessionRpc(deps: SessionRpcDeps): SessionRequestHandler {
 	return async (method, params) => {
 		const handler = Object.hasOwn(handlers, method) ? handlers[method] : undefined;
 		if (!handler) throw new RpcError(RpcCode.MethodNotFound, `unknown method '${method}'`);
-		if (method !== "session.info" && (await deps.access.current()) !== "control") {
+		if (method !== "session.info" && method !== "session.model_roles" && (await deps.access.current()) !== "control") {
 			throw new RpcError(RpcCode.Forbidden, "this session is shared view-only");
 		}
 		return handler(params);

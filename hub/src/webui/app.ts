@@ -13,6 +13,7 @@ import { CollabTailViewer } from "./lib/collab-tail";
 import { el } from "./lib/dom";
 import { type EdgeSwipeOptions, attachEdgeSwipe } from "./lib/edge-swipe";
 import { FilesPane } from "./lib/files-pane";
+import { ModelRolesPane } from "./lib/model-roles-pane";
 import {
   SCHEDULE_FEATURE,
   attachScheduledSend,
@@ -43,18 +44,9 @@ interface HostSummary {
   hostId: string;
 }
 
-// Minimal local mirror of omp-hub's server-side AgentSummary wire type —
-// matches the existing convention of HostSummary above rather than
-// importing across the webui/server module boundary.
+// Only identity and activity are consumed by the session rail.
 interface AgentSummary {
   id: string;
-  hostId: string;
-  instanceId: string;
-  label: string;
-  cwd: string;
-  pid: number;
-  connectedAt: string;
-  teams: string[];
   busy?: boolean;
 }
 
@@ -163,14 +155,10 @@ function createDashboard(root: HTMLElement): void {
     selectedSession: null as CollabSession | null,
     selectedAccess: null as "view" | "control" | null,
     agents: [] as AgentSummary[],
-    agentsLoaded: false,
-    agentsError: null as string | null,
-    composeTargetId: null as string | null,
   };
   let lastWorkspaceSignature: string | null | undefined;
   let tailViewer: CollabTailViewer | null = null;
   let collabRequest = 0;
-  let agentsFetchInFlight = false;
   let leftDrawerOpen = false;
   let rightDrawerOpen = false;
   let drawerTrigger: HTMLElement | null = null;
@@ -184,6 +172,7 @@ function createDashboard(root: HTMLElement): void {
   const filesPane = new FilesPane({ showStatus }, (session) =>
     sessionPane.cwdFor(session),
   );
+  const modelRolesPane = new ModelRolesPane({ showStatus });
   let inspectorShell:
     | { tabs: Map<InspectorPane, HTMLButtonElement>; body: HTMLElement }
     | undefined;
@@ -745,139 +734,17 @@ function createDashboard(root: HTMLElement): void {
     try {
       const result = await json<{ agents: AgentSummary[] }>("/api/agents");
       state.agents = result.agents;
-      state.agentsError = null;
-    } catch (error) {
-      state.agentsError = (error as Error).message;
-    } finally {
-      state.agentsLoaded = true;
+    } catch {
+      // Agent activity is auxiliary; preserve the last known rail indicators.
     }
   }
-
-  async function sendAgentMessage(
-    agentId: string,
-    content: string,
-    onSent: () => void,
-  ): Promise<void> {
-    showStatus(`Sending message to ${agentId}…`);
-    try {
-      await json(`/api/agents/${encodeURIComponent(agentId)}/send`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ content, idempotencyKey: crypto.randomUUID() }),
-      });
-      showStatus("Message sent", "ok");
-      onSent();
-    } catch (error) {
-      showStatus((error as Error).message, "warning");
-    }
-  }
-
-  function renderComposeForm(target: AgentSummary): HTMLElement {
-    const form = el("form", { className: "agent-compose" });
-    form.append(el("h3", { text: `Message ${target.label}` }));
-    const textarea = document.createElement("textarea");
-    textarea.className = "agent-compose-input";
-    textarea.placeholder = "Message content…";
-    form.append(textarea);
-    form.append(el("button", { type: "submit", text: "Send" }));
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      const content = textarea.value.trim();
-      if (!content) return;
-      void sendAgentMessage(target.id, content, () => {
-        textarea.value = "";
-      });
-    });
-    return form;
-  }
-
-  // Roster + compose UI backed natively by omp-hub's own AgentRegistry via
-  // GET/POST /api/agents. Display label collisions (two agents sharing the
-  // same basename(cwd)) are disambiguated by showing each candidate's
-  // hostId, matching the resolve() ambiguity data the server itself
-  // returns.
-  function renderAgentsBody(body: HTMLElement): void {
-    body.append(el("h2", { text: "Agents" }));
-    if (!state.agentsLoaded && !agentsFetchInFlight) {
-      agentsFetchInFlight = true;
-      void loadAgents().then(() => {
-        agentsFetchInFlight = false;
-        render();
-      });
-    }
-    if (state.agentsError) {
-      body.append(el("p", { className: "empty", text: state.agentsError }));
-      return;
-    }
-    if (!state.agentsLoaded) {
-      body.append(el("p", { className: "empty", text: "Loading agents…" }));
-      return;
-    }
-    if (state.agents.length === 0) {
-      body.append(
-        el("p", {
-          className: "empty",
-          text: "No agents registered. Set OMP_HUB_URL/OMP_HUB_HOST_TOKEN in an interactive OMP session to register one.",
-        }),
-      );
-      return;
-    }
-    if (
-      state.composeTargetId &&
-      !state.agents.some((agent) => agent.id === state.composeTargetId)
-    ) {
-      state.composeTargetId = null;
-    }
-
-    const labelCounts = new Map<string, number>();
-    for (const agent of state.agents) {
-      labelCounts.set(agent.label, (labelCounts.get(agent.label) ?? 0) + 1);
-    }
-
-    const list = el("div", { className: "agent-roster" });
-    for (const agent of state.agents) {
-      const ambiguous = (labelCounts.get(agent.label) ?? 0) > 1;
-      const row = el("button", {
-        type: "button",
-        className: `agent-row${agent.id === state.composeTargetId ? " selected" : ""}`,
-        title: agent.id,
-      }) as HTMLButtonElement;
-      row.append(el("span", { className: "agent-label", text: agent.label }));
-      if (ambiguous) {
-        row.append(el("span", { className: "badge", text: agent.hostId }));
-      }
-      row.onclick = () => {
-        state.composeTargetId = agent.id;
-        render();
-      };
-      list.append(row);
-    }
-    body.append(list);
-
-    const target = state.agents.find(
-      (agent) => agent.id === state.composeTargetId,
-    );
-    if (!target) {
-      body.append(
-        el("p", {
-          className: "empty",
-          text: "Select an agent to compose a message.",
-        }),
-      );
-      return;
-    }
-    body.append(renderComposeForm(target));
-  }
-
   const INSPECTOR_LABELS: Record<InspectorPane, string> = {
     session: "Session",
     files: "Files",
-    agents: "Agents",
+    models: "Model roles",
   };
 
-  /** The inspector's header and tabs are built once; the Session and Files
-   *  panes keep their own element trees, which stay attached across renders
-   *  so polling never steals focus or closes an open selector. */
+  /** Persistent pane trees stay attached across renders to preserve focus and edit state. */
   function renderInspector(container: Element): void {
     if (!inspectorShell || !container.contains(inspectorShell.body)) {
       container.replaceChildren();
@@ -914,14 +781,15 @@ function createDashboard(root: HTMLElement): void {
     sessionPane.setSession(state.selectedSession);
     filesPane.setSession(state.selectedSession);
     sessionPane.setActive(state.inspector === "session");
+    modelRolesPane.setSession(state.selectedSession);
+    modelRolesPane.setActive(state.inspector === "models");
     filesPane.setActive(state.inspector === "files");
-    if (state.inspector === "agents") {
-      body.replaceChildren();
-      renderAgentsBody(body);
-      return;
-    }
     const pane =
-      state.inspector === "session" ? sessionPane.element : filesPane.element;
+      state.inspector === "session"
+        ? sessionPane.element
+        : state.inspector === "files"
+          ? filesPane.element
+          : modelRolesPane.element;
     if (body.firstElementChild !== pane || body.childElementCount !== 1)
       body.replaceChildren(pane);
   }
@@ -1067,8 +935,8 @@ function createDashboard(root: HTMLElement): void {
   }
 
   // Reconnects after the hub restarts or the link drops. Events sent in the
-  // gap are not replayed (activity dots in particular), so every reconnect
-  // reloads the roster.
+  // gap are not replayed (activity dots in particular), so reconnects reload
+  // host, session and agent activity data.
   let reconnectDelay = 1000;
   let hadSocket = false;
   function connectSocket(): void {
@@ -1108,10 +976,7 @@ function createDashboard(root: HTMLElement): void {
         data.event === "agent.registered" ||
         data.event === "agent.disconnected"
       ) {
-        // An agent connecting/disconnecting is also the only signal a
-        // host's Collab visibility changed — host-level discovery is
-        // served through the same /ws/agent connection now, so refresh
-        // both the host/session list and the agent roster together.
+        // An agent connecting or disconnecting can change host visibility.
         refreshForAgentEvent();
       }
     } catch {
