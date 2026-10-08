@@ -2,14 +2,20 @@
 set -euo pipefail
 
 usage() {
-	echo "usage: ompc [-d | --detach] [session-suffix] [omp arguments...]" >&2
+	echo "usage: ompc [-d | --detach] [--new] [session-suffix] [omp arguments...]" >&2
 	exit 64
 }
 
 detach=false
-case ${1:-} in
-	-d|--detach) detach=true; shift ;;
-esac
+new_session=false
+while [[ ${1:-} == -d || ${1:-} == --detach || ${1:-} == --new ]]; do
+	case $1 in
+		-d|--detach) detach=true ;;
+		--new) new_session=true ;;
+	esac
+	shift
+done
+if "$new_session" && ! "$detach"; then usage; fi
 
 # Source hub connection env (OMP_HUB_URL, OMP_HUB_HOST_TOKEN) so the
 # omp-connected extension can register with the hub.  The env file is
@@ -98,9 +104,12 @@ check_server_responsive() {
 
 if "$detach"; then
 	check_server_responsive "$session_name"
-	# Start detached — useful for agents spawning side-quest sessions.
-	# If session already exists, just print the name.
+	# Reuse a detached session unless --new requires a fresh instance.
 	if session_live "$session_name"; then
+		if "$new_session"; then
+			printf 'ompc: session %s already exists; refusing to reuse it with --new\n' "$session_name" >&2
+			exit 73
+		fi
 		printf '%s\n' "$session_name"
 		exit 0
 	fi

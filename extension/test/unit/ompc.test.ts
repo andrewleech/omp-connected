@@ -10,15 +10,18 @@ async function executable(pathname: string, body: string): Promise<void> {
 	await Bun.write(pathname, `#!/usr/bin/env bash\n${body}`);
 	await chmod(pathname, 0o755);
 }
+function isolatedCommand(...args: string[]): string[] {
+	return ["env", "OMP_HOST_ENV=/dev/null", ...args];
+}
 
 test("persistence launcher rejects unsafe session names", async () => {
-	const result = Bun.spawnSync([launcher, "bad/name"]);
+	const result = Bun.spawnSync(isolatedCommand(launcher, "bad/name"));
 	expect(result.exitCode).toBe(64);
 	expect(new TextDecoder().decode(result.stderr)).toContain("usage:");
 });
 
 test("persistence launcher fails closed without tmux", async () => {
-	const result = Bun.spawnSync(["env", "PATH=/nonexistent", "/bin/bash", launcher, "build"]);
+	const result = Bun.spawnSync(isolatedCommand("PATH=/nonexistent", "/bin/bash", launcher, "build"));
 	expect(result.exitCode).toBe(69);
 	expect(new TextDecoder().decode(result.stderr)).toContain("requires tmux");
 });
@@ -35,7 +38,7 @@ test("ompc keeps Collab commands on the native CLI, bypassing tmux entirely", as
 	await executable(fakeNative, 'printf "native:%s\\n" "$*"\n');
 
 	try {
-		const result = Bun.spawnSync(["env", `OMP_BIN=${fakeNative}`, launcher, "collab", "list", "--json"]);
+		const result = Bun.spawnSync(isolatedCommand(`OMP_BIN=${fakeNative}`, launcher, "collab", "list", "--json"));
 		const stdout = new TextDecoder().decode(result.stdout).trim();
 		expect(stdout).toBe("native:collab list --json");
 	} finally {
@@ -50,7 +53,7 @@ test("ompc supports -d short option for --detach", async () => {
 
 	const nonce = `ompc-d-${process.pid}-${Date.now()}`;
 	try {
-		const result = Bun.spawnSync(["env", `OMP_BIN=${fakeOmp}`, launcher, "-d", nonce], { cwd: directory });
+		const result = Bun.spawnSync(isolatedCommand(`OMP_BIN=${fakeOmp}`, launcher, "-d", nonce), { cwd: directory });
 		const stdout = new TextDecoder().decode(result.stdout).trim();
 		// Session name is basename(cwd).suffix
 		const expectedName = `${path.basename(directory)}.${nonce}`;
@@ -64,13 +67,34 @@ test("ompc supports -d short option for --detach", async () => {
 	}
 });
 
+test("ompc --new refuses to reuse an existing detached session", async () => {
+	const directory = await mkdtemp(path.join(os.tmpdir(), "ompc-new-session-"));
+	const fakeOmp = path.join(directory, "fake-omp");
+	await executable(fakeOmp, "exec sleep 60\n");
+	const nonce = `ompc-new-${process.pid}-${Date.now()}`;
+	const expectedName = `${path.basename(directory)}.${nonce}`;
+	try {
+		const first = Bun.spawnSync(isolatedCommand(`OMP_BIN=${fakeOmp}`, launcher, "--detach", nonce), { cwd: directory });
+		expect(first.exitCode).toBe(0);
+		const second = Bun.spawnSync(
+			isolatedCommand(`OMP_BIN=${fakeOmp}`, launcher, "--detach", "--new", nonce),
+			{ cwd: directory },
+		);
+		expect(second.exitCode).toBe(73);
+		expect(new TextDecoder().decode(second.stderr)).toContain("refusing to reuse");
+		Bun.spawnSync(["tmux", "-L", expectedName, "kill-server"]);
+	} finally {
+		await rm(directory, { force: true, recursive: true });
+	}
+});
+
 test("ompc uses OMP_BIN override when set", async () => {
 	const directory = await mkdtemp(path.join(os.tmpdir(), "ompc-bin-"));
 	const fakeOmp = path.join(directory, "custom-omp");
 	await executable(fakeOmp, 'printf "custom:%s\\n" "$*"\n');
 
 	try {
-		const result = Bun.spawnSync(["env", `OMP_BIN=${fakeOmp}`, launcher, "collab", "list"]);
+		const result = Bun.spawnSync(isolatedCommand(`OMP_BIN=${fakeOmp}`, launcher, "collab", "list"));
 		const stdout = new TextDecoder().decode(result.stdout).trim();
 		expect(stdout).toBe("custom:collab list");
 	} finally {
