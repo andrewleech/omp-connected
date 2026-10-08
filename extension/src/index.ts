@@ -12,8 +12,10 @@ import {
 	createAccessCache,
 	createSessionRpc,
 	EXIT_FEATURE,
+	MODEL_ROLES_FEATURE,
 	SCHEDULE_FEATURE,
 	SESSION_FEATURE,
+	supportsModelRoles,
 	type SessionRequestHandler,
 } from "./session-rpc.js";
 
@@ -219,7 +221,13 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 						pid: process.pid,
 						cwd: process.cwd(),
 						label: ompcSession,
-						features: [SESSION_FEATURE, SCHEDULE_FEATURE, EXIT_FEATURE, HOST_SESSIONS_FEATURE],
+						features: [
+							SESSION_FEATURE,
+							SCHEDULE_FEATURE,
+							EXIT_FEATURE,
+							HOST_SESSIONS_FEATURE,
+							...(supportsModelRoles(ownerContext) ? [MODEL_ROLES_FEATURE] : []),
+						],
 					});
 					hub.identity = result.agent;
 					reportActivity();

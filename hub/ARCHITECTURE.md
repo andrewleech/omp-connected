@@ -107,9 +107,22 @@ An extension that registers with `features: ["session.v1"]` answers the inspecto
 "files.mkdir" { path } -> { ok: true }
 ```
 
-Paths are POSIX, relative to the session's working directory at start (realpath'd); the extension refuses absolute paths, NUL bytes, `..` above the root and anything whose realpath (including through a symlink) is outside the root. `session.info` is always answered; every other method needs the session's own Collab share to have `control` access. `session.exit` calls OMP's graceful shutdown after the RPC reply has been sent, so the dashboard receives an answer before the session disconnects. Uploads go to a temp file `.<name>.omp-upload-<uploadId>` next to the target and are renamed into place on the final chunk; unfinished uploads are discarded after 10 minutes without a chunk and when the session shuts down.
+Paths are POSIX, relative to the session's working directory at start (realpath'd); the extension refuses absolute paths, NUL bytes, `..` above the root and anything whose realpath (including through a symlink) is outside the root. `session.info` and `session.model_roles` are readable with either access level; every other method needs the session's own Collab share to have `control` access. `session.exit` calls OMP's graceful shutdown after the RPC reply has been sent, so the dashboard receives an answer before the session disconnects. Uploads go to a temp file `.<name>.omp-upload-<uploadId>` next to the target and are renamed into place on the final chunk; unfinished uploads are discarded after 10 minutes without a chunk and when the session shuts down.
+Error codes and their REST mapping: -32001 not found (404), -32002 exists (409), -32003 forbidden (403), -32004 invalid (400), -32005 changed during a download (409), -32006 busy (409), -32601 unknown method (501), anything else 502. A call with no reply in 15 s answers 504.
 
-Error codes and their REST mapping: -32001 not found (404), -32002 exists (409), -32003 forbidden (403), -32004 invalid (400), -32005 changed during a download (409), -32006 busy (409), -32601 unknown method (501, an extension without `session.v1`), anything else 502. A call with no reply in 15 s answers 504.
+
+
+### Model roles (`session.model_roles.v1`)
+
+The extension advertises `session.model_roles.v1` only when its running OMP context exposes both `ctx.models.roles()` and `ctx.models.setRole()`. It returns the OMP-owned role catalog and model eligibility unchanged, adding the current share access level. Older OMP runtimes therefore remain usable for the rest of the session inspector without exposing model-role writes.
+
+```ts
+"session.model_roles" {} -> { access: "view" | "control"; storage: "global" | "project"; roles: ModelRoleInfo[] }
+"session.set_model_role" { role: string; selector: string | null; scope?: "global" | "project" } -> ModelRolesInfo
+```
+
+`ModelRoleInfo` contains the role id/name, effective selector and provenance, global/project selectors, resolved model, and eligible models with their thinking levels. A null selector resets the assignment. Reads are allowed with view access; writes require control access and are limited to 20 per 10 seconds per session. OMP owns selector validation, role resolution, fallback behavior, and persistence.
+
 
 ### Scheduled prompts (`session.schedule.v1`)
 
@@ -157,13 +170,14 @@ REST routes built on top of the same live registry:
 - `POST /api/hosts/:id/collab/:instanceId/link` `{ generation, access }` →
   `{ access, url, expiresAt }` — forwards a `collab.link` call the same
   way.
-- `/api/hosts/:id/sessions/:instanceId/...`: the `session.v1` calls for the agent `${id}:${instanceId}`: 404 when it isn't connected, 501 when it didn't advertise the required feature (`session.schedule.v1` for scheduling, `session.exit.v1` for exit, otherwise `session.v1`).
+- `/api/hosts/:id/sessions/:instanceId/...`: the `session.v1` calls for the agent `${id}:${instanceId}`: 404 when it isn't connected, 501 when it didn't advertise the required feature (`session.schedule.v1` for scheduling, `session.exit.v1` for exit, `session.model_roles.v1` for role editing, otherwise `session.v1`).
   - `GET info`, `POST abort`, `POST exit`, `POST compact` `{ instructions? }`, `POST model` `{ provider, id }`, `POST thinking` `{ level }`.
+  - `GET model-roles` returns ModelRolesInfo; `POST model-roles` `{ role, selector, scope? }` returns fresh ModelRolesInfo. GET permits view shares; POST requires control.
   - `GET scheduled`, `POST scheduled` `{ text, delayMs }`, `DELETE scheduled/:scheduleId`.
   - `GET files?path=` lists a directory, `POST files/mkdir` `{ path }` creates one.
   - `GET files/download?path=[&inline=1]` streams a file as `files.read` chunks of 256 KiB, each checked against the size and mtime of the initial `files.stat`, so a file that changes mid-download errors the stream instead of mixing versions. The response is always `attachment` with `content-security-policy: sandbox` and `nosniff`; `inline=1` only applies to PNG, JPEG, GIF and WebP.
   - `PUT files/upload?path=&overwrite=0|1` streams the raw body into `files.write` chunks of 256 KiB, awaiting each before reading on; over 256 MiB answers 413 and aborts the upload.
-  - Control actions (abort, exit, compact, model, thinking, mkdir, and queueing or cancelling a scheduled prompt) share a limit of 20 per 10 s per session, and each session has at most 4 transfers in flight; both answer 429.
+  - Control actions (abort, exit, compact, model, thinking, role writes, mkdir, and queueing or cancelling a scheduled prompt) are limited to 20 requests per 10 s per session, and each session has at most 4 transfers in flight; both answer 429.
 - `GET /api/agents` → `{ agents: AgentSummary[] }`.
 - `POST /api/agents/:id/send` `{ content, replyTo?, idempotencyKey }` →
   sends as `operator@<hub-host>` (dashboard-only; the dashboard is never

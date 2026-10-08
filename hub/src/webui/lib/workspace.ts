@@ -3,17 +3,14 @@
 export const WORKSPACE_STORAGE_KEY = "omp-hub-dashboard/v1";
 
 const WORKSPACE_VERSION = 1;
-export const INSPECTOR_PANES = ["session", "files", "agents"] as const;
+export const INSPECTOR_PANES = ["session", "files", "models"] as const;
 export type InspectorPane = (typeof INSPECTOR_PANES)[number];
 const DEFAULT_INSPECTOR_PANE: InspectorPane = "session";
 
-/**
- * The persisted inspector pane. Stored `controls` and `participants` values
- * name parts of the Session tab, so they map onto it; any other unknown
- * value falls back to the default pane.
- */
+/** The persisted inspector pane. Legacy controls/participants/agents values map to their current pane. */
 export function inspectorPaneFromStorage(value: unknown): InspectorPane {
   if (value === "controls" || value === "participants") return "session";
+  if (value === "agents") return "models";
   return INSPECTOR_PANES.includes(value as InspectorPane)
     ? (value as InspectorPane)
     : DEFAULT_INSPECTOR_PANE;

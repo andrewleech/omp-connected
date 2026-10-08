@@ -17,7 +17,12 @@ const sessions = {
     sessionName: "Writable room",
     cwd: "/work/writer",
     participants: 2,
-    features: ["session.v1", "session.schedule.v1", "session.exit.v1"],
+    features: [
+      "session.v1",
+      "session.schedule.v1",
+      "session.exit.v1",
+      "session.model_roles.v1",
+    ],
   },
   viewer: {
     instanceId: "viewer-room",
@@ -27,6 +32,7 @@ const sessions = {
     sessionName: "Read-only room",
     cwd: "/work/viewer",
     participants: 1,
+    features: ["session.model_roles.v1"],
   },
 };
 
@@ -72,6 +78,59 @@ const writerInfo = {
   contextUsage: { tokens: 42_000, contextWindow: 200_000, percent: 21 },
   models,
 };
+const roleModels = [
+  {
+    provider: "anthropic",
+    id: "claude-a",
+    name: "Claude A",
+    thinkingLevels: ["off", "low", "medium", "high"],
+  },
+  {
+    provider: "openai",
+    id: "gpt-b",
+    name: "GPT B",
+    thinkingLevels: ["off", "low", "medium"],
+  },
+];
+const roleAssignments = new Map<string, string | null>([
+  ["default", "anthropic/claude-a:high"],
+  ["custom-review", null],
+]);
+function modelRolesInfo(access: "view" | "control") {
+  const projectDefault = roleAssignments.get("default") ?? null;
+  const globalDefault = "openai/gpt-b";
+  const selector = projectDefault ?? globalDefault;
+  const custom = roleAssignments.get("custom-review") ?? null;
+  const resolvedModel = selector.startsWith("anthropic/")
+    ? { provider: "anthropic", id: "claude-a", name: "Claude A" }
+    : { provider: "openai", id: "gpt-b", name: "GPT B" };
+  return {
+    access,
+    storage: "project",
+    roles: [
+      {
+        id: "default",
+        name: "Default",
+        selector,
+        provenance: projectDefault ? "Project setting" : "Global setting",
+        globalSelector: globalDefault,
+        projectSelector: projectDefault,
+        resolvedModel,
+        models: roleModels,
+      },
+      {
+        id: "custom-review",
+        name: "Custom review",
+        selector: custom,
+        provenance: custom ? "Project setting" : "Automatic / fallback",
+        globalSelector: null,
+        projectSelector: custom,
+        resolvedModel: { provider: "openai", id: "gpt-b", name: "GPT B" },
+        models: roleModels,
+      },
+    ],
+  };
+}
 const files = new Map<string, Uint8Array | "dir">();
 const scheduled: {
   id: string;
@@ -104,6 +163,8 @@ function resetWriter(): void {
   writerExited = false;
   launched.length = 0;
   writerInfo.model = models[0];
+  roleAssignments.set("default", "anthropic/claude-a:high");
+  roleAssignments.set("custom-review", null);
   writerInfo.thinkingLevel = "medium";
   files.clear();
   scheduled.length = 0;
@@ -328,6 +389,28 @@ Bun.serve({
       };
       launched.push(session);
       return json({ ok: true, label });
+    }
+    const rolesMatch = url.pathname.match(
+      /^\/api\/hosts\/(writer|viewer)\/sessions\/(writer-room|viewer-room)\/model-roles$/,
+    );
+    if (rolesMatch) {
+      const access = rolesMatch[1] === "writer" ? "control" : "view";
+      if (request.method === "GET") return json(modelRolesInfo(access));
+      if (request.method === "POST") {
+        if (access !== "control")
+          return Response.json(
+            { error: "control access required" },
+            { status: 403 },
+          );
+        const body = (await request.json()) as {
+          role: string;
+          selector: string | null;
+        };
+        if (!roleAssignments.has(body.role))
+          return Response.json({ error: "unknown role" }, { status: 400 });
+        roleAssignments.set(body.role, body.selector);
+        return json(modelRolesInfo(access));
+      }
     }
     const writerApi = "/api/hosts/writer/sessions/writer-room";
     if (url.pathname.startsWith(`${writerApi}/`))
