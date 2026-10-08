@@ -3,7 +3,7 @@
 Phase: 4
 Depends on: phases 1 to 3
 Written: 2026-09-30 at omp-connected 66a1466ed9, fork `ompc-fleet` f75ae39637
-Revalidated: pending
+Revalidated: 2026-10-08 (fork checks passed at `1c139512b0`; local guest build and hub restart passed; fleet binary rollout, live field test and upstream PR approval remain pending)
 
 ## Context
 The fleet runs a fork build from the local-only `ompc-fleet` branch (the binary at `~/.local/share/omp-connected/omp`, selected by `OMP_BIN` in `omp-host.env`). The hub serves collab-web built from the fork checkout.
