@@ -56,7 +56,11 @@ export class SessionPane {
   readonly #infoList: HTMLElement;
   readonly #controls: HTMLElement;
   readonly #hint: HTMLElement;
-  readonly #modelSelect: HTMLSelectElement;
+  readonly #modelSearch: HTMLInputElement;
+  readonly #modelOptions: HTMLElement;
+  #models: { provider: string; id: string; name: string }[] = [];
+  #modelValue = "";
+  #modelOpen = false;
   readonly #thinkingField: HTMLElement;
   readonly #thinkingSelect: HTMLSelectElement;
   readonly #compactInput: HTMLInputElement;
@@ -76,8 +80,46 @@ export class SessionPane {
     this.#hint = el("p", { className: "controls-hint" });
     this.#hint.setAttribute("role", "status");
 
-    this.#modelSelect = document.createElement("select");
-    this.#modelSelect.addEventListener("change", () => this.#onModelChange());
+    this.#modelSearch = document.createElement("input");
+    this.#modelSearch.type = "text";
+    this.#modelSearch.placeholder = "Search models";
+    this.#modelSearch.setAttribute("aria-label", "Search models");
+    this.#modelSearch.setAttribute("role", "combobox");
+    this.#modelSearch.setAttribute("aria-autocomplete", "list");
+    this.#modelSearch.setAttribute("aria-expanded", "false");
+    this.#modelOptions = el("div", { className: "model-options" });
+    this.#modelOptions.setAttribute("role", "listbox");
+    this.#modelSearch.addEventListener("focus", () => {
+      this.#modelSearch.value = "";
+      this.#modelOpen = true;
+      this.#renderModelOptions();
+    });
+    this.#modelSearch.addEventListener("input", () => {
+      this.#modelOpen = true;
+      this.#renderModelOptions();
+    });
+    this.#modelSearch.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        this.#modelOpen = false;
+        this.#modelSearch.value =
+          this.#models.find((model) => modelValue(model) === this.#modelValue)
+            ?.name ?? "";
+        this.#renderModelOptions();
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        this.#modelOptions
+          .querySelector<HTMLButtonElement>("button:not([hidden])")
+          ?.click();
+      }
+    });
+    this.#modelSearch.addEventListener("blur", () => {
+      window.setTimeout(() => {
+        this.#modelOpen = false;
+        this.#modelSearch.value =
+          this.#models.find((model) => modelValue(model) === this.#modelValue)?.name ?? "";
+        this.#renderModelOptions();
+      }, 100);
+    });
     this.#thinkingSelect = document.createElement("select");
     this.#thinkingSelect.addEventListener("change", () =>
       this.#onThinkingChange(),
@@ -113,7 +155,8 @@ export class SessionPane {
     this.#controls.append(
       el("h3", { text: "Controls" }),
       this.#hint,
-      field("Model", this.#modelSelect),
+      field("Model", this.#modelSearch),
+      this.#modelOptions,
       this.#thinkingField,
       compactForm,
       this.#abortButton,
@@ -248,13 +291,37 @@ export class SessionPane {
     return ok;
   }
 
-  #onModelChange(): void {
-    const value = this.#modelSelect.value;
+  #onModelChange(value: string): void {
     const target = parseModelValue(value);
     const current = this.#info?.model;
     if (!target || (current && modelValue(current) === value)) return;
+    this.#modelValue = value;
     this.#pendingModel = value;
     void this.#act("Switching model", "/model", target);
+  }
+
+  #renderModelOptions(): void {
+    const query = this.#modelSearch.value.trim().toLowerCase();
+    const matches = this.#models.filter((model) =>
+      `${model.name} ${model.provider} ${model.id}`.toLowerCase().includes(query),
+    );
+    this.#modelOptions.hidden = !this.#modelOpen || !this.#canControl();
+    this.#modelSearch.setAttribute("aria-expanded", String(!this.#modelOptions.hidden));
+    this.#modelOptions.replaceChildren(...matches.map((model) => {
+      const option = button(`${model.name} (${model.provider})`, "model-option");
+      option.type = "button";
+      option.setAttribute("role", "option");
+      option.addEventListener("mousedown", (event) => event.preventDefault());
+      option.addEventListener("click", () => {
+        const value = modelValue(model);
+        this.#modelValue = value;
+        this.#modelSearch.value = model.name;
+        this.#modelOpen = false;
+        this.#renderModelOptions();
+        this.#onModelChange(value);
+      });
+      return option;
+    }));
   }
 
   #onThinkingChange(): void {
@@ -302,6 +369,7 @@ export class SessionPane {
     const info = this.#info;
     const rows: [string, string | HTMLElement][] = [
       ["Label", session.label ?? sessionLabel(session)],
+      ["UUID", session.instanceId],
       ["Host", session.host_id],
       ["Cwd", info?.cwd ?? session.cwd ?? "Unknown"],
     ];
@@ -347,31 +415,17 @@ export class SessionPane {
     );
 
     const groups = groupModels(info?.models ?? [], info?.model ?? null);
-    const modelSignature = JSON.stringify([groups, !info?.model]);
-    if (modelSignature !== this.#modelSignature) {
-      this.#modelSignature = modelSignature;
-      const options: HTMLElement[] = [];
-      if (!info?.model) {
-        const none = new Option("No model", "", true, true);
-        none.disabled = true;
-        options.push(none);
-      }
-      for (const group of groups) {
-        const optgroup = document.createElement("optgroup");
-        optgroup.label = group.provider;
-        for (const model of group.models)
-          optgroup.append(new Option(model.name, modelValue(model)));
-        options.push(optgroup);
-      }
-      this.#modelSelect.replaceChildren(...options);
-    }
+    this.#models = groups.flatMap((group) =>
+      group.models.map((model) => ({ ...model })),
+    );
     const currentModel =
       this.#pendingModel ?? (info?.model ? modelValue(info.model) : "");
-    // Assigning an unchanged value is skipped so a poll cannot disturb a
-    // selector the user has open.
-    if (this.#modelSelect.value !== currentModel)
-      this.#modelSelect.value = currentModel;
-    this.#modelSelect.disabled = !canControl || groups.length === 0;
+    this.#modelValue = currentModel;
+    if (!this.#modelOpen)
+      this.#modelSearch.value =
+        this.#models.find((model) => modelValue(model) === currentModel)?.name ??
+        (info?.model?.name ?? "");
+    this.#renderModelOptions();
 
     const levels = info?.thinkingLevels ?? [];
     this.#thinkingField.hidden = levels.length === 0;
