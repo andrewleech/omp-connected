@@ -3,7 +3,7 @@
 Phase: 2
 Depends on: rewind_p2_shared_rewind
 Written: 2026-09-30 at upstream 81c851de5f
-Revalidated: pending
+Revalidated: 2026-10-08 (host success and refusal tests; live host not checked)
 
 ## Context
 Design R7 to R9 and the wire contract. With phase 1 in place, every guest already follows the leaf, so the host only has to run the rewind and answer the requester.

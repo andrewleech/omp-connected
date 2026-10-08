@@ -3,7 +3,7 @@
 Phase: 1
 Depends on: rewind_p1_host_leaf
 Written: 2026-09-30 at upstream 81c851de5f (tail-mode anchors at abc0446c69)
-Revalidated: pending
+Revalidated: 2026-10-08 (client tests; live fleet not checked)
 
 ## Context
 Design R1, R5 and R6, and bugs B1/B2. collab-web renders every received entry in arrival order, so abandoned branches stay on screen after a rewind (B1) and show up on a full-snapshot join (B2).

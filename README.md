@@ -20,12 +20,13 @@ Each omp session started with `ompc` registers with a hub you run on one always-
 
 - **Every session in one place.** Live sessions from all your hosts, grouped by host and labelled with their `ompc` session name. Right-click a control-shared session (long-press on touch) and choose **Exit session** to close OMP and its `ompc` tmux instance, after a confirmation prompt.
 - **Start or resume on a host.** Click the **+** icon beside a host heading to start a detached `ompc`, or pick a past conversation from that host's newest-first history. The popup excludes conversations already open. Desktop entries show the title and date on one line, with the path below. Hover truncated titles/paths to read them in full, or the date for the session UUID. Path and Name work like `cd <path>; ompc <name>`; Name is the optional suffix after the directory name. Selecting a past conversation prefills the path and any remembered suffix. Names are remembered locally on the host once its updated extension has seen them, older conversations without a saved name leave it blank. The host needs an updated extension in at least one running control-shared session.
-- **Control from the browser.** Open a session to follow its conversation and tool calls live, send it prompts, or interrupt it.
+- **Rewind or fork from a prompt.** In a writable browser session, right-click a user-authored prompt (long-press on touch) to rewind the idle host to before it, restoring the prompt text and images to the composer, or fork it into a separately named session. Actions are available only when the host is idle and no UI request or command suggestions are open. A fork is a new detached OMP process with its own session file, not a branch of the current conversation. This needs the forked OMP host and Collab guest. See [hub architecture](hub/ARCHITECTURE.md#collab-rewind-and-fork) for the flow.
 - **Send later.** Hold the Send button for a moment to queue a prompt for later instead, either after a delay or at a time of day. The session itself holds the prompt, so it still goes out with the browser closed; a strip above the prompt box counts down to each one and lets you cancel it. Waiting prompts are dropped if the omp session exits.
-- **Session panel.** The inspector shows the selected session's working directory, state, model, thinking level and context usage, and lets you switch model or thinking level, compact the context or abort a turn.
+- **Session panel.** The inspector shows the selected session's working directory, state, model, thinking level and context usage, and lets you search available models before switching, change the thinking level, compact the context or abort a turn.
 - **Files panel.** Browse the session's working directory, download files, preview images, create folders, and upload files (button or drag and drop, up to 256 MB each). File access is confined to that directory, and both controls and files need a session shared with control access.
 - **Images in prompts.** Paste, drop or attach images in a session's prompt box; they're downscaled in the browser to fit a relay frame. This needs the forked Collab guest, see [Fork build](#fork-build-of-omp).
 - **Slash commands.** A writable browser guest can type `/` to autocomplete the host's commands (builtins, skills, extension and custom commands) and run them on the host; the output comes back in a panel under the conversation. Commands that relocate the session or touch the host machine (`/move`, `/wt`, `/stats`, `/trace`, `/browser`, `/computer`, `/session delete`) are not offered. This needs the forked omp on the host and the forked guest in the hub. With stock omp the same text is sent to the agent as an ordinary prompt.
+- **Prompt history.** Use ArrowUp/Down in the prompt box, or swipe up/down on touch, to recall earlier user prompts. Moving past the newest prompt restores your unsent draft. This needs the forked Collab guest.
 - **Fast joins to long sessions.** The browser joins with the recent end of the conversation and loads earlier history on demand, instead of downloading the whole session first. This needs the forked omp on the host; with stock omp the guest downloads the full snapshot.
 - **File viewer.** Clicking a text file in the Files tab (Markdown, shell scripts, licences, source, and so on) opens it in a pop-up with a download button. Markdown and HTML switch between a rendered view and the raw text; the rendered view runs no script and loads nothing remote. Binary files and files over 1 MiB still download directly.
 - **Working or idle at a glance.** Each session in the dashboard's side list has a dot: pulsing amber while the agent is mid-turn, green when it is idle and waiting for input. It updates live; sessions running an older extension show no dot until restarted.
@@ -43,7 +44,7 @@ The repo has two parts:
 
 ## Prerequisites
 
-- [OMP](https://github.com/can1357/oh-my-pi) (the official CLI), every host. Either the standalone binary or the Bun install works. Fast joins to long sessions, slash commands and image prompts additionally need a forked build, see [Fork build](#fork-build-of-omp); everything else works with stock OMP.
+- [OMP](https://github.com/can1357/oh-my-pi) (the official CLI), every host. Either the standalone binary or the Bun install works. Fast joins to long sessions, slash commands, image prompts, prompt history and rewind/fork additionally need a forked build, see [Fork build](#fork-build-of-omp); everything else works with stock OMP.
 - [tmux](https://github.com/tmux/tmux) 3.5 or newer (session persistence for `ompc`), every host. Older tmux works, without csi-u modified keys such as Shift+Enter (3.5+) or clipboard/image passthrough (3.3+).
 - [Bun](https://bun.sh) (runtime for the hub server), hub host only.
 
@@ -205,7 +206,7 @@ Running sessions keep the old extension code until OMP restarts inside them.
 
 ## Fork build of OMP
 
-Fast joins, slash commands and image prompts depend on changes that upstream OMP doesn't have yet. They live on branches of [andrewleech/oh-my-pi](https://github.com/andrewleech/oh-my-pi), merged into `ompc-fleet` (a tagged upstream release plus the fleet feature branches). Two things are built from it:
+Fast joins, slash commands, image prompts, prompt history and rewind/fork depend on changes that upstream OMP doesn't have yet. They live on branches of [andrewleech/oh-my-pi](https://github.com/andrewleech/oh-my-pi), merged into `ompc-fleet` (a tagged upstream release plus the fleet feature branches). Two things are built from it:
 
 - **A forked `omp` binary on every host.** It sits next to your normal OMP and is used only by `ompc`; plain `omp`, and therefore `omp update`, are untouched.
 - **The Collab guest in the hub**, on the hub host.
@@ -256,7 +257,8 @@ git remote add upstream https://github.com/can1357/oh-my-pi.git
 git fetch upstream --tags
 tag=$(gh api repos/can1357/oh-my-pi/releases/latest --jq .tag_name)
 for branch in collab-tail-snapshot collab-web-image-attach collab-guest-commands \
-  collab-relay-heartbeat collab-web-viewport-cap collab-web-rail-closed; do
+  collab-relay-heartbeat collab-web-viewport-cap collab-web-rail-closed \
+  collab-guest-leaf collab-guest-rewind collab-guest-prompt-history; do
   git branch --track "$branch" "origin/$branch"
 done
 ```
@@ -276,6 +278,9 @@ branches = [
   { name = "collab-relay-heartbeat", title = "Relay heartbeat recovery", author = "andrewleech" },
   { name = "collab-web-viewport-cap", title = "Embedded guest viewport height", author = "andrewleech" },
   { name = "collab-web-rail-closed", title = "Keep the agents rail closed", author = "andrewleech" },
+  { name = "collab-guest-leaf", title = "Host-authoritative active branch sync", author = "andrewleech" },
+  { name = "collab-guest-rewind", title = "Guest rewind and separate-session fork", author = "andrewleech" },
+  { name = "collab-guest-prompt-history", title = "Composer prompt history", author = "andrewleech" },
 ]
 ```
 
@@ -459,10 +464,10 @@ bun run build                     # rebuild dashboard + Collab guest
 
 ## Architecture
 
-See [hub/ARCHITECTURE.md](hub/ARCHITECTURE.md) for the full wire protocol,
-security model, and module layout. See
-[extension/ARCHITECTURE.md](extension/ARCHITECTURE.md) for the extension's
-registration and Collab handling.
+See [hub/ARCHITECTURE.md](hub/ARCHITECTURE.md) for the wire protocol,
+security model, module layout, and Collab rewind/fork flow. See
+[extension/ARCHITECTURE.md](extension/ARCHITECTURE.md) for registration,
+Collab handling, and how detached fork sessions are launched.
 
 ## Security model
 

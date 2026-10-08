@@ -178,6 +178,44 @@ REST routes built on top of the same live registry:
   `/offline.html` when the hub is unreachable.
 - `/collab/` — the vendored Collab guest client.
 
+## Collab rewind and fork
+
+On the forked Collab guest and OMP host, a writable browser guest can act on an eligible prompt in the transcript. Eligibility is limited to user-authored prompt entries on the active branch.
+
+The browser offers actions only when the guest has write access, the host is idle, and no UI request or command suggestions are open; the host independently checks write access, session state and the active branch. The guest's context menu is opened by right-click or long-press. Rewind requests travel through the Collab host protocol, and the host applies the same branch navigation used by the local rewind selector. On success the host moves its active branch to before the selected prompt and returns that prompt's text and images to the requesting guest's composer. The host's leaf updates are sent to guests so their transcript follows the active branch.
+
+Fork creates a separate named session, not another branch in the existing conversation. The host copies the selected branch through the selected prompt into a distinct session file, then launches `ompc --detach --new <name> --resume <session-file>`. The new process owns that file; the original process and session file remain unchanged. Once the new session's extension registers it, the hub's normal registration and Collab discovery flow makes it selectable in the dashboard.
+
+```mermaid
+sequenceDiagram
+    actor Guest as Browser guest
+    participant Web as collab-web
+    participant Host as OMP Collab host
+    participant SM as SessionManager
+    participant Launcher as ompc
+    participant Hub as Hub registry
+
+    Guest->>Web: Context menu on eligible prompt
+    alt Rewind
+        Web->>Host: rewind(entryId)
+        Host->>SM: Navigate active branch before prompt
+        SM-->>Host: Prompt text and images
+        Host-->>Web: leaf update
+        Host-->>Web: rewind-result(draft, images)
+    else Fork
+        Web->>Host: fork(entryId, name)
+        Host->>SM: Copy selected branch through prompt
+        SM-->>Host: New session file
+        Host->>Launcher: --detach --new name --resume session-file
+        Launcher->>Hub: New process registers session
+        Hub-->>Web: Session appears through discovery
+    end
+```
+
+The host and hub are deployment roles, not fixed machines; examples in
+deployment documentation use placeholder hostnames such as
+`hub.example.test` and `host-a.example.test`.
+
 ## Security model
 
 - **Shared-secret agent registration, self-attested identity.**

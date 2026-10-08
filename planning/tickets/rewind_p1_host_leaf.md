@@ -3,7 +3,7 @@
 Phase: 1
 Depends on: rewind_p1_wire_chain
 Written: 2026-09-30 at upstream 81c851de5f
-Revalidated: pending
+Revalidated: 2026-10-08 (host and session-manager tests; live fleet not checked)
 
 ## Context
 Design R3 to R5 and B1/B2. Leaf moves without an appended entry send guests nothing, and the welcome doesn't say where the leaf is.
