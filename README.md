@@ -211,7 +211,7 @@ Fast joins, slash commands, image prompts, prompt history and rewind/fork depend
 - **A forked `omp` binary on every host.** It sits next to your normal OMP and is used only by `ompc`; plain `omp`, and therefore `omp update`, are untouched.
 - **The Collab guest in the hub**, on the hub host.
 
-Build on any Linux or macOS machine with Bun and git (use the same OS and CPU as the hosts that will run it, or build once per platform):
+For a Linux x64 fleet, build the baseline target with Bun and git. Other platforms need their own `CROSS_TARGET` and matching native addon:
 
 ```sh
 git clone -b ompc-fleet https://github.com/andrewleech/oh-my-pi.git ~/src/oh-my-pi
@@ -221,7 +221,8 @@ bun install
 # (package.json says which; swap linux-x64 for your platform, e.g. darwin-arm64)
 d=$(mktemp -d) && (cd "$d" && npm pack -q @oh-my-pi/pi-natives-linux-x64@<release> && tar xzf *.tgz) &&
   cp "$d"/package/*.node packages/natives/native/ && rm -rf "$d"
-bun --cwd=packages/coding-agent run build        # -> packages/coding-agent/dist/omp
+CROSS_TARGET=linux-x64 bun --cwd=packages/coding-agent run build
+packages/coding-agent/dist/omp-linux-x64 --smoke-test
 ```
 
 Compiling the natives locally also works but links against your machine's glibc, so a binary built on a new distro may not load on an older host.
@@ -229,7 +230,8 @@ Compiling the natives locally also works but links against your machine's glibc,
 On each host, install the binary and tell `ompc` to use it:
 
 ```sh
-install -m755 packages/coding-agent/dist/omp ~/.local/share/omp-connected/omp
+install -m755 packages/coding-agent/dist/omp-linux-x64 ~/.local/share/omp-connected/omp.new
+mv ~/.local/share/omp-connected/omp.new ~/.local/share/omp-connected/omp
 echo 'OMP_BIN=$HOME/.local/share/omp-connected/omp' >> ~/.config/omp-connected/omp-host.env
 ```
 
@@ -311,13 +313,14 @@ bun --cwd=packages/coding-agent test test/collab --timeout 60000
 bun --cwd=packages/coding-agent run check:types
 bun --cwd=packages/collab-web run check
 bun --cwd=packages/collab-web test
-bun --cwd=packages/coding-agent run build
+CROSS_TARGET=linux-x64 bun --cwd=packages/coding-agent run build
 bun --cwd=packages/collab-web run build
-packages/coding-agent/dist/omp --version
+packages/coding-agent/dist/omp-linux-x64 --version
+packages/coding-agent/dist/omp-linux-x64 --smoke-test
 git push --force-with-lease origin ompc-fleet_update:ompc-fleet
 ```
 
-This only builds and publishes the fork, it does not deploy it. The binary is in `packages/coding-agent/dist/omp` and the guest is in `packages/collab-web/dist`. Do not run the hub's build against its live `dist/webui` during verification, it replaces served assets. Install the binary and rebuild the hub guest from this same refresh checkout using the deployment steps above, then restart the hub. Running OMP sessions keep their old binary/extension until restarted. Once the feature changes are merged and released upstream, remove `OMP_BIN` and go back to stock OMP.
+This only builds and publishes the fork, it does not deploy it. The binary is in `packages/coding-agent/dist/omp-linux-x64` and the guest is in `packages/collab-web/dist`. Cross-target builds do not replace `dist/omp`, so use the named artifact rather than a binary left by an earlier build. Do not run the hub's build against its live `dist/webui` during verification, it replaces served assets. Install the binary and rebuild the hub guest from this same refresh checkout using the deployment steps above, then restart the hub. Running OMP sessions keep their old binary/extension until restarted. Once the feature changes are merged and released upstream, remove `OMP_BIN` and go back to stock OMP.
 
 ## Adding hosts to the fleet
 
