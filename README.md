@@ -205,7 +205,7 @@ Running sessions keep the old extension code until OMP restarts inside them.
 
 ## Fork build of OMP
 
-Fast joins, slash commands and image prompts depend on changes that upstream OMP doesn't have yet. They live on branches of [andrewleech/oh-my-pi](https://github.com/andrewleech/oh-my-pi), merged into `ompc-fleet` (upstream main plus `collab-tail-snapshot`, `collab-web-image-attach`, `collab-guest-commands` and a relay heartbeat fix). Two things are built from it:
+Fast joins, slash commands and image prompts depend on changes that upstream OMP doesn't have yet. They live on branches of [andrewleech/oh-my-pi](https://github.com/andrewleech/oh-my-pi), merged into `ompc-fleet` (a tagged upstream release plus the fleet feature branches). Two things are built from it:
 
 - **A forked `omp` binary on every host.** It sits next to your normal OMP and is used only by `ompc`; plain `omp`, and therefore `omp update`, are untouched.
 - **The Collab guest in the hub**, on the hub host.
@@ -242,7 +242,77 @@ systemctl --user restart omp-hub.service
 
 Without `COLLAB_WEB_SRC` the hub builds the older guest pinned in `hub/vendor/collab-web` (upstream OMP v15.5.9), which has none of the above.
 
-A forked binary doesn't update itself. To pick up a new upstream release, `git pull` the branch in the checkout (or rebase it onto upstream), rebuild, and reinstall on each host. Sessions already running keep the old binary until restarted. Once the changes are merged upstream, remove `OMP_BIN` and go back to stock OMP.
+### Refreshing onto a tagged upstream release
+
+A forked binary doesn't update itself. Rebuild the integration with [mbm](https://github.com/andrewleech/micropython-branch-manager), keeping the feature branches separate so they can still become independent upstream PRs. Use a clean checkout, or make a separate refresh checkout if the existing one has active work. Never remove another session's worktrees or reset a checkout with uncommitted changes.
+
+For a separate checkout, install mbm and fetch the upstream tags:
+
+```sh
+uv tool install micropython-branch-manager
+git clone -b ompc-fleet https://github.com/andrewleech/oh-my-pi.git ~/src/oh-my-pi-release
+cd ~/src/oh-my-pi-release
+git remote add upstream https://github.com/can1357/oh-my-pi.git
+git fetch upstream --tags
+tag=$(gh api repos/can1357/oh-my-pi/releases/latest --jq .tag_name)
+for branch in collab-tail-snapshot collab-web-image-attach collab-guest-commands \
+  collab-relay-heartbeat collab-web-viewport-cap collab-web-rail-closed; do
+  git branch --track "$branch" "origin/$branch"
+done
+```
+
+Keep the branch list in an untracked `~/omp-connected/.omp/mbm.toml`. Its path is relative to that config file. Point it at the refresh checkout and set `target` to the selected tag (`v18.8.4` in this example), not `upstream/main`:
+
+```toml
+[[submodules]]
+path = "../../src/oh-my-pi-release"
+integration_branch = "ompc-fleet"
+target = "v18.8.4"
+update_feature_branches = false
+branches = [
+  { name = "collab-tail-snapshot", title = "Tail-first Collab snapshots", author = "andrewleech", pr_url = "https://github.com/can1357/oh-my-pi/pull/13389", pr_number = 13389 },
+  { name = "collab-web-image-attach", title = "Guest image attachments", author = "andrewleech" },
+  { name = "collab-guest-commands", title = "Guest slash commands", author = "andrewleech" },
+  { name = "collab-relay-heartbeat", title = "Relay heartbeat recovery", author = "andrewleech" },
+  { name = "collab-web-viewport-cap", title = "Embedded guest viewport height", author = "andrewleech" },
+  { name = "collab-web-rail-closed", title = "Keep the agents rail closed", author = "andrewleech" },
+]
+```
+
+Keep this list aligned with the fleet's feature branches. PR entries are fetched from GitHub's `pull/N/head`; fork-only entries use the local branches, which the commands above create from `origin`. `update_feature_branches = false` leaves their refs and published PRs unchanged. Remove a merged feature once its changes are in the selected release. Warnings about no PR for a fork-only branch are expected.
+
+Preview the target/branch list, then rebuild:
+
+```sh
+cfg=$HOME/omp-connected/.omp/mbm.toml
+mbm rebase --config "$cfg" --target "$tag" --dry-run
+mbm rebase --config "$cfg" --target "$tag"
+```
+
+Conflicts stop the rebuild in the refresh checkout. Resolve and stage the affected files, then run `git rebase --continue` for a rebase conflict or `git commit` for a merge conflict. Continue mbm with `mbm rebase --config "$cfg" --resume`. Keep changes to feature branches or merge conflict resolutions, never add ordinary commits directly to the machine-managed integration branch.
+
+If a feature needs release compatibility fixes, commit them on its own branch/worktree. For unpublished fixes, use a temporary config that points at those local branches without PR metadata, verify the resulting fleet, then publish the feature branches and restore the PR entries. Otherwise mbm fetches the published PR head and misses the local fixes.
+
+The result is `ompc-fleet_update`. Build and test there before publishing, using the native addon from the same release tag:
+
+```sh
+bun install --frozen-lockfile
+d=$(mktemp -d)
+(cd "$d" && npm pack -q "@oh-my-pi/pi-natives-linux-x64@${tag#v}" && tar xzf ./*.tgz)
+mkdir -p packages/natives/native
+cp "$d"/package/*.node packages/natives/native/
+rm -rf "$d"
+bun --cwd=packages/coding-agent test test/collab --timeout 60000
+bun --cwd=packages/coding-agent run check:types
+bun --cwd=packages/collab-web run check
+bun --cwd=packages/collab-web test
+bun --cwd=packages/coding-agent run build
+bun --cwd=packages/collab-web run build
+packages/coding-agent/dist/omp --version
+git push --force-with-lease origin ompc-fleet_update:ompc-fleet
+```
+
+This only builds and publishes the fork, it does not deploy it. The binary is in `packages/coding-agent/dist/omp` and the guest is in `packages/collab-web/dist`. Do not run the hub's build against its live `dist/webui` during verification, it replaces served assets. Install the binary and rebuild the hub guest from this same refresh checkout using the deployment steps above, then restart the hub. Running OMP sessions keep their old binary/extension until restarted. Once the feature changes are merged and released upstream, remove `OMP_BIN` and go back to stock OMP.
 
 ## Adding hosts to the fleet
 
