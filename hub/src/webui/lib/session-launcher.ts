@@ -125,8 +125,11 @@ export class SessionLauncher {
         row.title = session.sessionId;
         row.setAttribute("aria-pressed", "false");
         row.append(
-          el("strong", { text: session.title }),
-          el("span", { text: session.cwd || "Working directory unknown" }),
+          el("strong", { text: session.title, title: session.title }),
+          el("span", {
+            text: session.cwd || "Working directory unknown",
+            title: session.cwd || "Working directory unknown",
+          }),
           el("time", { text: new Date(session.modifiedAt).toLocaleString() }),
         );
         row.onclick = () => {
