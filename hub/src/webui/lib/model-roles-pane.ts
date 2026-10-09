@@ -292,7 +292,10 @@ export class ModelRolesPane {
   }
 
   #seedEditor(role: ModelRoleInfo): void {
-    this.#models = role.models;
+    this.#models = [...role.models].sort((a, b) =>
+      a.provider.localeCompare(b.provider) ||
+      b.name.localeCompare(a.name, undefined, { numeric: true }),
+    );
     const assignment = this.#assignmentForScope(role);
     const selected = this.#modelSelection(assignment, role.models);
     this.#selector.value = assignment ?? "";
