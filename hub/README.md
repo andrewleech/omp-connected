@@ -18,7 +18,8 @@ wire protocol, and security model.
   separate host-registration process or connection.
 - The server exposes both over REST (`/api/hosts/:id/collab`,
   `/api/hosts/:id/collab/:instanceId/link`, `/api/agents`,
-  `/api/agents/:id/send`, `/api/hosts/:id/sessions/:instanceId/model-roles`)
+  `/api/agents/:id/send`, `/api/hosts/:id/sessions/:instanceId/model-roles`,
+  `/api/hosts/:id/sessions/:instanceId/fork`)
   and serves a fleet dashboard at `/` for live session monitoring, session
   controls, model role assignments, scheduled prompts and working-directory file
   access, plus the vendored OMP Collab guest client at `/collab/`.

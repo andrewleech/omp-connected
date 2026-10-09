@@ -4,7 +4,7 @@ import {
   FILE_CHUNK_BYTES,
   sessionRpcRoutes,
 } from "@/server/session-rpc-routes";
-import { MODEL_ROLES_FEATURE } from "@/server/types";
+import { MODEL_ROLES_FEATURE, SESSION_FORK_FEATURE } from "@/server/types";
 
 const HOST = "user@hub-host";
 const BASE = `http://localhost/api/hosts/${HOST}/sessions`;
@@ -142,6 +142,43 @@ function post(route: string, body?: unknown) {
         }),
   });
 }
+test("fork route targets the selected session and requires the fork feature", async () => {
+  const registry = new AgentRegistry();
+  const calls: Call[] = [];
+  registerSessionAgent(
+    registry,
+    (method, params) => {
+      calls.push({ method, params });
+      return { ok: true, label: "project.fork" };
+    },
+    { features: ["session.v1", SESSION_FORK_FEATURE] },
+  );
+  const otherCalls: Call[] = [];
+  registerSessionAgent(
+    registry,
+    (method, params) => {
+      otherCalls.push({ method, params });
+      return { ok: true, label: "wrong-target" };
+    },
+    { instanceId: "inst-2", features: ["session.v1", SESSION_FORK_FEATURE] },
+  );
+  const app = sessionRpcRoutes(registry);
+  const response = await app.handle(post("fork", { name: "fork" }));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ ok: true, label: "project.fork" });
+  expect(calls).toEqual([{ method: "session.fork", params: { name: "fork" } }]);
+  expect(otherCalls).toEqual([]);
+
+  const unsupported = new AgentRegistry();
+  registerSessionAgent(unsupported, () => ({ ok: true }), {
+    features: ["session.v1"],
+  });
+  expect(
+    (await sessionRpcRoutes(unsupported).handle(post("fork", { name: "fork" })))
+      .status,
+  ).toBe(501);
+  expect((await app.handle(post("fork", { name: "" }))).status).toBe(400);
+});
 
 /** A handler for files.write that records decoded chunks and acks them. */
 function writeRecorder(): {

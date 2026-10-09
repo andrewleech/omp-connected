@@ -21,6 +21,7 @@ const sessions = {
       "session.v1",
       "session.schedule.v1",
       "session.exit.v1",
+      "session.fork.v1",
       "session.model_roles.v1",
     ],
   },
@@ -390,6 +391,27 @@ Bun.serve({
       launched.push(session);
       return json({ ok: true, label });
     }
+    const forkMatch = url.pathname.match(
+      /^\/api\/hosts\/writer\/sessions\/writer-room\/fork$/,
+    );
+    if (forkMatch && request.method === "POST") {
+      const body = (await request.json()) as { name: string };
+      const label = `writer.${body.name}`;
+      if (launched.some((session) => session.label === label))
+        return Response.json(
+          { error: "This ompc name already exists." },
+          { status: 409 },
+        );
+      launched.push({
+        ...sessions.writer,
+        label,
+        instanceId: `launched-${launched.length}`,
+        sessionId: `fork-${launched.length}`,
+        sessionName: "Forked conversation",
+      });
+      return json({ ok: true, label });
+    }
+
     const rolesMatch = url.pathname.match(
       /^\/api\/hosts\/(writer|viewer)\/sessions\/(writer-room|viewer-room)\/model-roles$/,
     );

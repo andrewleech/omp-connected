@@ -19,7 +19,11 @@ import {
   attachScheduledSend,
   scheduleApi,
 } from "./lib/scheduled-send";
-import { EXIT_FEATURE, sessionApiBase } from "./lib/session-api";
+import {
+  EXIT_FEATURE,
+  SESSION_FORK_FEATURE,
+  sessionApiBase,
+} from "./lib/session-api";
 import { SessionLauncher } from "./lib/session-launcher";
 import { SessionPane } from "./lib/session-pane";
 import {
@@ -488,6 +492,32 @@ function createDashboard(root: HTMLElement): void {
     }
   }
 
+  async function forkSession(session: CollabSession): Promise<void> {
+    if (
+      session.access !== "control" ||
+      !session.features?.includes(SESSION_FORK_FEATURE)
+    )
+      return;
+    const requestedName = prompt("Name this forked session");
+    if (requestedName === null || !requestedName.trim()) return;
+    try {
+      const result = await json<{ ok: true; label: string }>(
+        `${sessionApiBase(session.host_id, session.instanceId)}/fork`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name: requestedName.trim() }),
+        },
+      );
+      showStatus(`Started ${result.label}; waiting for it to register…`, "ok");
+      void pollSessions().catch((error: unknown) =>
+        showStatus((error as Error).message, "warning"),
+      );
+    } catch (error) {
+      showStatus((error as Error).message, "warning");
+    }
+  }
+
   function sessionMenuItems(session: CollabSession): ContextMenuItem[] {
     const items: ContextMenuItem[] = [
       {
@@ -503,6 +533,18 @@ function createDashboard(root: HTMLElement): void {
     const current = state.groups.find((group) =>
       group.sessions.includes(sessionKey(session)),
     );
+    const agent = state.agents.find(
+      (candidate) =>
+        candidate.id === `${session.host_id}:${session.instanceId}`,
+    );
+    items.push({
+      label: "Fork session",
+      disabled:
+        session.access !== "control" ||
+        !session.features?.includes(SESSION_FORK_FEATURE) ||
+        agent?.busy === true,
+      onSelect: () => void forkSession(session),
+    });
     if (current)
       items.push({
         label: `Remove from "${current.name}"`,

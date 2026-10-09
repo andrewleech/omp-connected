@@ -3,7 +3,7 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import type { FileService } from "./files-rpc.js";
-import { paramsRecord, RpcCode, RpcError } from "./protocol.js";
+import { RpcCode, RpcError, paramsRecord } from "./protocol.js";
 import { type PromptScheduler, ScheduleError, type ScheduledPrompt } from "./scheduled-prompts.js";
 
 /** Feature flag advertised in `agent.register` for this request set. */
@@ -15,6 +15,8 @@ export const SCHEDULE_FEATURE = "session.schedule.v1";
 export const EXIT_FEATURE = "session.exit.v1";
 /** Advertised only when the running OMP API serves model-role assignment. */
 export const MODEL_ROLES_FEATURE = "session.model_roles.v1";
+/** Advertised by sessions that can fork their current transcript into a new ompc session. */
+export const SESSION_FORK_FEATURE = "session.fork.v1";
 
 export type CollabAccess = "view" | "control";
 
@@ -115,6 +117,8 @@ export interface SessionRpcDeps {
 	files: FileService;
 	/** The owner session's queue of prompts to send later. */
 	scheduler: PromptScheduler;
+	forkCurrentSession: (params: { cwd: string; name: string; sessionFile: string }) => Promise<unknown>;
+
 }
 
 interface ModelRoleConfiguration {
@@ -217,6 +221,22 @@ export function createSessionRpc(deps: SessionRpcDeps): SessionRequestHandler {
 			requireContext();
 			return { ok: true };
 		},
+		async "session.fork"(params): Promise<unknown> {
+			const { name } = paramsRecord(params);
+			if (typeof name !== "string") throw new RpcError(RpcCode.Invalid, "name is required");
+			const ctx = requireContext();
+			if (!ctx.isIdle() || ctx.hasPendingMessages()) {
+				throw new RpcError(RpcCode.Busy, "the session is working or has queued prompts");
+			}
+			const sessionFile = ctx.sessionManager.getSessionFile();
+			if (!sessionFile) throw new RpcError(RpcCode.Invalid, "the current session is not persisted");
+			return deps.forkCurrentSession({
+				cwd: ctx.sessionManager.getCwd(),
+				name,
+				sessionFile,
+			});
+		},
+
 		"session.compact"(params) {
 			const { instructions } = paramsRecord(params);
 			if (instructions !== undefined && typeof instructions !== "string") {

@@ -39,21 +39,32 @@ afterEach(async () => {
 	await fs.rm(root, { recursive: true, force: true });
 });
 
-function harness(options: { access?: CollabAccess | AccessSource; idle?: boolean; setModelResult?: boolean } = {}) {
+function harness(options: { access?: CollabAccess | AccessSource; idle?: boolean; pending?: boolean; setModelResult?: boolean } = {}) {
 	const level = typeof options.access === "string" ? options.access : "control";
 	const access: AccessSource =
 		typeof options.access === "object" ? options.access : { current: async () => level, refresh: async () => level };
-	const calls = { abort: 0, compact: [] as (string | undefined)[], setModel: [] as Model[], thinking: [] as string[] };
+	const calls = {
+		abort: 0,
+		compact: [] as (string | undefined)[],
+		setModel: [] as Model[],
+		thinking: [] as string[],
+		forks: [] as { cwd: string; name: string; sessionFile: string }[],
+	};
 	const warnings: string[] = [];
 	let onWarn: () => void = () => undefined;
 	const compaction = Promise.withResolvers<void>();
-	const state = { model: sonnet as Model | undefined, idle: options.idle ?? true };
+	const state = { model: sonnet as Model | undefined, idle: options.idle ?? true, pending: options.pending ?? false };
 	const ctx = {
 		get model() {
 			return state.model;
 		},
 		models: { list: () => [sonnet, plain] },
 		isIdle: () => state.idle,
+		hasPendingMessages: () => state.pending,
+		sessionManager: {
+			getCwd: () => root,
+			getSessionFile: () => path.join(root, "current.jsonl"),
+		},
 		abort: () => {
 			calls.abort += 1;
 		},
@@ -92,6 +103,10 @@ function harness(options: { access?: CollabAccess | AccessSource; idle?: boolean
 		access,
 		files,
 		scheduler,
+		forkCurrentSession: async (params) => {
+			calls.forks.push(params);
+			return { ok: true, label: "project.fork" };
+		},
 	});
 	return {
 		handle,
@@ -146,6 +161,7 @@ test("a view-only session answers session.info but refuses every other method as
 	const gated: [string, unknown][] = [
 		["session.abort", {}],
 		["session.exit", {}],
+		["session.fork", { name: "fork" }],
 		["session.compact", {}],
 		["session.set_model", { provider: "openai", id: "gpt-plain" }],
 		["session.set_thinking", { level: "low" }],
@@ -171,6 +187,20 @@ test("exit requires a live control-shared owner session", async () => {
 	expect(await handle("session.exit", {})).toEqual({ ok: true });
 	expect(await rpcCode(harness({ access: "view" }).handle("session.exit", {}))).toBe(RpcCode.Forbidden);
 });
+test("session.fork launches a snapshot of this persisted session", async () => {
+	const { handle, calls } = harness();
+	expect(await handle("session.fork", { name: "review" })).toEqual({ ok: true, label: "project.fork" });
+	expect(calls.forks).toEqual([{ cwd: root, name: "review", sessionFile: path.join(root, "current.jsonl") }]);
+});
+
+test("session.fork refuses a busy session or queued prompt", async () => {
+	for (const options of [{ idle: false }, { pending: true }]) {
+		const { handle, calls } = harness(options);
+		expect(await rpcCode(handle("session.fork", { name: "review" }))).toBe(RpcCode.Busy);
+		expect(calls.forks).toEqual([]);
+	}
+});
+
 
 test("an unknown method is -32601 regardless of access", async () => {
 	expect(await rpcCode(harness({ access: "view" }).handle("session.reboot", {}))).toBe(RpcCode.MethodNotFound);
