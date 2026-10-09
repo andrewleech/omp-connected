@@ -741,7 +741,7 @@ function createDashboard(root: HTMLElement): void {
   const INSPECTOR_LABELS: Record<InspectorPane, string> = {
     session: "Session",
     files: "Files",
-    models: "Model roles",
+    models: "Roles",
   };
 
   /** Persistent pane trees stay attached across renders to preserve focus and edit state. */
