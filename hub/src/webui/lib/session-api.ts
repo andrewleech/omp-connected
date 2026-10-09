@@ -4,6 +4,7 @@
 
 export const SESSION_FEATURE = "session.v1";
 export const EXIT_FEATURE = "session.exit.v1";
+export const SESSION_FORK_FEATURE = "session.fork.v1";
 export const NEEDS_UPDATE_NOTE =
   "Controls need the updated omp-connected extension; restart this session to enable them.";
 export const VIEW_ONLY_FILES_NOTE = "Files need a control-shared session.";

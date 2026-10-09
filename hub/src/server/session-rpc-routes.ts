@@ -22,10 +22,8 @@ import {
   MODEL_ROLES_FEATURE,
   SCHEDULE_FEATURE,
   SESSION_FEATURE,
+  SESSION_FORK_FEATURE,
   SESSION_RPC_ERRORS,
-  type SessionMethod,
-  type SessionMethodParams,
-  type SessionMethodResult,
 } from "./types";
 
 /** Per-RPC deadline; a call that exceeds it answers 504. */
@@ -362,7 +360,19 @@ export function sessionRpcRoutes(
     .post("/:id/sessions/:instanceId/exit", ({ params, set }) =>
       control(set, params, "session.exit", {}, EXIT_FEATURE),
     )
-
+    .post("/:id/sessions/:instanceId/fork", ({ params, body, set }) => {
+      const payload = bodyObject(body);
+      if (!isNonEmptyString(payload?.name)) {
+        return fail(set, { status: 400, error: "name is required" });
+      }
+      return control(
+        set,
+        params,
+        "session.fork",
+        { name: payload.name },
+        SESSION_FORK_FEATURE,
+      );
+    })
     .post("/:id/sessions/:instanceId/compact", ({ params, body, set }) => {
       const payload = bodyObject(body);
       const instructions = payload?.instructions;

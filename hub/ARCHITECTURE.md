@@ -90,12 +90,13 @@ interface HostCollabSession {
 
 ### Session inspection and file transfer (`session.v1`)
 
-An extension that registers with `features: ["session.v1"]` answers the inspector calls for its own omp session. The optional `session.schedule.v1` and `session.exit.v1` features advertise scheduled prompts and graceful session exit respectively. The hub sends each call to that agent's own connection (`AgentRegistry.callOnAgent`), never to another agent on the same host.
+An extension that registers with `features: ["session.v1"]` answers the inspector calls for its own omp session. The optional `session.schedule.v1`, `session.exit.v1` and `session.fork.v1` features advertise scheduled prompts, graceful session exit and current-head session forking respectively. The hub sends each call to that agent's own connection (`AgentRegistry.callOnAgent`), never to another agent on the same host.
 
 ```ts
 "session.info" {} -> { cwd; pid; sessionName; access: "view" | "control"; idle; model; thinkingLevel; thinkingLevels: string[]; contextUsage; models }
 "session.abort" {} -> { ok: true }
 "session.exit" {} -> { ok: true }  // shuts down OMP after its reply is sent; an ompc tmux server exits with its only pane
+"session.fork" { name } -> { ok: true; label }  // snapshots this idle session's current head into a new ompc session
 "session.compact" { instructions?: string } -> { ok: true }  // starts compaction; busy while the session is working
 "session.set_model" { provider: string; id: string } -> { ok: true }
 "session.set_thinking" { level: string } -> { ok: true }
@@ -147,7 +148,10 @@ A capable connected extension answers host-wide history and launch requests. The
 
 `modifiedAt` is epoch milliseconds, history is newest-first, and `name` is the remembered `ompc` suffix, not the conversation title. Path accepts an absolute directory or `~/...`; a blank name starts the directory's bare `ompc` name. The combined directory basename and suffix must meet the launcher's 64-character name rule. Launching uses detached `ompc --new`, so a live name collision returns 409 rather than attaching. Selecting a conversation already open or starting also returns 409. A new conversation bypasses OMP's configured auto-resume. Successful launch means tmux accepted the process, its extension then registers through the normal flow.
 
+The session list's **Fork session** action targets one specific session instance through the `session.fork.v1` capability, rather than the host-wide history launcher. The extension requires control access, an idle session with no queued prompts, and a persisted session file, then starts `ompc --detach --new <suffix> --fork <session-file>`. OMP's built-in `--fork` creates a new session from the complete current head; the source session remains active and unchanged. The context-menu action is disabled for view-only, busy or older sessions.
+
 REST: `GET /api/hosts/:id/session-history` and `POST /api/hosts/:id/sessions` expose those results and parameters. Requests share a host limit of 20 per 10 seconds, with a 30-second RPC deadline. A disconnected host answers 404, no capable extension answers 501, and remote errors use the session RPC HTTP mapping.
+`POST /api/hosts/:id/sessions/:instanceId/fork` sends a named current-head fork request to that exact session instance and requires `session.fork.v1`.
 
 **No independent identity check.** `agent.register` is token-gated
 only: `hostId`, `instanceId`, `cwd`, and `label` are the extension's own
@@ -170,14 +174,14 @@ REST routes built on top of the same live registry:
 - `POST /api/hosts/:id/collab/:instanceId/link` `{ generation, access }` →
   `{ access, url, expiresAt }` — forwards a `collab.link` call the same
   way.
-- `/api/hosts/:id/sessions/:instanceId/...`: the `session.v1` calls for the agent `${id}:${instanceId}`: 404 when it isn't connected, 501 when it didn't advertise the required feature (`session.schedule.v1` for scheduling, `session.exit.v1` for exit, `session.model_roles.v1` for role editing, otherwise `session.v1`).
-  - `GET info`, `POST abort`, `POST exit`, `POST compact` `{ instructions? }`, `POST model` `{ provider, id }`, `POST thinking` `{ level }`.
+- `/api/hosts/:id/sessions/:instanceId/...`: the `session.v1` calls for the agent `${id}:${instanceId}`: 404 when it isn't connected, 501 when it didn't advertise the required feature (`session.schedule.v1` for scheduling, `session.exit.v1` for exit, `session.fork.v1` for forking, `session.model_roles.v1` for role editing, otherwise `session.v1`).
+  - `GET info`, `POST abort`, `POST exit`, `POST fork` `{ name }`, `POST compact` `{ instructions? }`, `POST model` `{ provider, id }`, `POST thinking` `{ level }`.
   - `GET model-roles` returns ModelRolesInfo; `POST model-roles` `{ role, selector, scope? }` returns fresh ModelRolesInfo. GET permits view shares; POST requires control.
   - `GET scheduled`, `POST scheduled` `{ text, delayMs }`, `DELETE scheduled/:scheduleId`.
   - `GET files?path=` lists a directory, `POST files/mkdir` `{ path }` creates one.
   - `GET files/download?path=[&inline=1]` streams a file as `files.read` chunks of 256 KiB, each checked against the size and mtime of the initial `files.stat`, so a file that changes mid-download errors the stream instead of mixing versions. The response is always `attachment` with `content-security-policy: sandbox` and `nosniff`; `inline=1` only applies to PNG, JPEG, GIF and WebP.
   - `PUT files/upload?path=&overwrite=0|1` streams the raw body into `files.write` chunks of 256 KiB, awaiting each before reading on; over 256 MiB answers 413 and aborts the upload.
-  - Control actions (abort, exit, compact, model, thinking, role writes, mkdir, and queueing or cancelling a scheduled prompt) are limited to 20 requests per 10 s per session, and each session has at most 4 transfers in flight; both answer 429.
+- Control actions (abort, exit, fork, compact, model, thinking, role writes, mkdir, and queueing or cancelling a scheduled prompt) are limited to 20 requests per 10 s per session, and each session has at most 4 transfers in flight; both answer 429.
 - `GET /api/agents` → `{ agents: AgentSummary[] }`.
 - `POST /api/agents/:id/send` `{ content, replyTo?, idempotencyKey }` →
   sends as `operator@<hub-host>` (dashboard-only; the dashboard is never

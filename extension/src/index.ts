@@ -1,10 +1,10 @@
 import * as os from "node:os";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import type { Component } from "@oh-my-pi/pi-tui";
-import { type AgentSummary, HubTransport } from "./hub-transport.js";
 import { getCollabRegistry } from "./collab-registry.js";
 import { FileService } from "./files-rpc.js";
 import { HOST_SESSIONS_FEATURE, HostSessions } from "./host-sessions.js";
+import { type AgentSummary, HubTransport } from "./hub-transport.js";
 import { RpcCode, RpcError } from "./protocol.js";
 import { AGENT_MESSAGE_TYPE, type AgentMessage, formatInboundMessage, isReservedIdentity } from "./provenance.js";
 import { PromptScheduler, type ScheduledPrompt } from "./scheduled-prompts.js";
@@ -15,6 +15,7 @@ import {
 	MODEL_ROLES_FEATURE,
 	SCHEDULE_FEATURE,
 	SESSION_FEATURE,
+	SESSION_FORK_FEATURE,
 	supportsModelRoles,
 	type SessionRequestHandler,
 } from "./session-rpc.js";
@@ -225,6 +226,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 							SESSION_FEATURE,
 							SCHEDULE_FEATURE,
 							EXIT_FEATURE,
+							SESSION_FORK_FEATURE,
 							HOST_SESSIONS_FEATURE,
 							...(supportsModelRoles(ownerContext) ? [MODEL_ROLES_FEATURE] : []),
 						],
@@ -309,6 +311,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 				access: ownAccess,
 				files: service,
 				scheduler,
+				forkCurrentSession: (params) => hostSessions.forkCurrent(params),
 			});
 		} catch (error) {
 			pi.logger.warn("omp-connected: could not resolve the session directory; session controls disabled", {

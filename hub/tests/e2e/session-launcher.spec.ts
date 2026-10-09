@@ -36,6 +36,33 @@ test("resumes a past conversation with its remembered suffix, excluding it once 
     page.locator('.past-session[data-session-id="past-old"]'),
   ).toBeVisible();
 });
+test("forks the active session from its sidebar context menu", async ({
+  page,
+}) => {
+  await page.request.post("http://127.0.0.1:4173/__activity?busy=1");
+  await page.goto("/");
+  const writerCard = page.locator('.session-card[title="Writable room"]');
+  await expect(writerCard).toHaveAttribute("aria-description", "Working");
+  await writerCard.click({ button: "right" });
+  const forkButton = page.getByRole("button", {
+    name: "Fork session",
+    exact: true,
+  });
+  await expect(forkButton).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await page.request.post("http://127.0.0.1:4173/__activity?busy=0");
+  await expect(writerCard).toHaveAttribute("aria-description", "Idle");
+  await writerCard.click({ button: "right" });
+  await expect(forkButton).toBeEnabled();
+  const prompt = page
+    .waitForEvent("dialog")
+    .then((dialog) => dialog.accept("from-sidebar"));
+  await forkButton.click();
+  await prompt;
+  await expect(
+    page.getByRole("button", { name: "writer.from-sidebar", exact: true }),
+  ).toBeVisible();
+});
 
 test("deselects history to start a new conversation and keeps launch collisions in the form", async ({
   page,

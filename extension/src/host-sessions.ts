@@ -112,6 +112,70 @@ export class HostSessions {
 		return { sessions };
 	}
 
+	async #launch(cwd: string, args: string[]): Promise<void> {
+		let launcher = this.options.launcher;
+		if (!launcher) {
+			const installed = join(homedir(), ".local", "bin", "ompc");
+			launcher = await stat(installed).then(
+				() => installed,
+				(error: NodeJS.ErrnoException) => {
+					if (error.code !== "ENOENT") throw error;
+					return "ompc";
+				},
+			);
+		}
+		const env = Object.fromEntries(
+			Object.entries(process.env).filter(
+				([key]) => key !== "TMUX" && key !== "TMUX_PANE" && key !== "OMPC_SESSION",
+			),
+		);
+		try {
+			await exec(launcher, args, { cwd, env, timeout: 15_000, maxBuffer: 64 * 1024 });
+		} catch (error) {
+			const failure = error as Error & { code?: number; stderr?: string };
+			throw new RpcError(failure.code === 73 ? RpcCode.Exists : RpcCode.Internal, failure.stderr?.trim() || failure.message);
+		}
+	}
+
+	async forkCurrent(params: { cwd: string; name: string; sessionFile: string }) {
+		if (
+			typeof params.cwd !== "string" ||
+			!params.cwd.startsWith("/") ||
+			params.cwd.includes("\0") ||
+			typeof params.name !== "string" ||
+			(params.name !== "" && !NAME_PATTERN.test(params.name)) ||
+			typeof params.sessionFile !== "string" ||
+			!params.sessionFile.startsWith("/") ||
+			params.sessionFile.includes("\0")
+		) {
+			throw new RpcError(RpcCode.Invalid, "Invalid path, fork name or session file.");
+		}
+		let cwd: string;
+		try {
+			cwd = await realpath(resolve(params.cwd));
+			if (!(await stat(cwd)).isDirectory()) throw new RpcError(RpcCode.Invalid, "Path is not a directory.");
+		} catch (error) {
+			if (error instanceof RpcError) throw error;
+			throw new RpcError(RpcCode.Invalid, `Cannot open directory: ${(error as Error).message}`);
+		}
+		const label = `${basename(cwd)}${params.name ? `.${params.name}` : ""}`;
+		if (!LABEL_PATTERN.test(label)) {
+			throw new RpcError(
+				RpcCode.Invalid,
+				"The directory name and ompc name together must be 1–64 letters, digits, dots, underscores or hyphens, starting with a letter or digit.",
+			);
+		}
+		const release = await this.options.acquireLaunchLock();
+		if (!release) throw new RpcError(RpcCode.Busy, "Another session is being started on this host; retry shortly.");
+		try {
+			await this.#openIds();
+			await this.#launch(cwd, ["--detach", "--new", ...(params.name ? [params.name] : []), "--fork", params.sessionFile]);
+			return { ok: true, label };
+		} finally {
+			release();
+		}
+	}
+
 	async start(params: unknown) {
 		const value = params && typeof params === "object" ? (params as Record<string, unknown>) : undefined;
 		if (
@@ -159,37 +223,16 @@ export class HostSessions {
 				if (!session) throw new RpcError(-32001, "The past session no longer exists on this host.");
 				args.push("--resume", session.path);
 			} else args.push("--session-dir", await this.options.newSessionDir(cwd));
-			let launcher = this.options.launcher;
-			if (!launcher) {
-				const installed = join(homedir(), ".local", "bin", "ompc");
-				launcher = await stat(installed).then(
-					() => installed,
-					(error: NodeJS.ErrnoException) => {
-						if (error.code !== "ENOENT") throw error;
-						return "ompc";
-					},
-				);
-			}
-			const env = { ...process.env };
-			delete env.TMUX;
-			delete env.TMUX_PANE;
-			delete env.OMPC_SESSION;
 			const saved = id ? await this.#saved(id) : undefined;
 			if (id) await this.#save(id, { name: value.name, pendingUntil: Date.now() + 60_000 });
 			try {
-				await exec(launcher, args, {
-					cwd,
-					env,
-					timeout: 15_000,
-					maxBuffer: 64 * 1024,
-				});
+				await this.#launch(cwd, args);
 			} catch (error) {
-				const failure = error as Error & { code?: number; stderr?: string };
 				if (id) {
 					if (saved) await this.#save(id, saved);
 					else await unlink(join(this.#stateDir, `${id}.json`));
 				}
-				throw new RpcError(failure.code === 73 ? -32002 : RpcCode.Internal, failure.stderr?.trim() || failure.message);
+				throw error;
 			}
 			return { ok: true, label };
 		} finally {

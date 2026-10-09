@@ -24,6 +24,7 @@ function createHarness(access: "view" | "control", context: unknown = { models: 
     access: getAccess,
     files: {} as never,
     scheduler: {} as never,
+    forkCurrentSession: async () => ({ ok: true, label: "project.fork" }),
   });
   return { rpc };
 }

@@ -158,4 +158,21 @@ describe("host session management", () => {
 		await expect(service.start({ cwd, name: "other", sessionId: "old" })).rejects.toMatchObject({ code: -32002 });
 		expect((await service.list()).sessions.map((session) => session.sessionId)).toEqual(["recent"]);
 	});
+	test("forks the current session through omp's built-in fork option", async () => {
+		sockets.add("project.snapshot");
+		const sessionFile = join(root, "current session.jsonl");
+		await expect(service.forkCurrent({ cwd, name: "snapshot", sessionFile })).resolves.toEqual({
+			ok: true,
+			label: "project.snapshot",
+		});
+		expect(await started()).toEqual({
+			args: ["--fork", sessionFile],
+			cwd,
+			parent: "project.snapshot",
+		});
+		await expect(service.forkCurrent({ cwd, name: "bad;name", sessionFile })).rejects.toMatchObject({
+			code: -32004,
+		});
+	});
+
 });
