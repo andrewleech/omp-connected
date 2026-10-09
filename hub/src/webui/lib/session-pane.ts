@@ -416,7 +416,9 @@ export class SessionPane {
 
     const groups = groupModels(info?.models ?? [], info?.model ?? null);
     this.#models = groups.flatMap((group) =>
-      group.models.map((model) => ({ ...model })),
+      group.models.map((model) => ({ ...model })).sort((a, b) =>
+        b.name.localeCompare(a.name, undefined, { numeric: true }),
+      ),
     );
     const currentModel =
       this.#pendingModel ?? (info?.model ? modelValue(info.model) : "");
