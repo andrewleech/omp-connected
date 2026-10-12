@@ -341,6 +341,8 @@ export const SCHEDULE_FEATURE = "session.schedule.v1";
 export const EXIT_FEATURE = "session.exit.v1";
 /** Advertised by sessions that can fork their current transcript. */
 export const SESSION_FORK_FEATURE = "session.fork.v1";
+/** Advertised by sessions that expose provider quota reports to control guests. */
+export const USAGE_FEATURE = "session.usage.v1";
 /** The extension's limits for a scheduled prompt. */
 export const MAX_SCHEDULED_TEXT = 100_000;
 export const MAX_SCHEDULE_DELAY_MS = 7 * 24 * 60 * 60 * 1000;
@@ -377,6 +379,29 @@ export interface SessionInfoResult {
     percent: number | null;
   } | null;
   models: SessionModelRef[];
+}
+export interface SessionUsageLimitResult {
+  label: string;
+  unit: string;
+  used: number | null;
+  limit: number | null;
+  remaining: number | null;
+  usedFraction: number | null;
+  status: string | null;
+  window: {
+    label: string;
+    resetsAt: number | null;
+    resetLabel: string | null;
+  } | null;
+}
+
+export interface SessionUsageResult {
+  generatedAt: number;
+  reports: Array<{
+    provider: string;
+    fetchedAt: number | null;
+    limits: SessionUsageLimitResult[];
+  }>;
 }
 
 export type SessionFileType = "file" | "dir" | "symlink" | "other";
@@ -461,6 +486,7 @@ export interface SessionMethodParams {
   "session.cancel_scheduled": { id: string };
   "session.model_roles": Record<string, never>;
   "session.set_model_role": SetModelRoleParams;
+  "session.usage": Record<string, never>;
 }
 
 export interface SessionMethodResult {
@@ -481,6 +507,7 @@ export interface SessionMethodResult {
   "session.scheduled": { prompts: ScheduledPromptResult[] };
   "session.cancel_scheduled": OkResult;
   "session.model_roles": ModelRolesInfo;
+  "session.usage": SessionUsageResult;
   "session.set_model_role": ModelRolesInfo;
 }
 

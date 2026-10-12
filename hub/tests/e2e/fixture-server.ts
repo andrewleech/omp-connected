@@ -23,6 +23,7 @@ const sessions = {
       "session.exit.v1",
       "session.fork.v1",
       "session.model_roles.v1",
+      "session.usage.v1",
     ],
   },
   viewer: {
@@ -216,6 +217,34 @@ async function writerSessionApi(
     return json({ ok: true });
   }
   if (route === "/info") return json(writerInfo);
+  if (route === "/usage") {
+    const generatedAt = Date.now();
+    return json({
+      generatedAt,
+      reports: [
+        {
+          provider: "anthropic",
+          fetchedAt: generatedAt - 30_000,
+          limits: [
+            {
+              label: "Weekly",
+              unit: "percent",
+              used: 42,
+              limit: 100,
+              remaining: 58,
+              usedFraction: 0.42,
+              status: "ok",
+              window: {
+                label: "7 Day",
+                resetsAt: generatedAt + 3_600_000,
+                resetLabel: "Resets",
+              },
+            },
+          ],
+        },
+      ],
+    });
+  }
   if (route === "/model" && request.method === "POST") {
     const body = (await request.json()) as { provider: string; id: string };
     const model = models.find(

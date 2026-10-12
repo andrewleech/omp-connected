@@ -4,8 +4,11 @@ import {
   FILE_CHUNK_BYTES,
   sessionRpcRoutes,
 } from "@/server/session-rpc-routes";
-import { MODEL_ROLES_FEATURE, SESSION_FORK_FEATURE } from "@/server/types";
-
+import {
+  MODEL_ROLES_FEATURE,
+  SESSION_FORK_FEATURE,
+  USAGE_FEATURE,
+} from "@/server/types";
 const HOST = "user@hub-host";
 const BASE = `http://localhost/api/hosts/${HOST}/sessions`;
 
@@ -142,6 +145,31 @@ function post(route: string, body?: unknown) {
         }),
   });
 }
+test("usage route forwards reports only to sessions advertising the feature", async () => {
+  const registry = new AgentRegistry();
+  const usage = { generatedAt: 12, reports: [] };
+  const calls = registerSessionAgent(
+    registry,
+    (method, params) => {
+      expect(params).toEqual({});
+      return method === "session.usage" ? usage : {};
+    },
+    { features: ["session.v1", USAGE_FEATURE] },
+  );
+  const app = sessionRpcRoutes(registry);
+  const response = await app.handle(new Request(`${BASE}/inst-1/usage`));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual(usage);
+  expect(calls).toEqual([{ method: "session.usage", params: {} }]);
+
+  const unsupported = new AgentRegistry();
+  registerSessionAgent(unsupported, () => usage, { features: ["session.v1"] });
+  const failure = await sessionRpcRoutes(unsupported).handle(
+    new Request(`${BASE}/inst-1/usage`),
+  );
+  expect(failure.status).toBe(501);
+});
+
 test("fork route targets the selected session and requires the fork feature", async () => {
   const registry = new AgentRegistry();
   const calls: Call[] = [];
