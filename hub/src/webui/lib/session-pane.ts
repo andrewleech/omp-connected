@@ -13,6 +13,7 @@ import {
   MAX_COMPACT_INSTRUCTIONS,
   NEEDS_UPDATE_NOTE,
   type SessionInfo,
+  type SessionUsage,
   VIEW_ONLY_CONTROLS_NOTE,
   contextSummary,
   groupModels,
@@ -21,7 +22,9 @@ import {
   postJson,
   requestJson,
   sessionApiBase,
+  supportsSessionUsage,
   supportsSessionV1,
+  usageApiUrl,
 } from "./session-api";
 import { type CollabSession, sessionKey, sessionLabel } from "./workspace";
 
@@ -65,6 +68,12 @@ export class SessionPane {
   readonly #thinkingSelect: HTMLSelectElement;
   readonly #compactInput: HTMLInputElement;
   readonly #compactButton: HTMLButtonElement;
+  readonly #usageButton: HTMLButtonElement;
+  readonly #usageDialog: HTMLDialogElement;
+  readonly #usageTitle: HTMLElement;
+  readonly #usageContent: HTMLElement;
+  readonly #usageError: HTMLElement;
+  #usageLoading = false;
   readonly #abortButton: HTMLButtonElement;
 
   constructor(host: PaneHost) {
@@ -116,7 +125,8 @@ export class SessionPane {
       window.setTimeout(() => {
         this.#modelOpen = false;
         this.#modelSearch.value =
-          this.#models.find((model) => modelValue(model) === this.#modelValue)?.name ?? "";
+          this.#models.find((model) => modelValue(model) === this.#modelValue)
+            ?.name ?? "";
         this.#renderModelOptions();
       }, 100);
     });
@@ -137,11 +147,33 @@ export class SessionPane {
       text: "Compact",
     }) as HTMLButtonElement;
     const compactRow = el("div", { className: "compact-row" });
-    compactRow.append(this.#compactInput, this.#compactButton);
+    this.#usageButton = button("Usage");
+    this.#usageButton.type = "button";
+    this.#usageButton.addEventListener("click", () => void this.#onUsage());
+    compactRow.append(
+      this.#compactInput,
+      this.#compactButton,
+      this.#usageButton,
+    );
     compactForm.append(
       el("span", { className: "field-label", text: "Compact context" }),
       compactRow,
     );
+    this.#usageDialog = document.createElement("dialog");
+    this.#usageDialog.className = "usage-dialog";
+    this.#usageTitle = el("h2", { text: "Provider usage" });
+    this.#usageTitle.id = "usage-dialog-title";
+    this.#usageDialog.setAttribute("aria-labelledby", this.#usageTitle.id);
+    this.#usageError = el("p", { className: "pane-note error" });
+    this.#usageError.setAttribute("role", "alert");
+    this.#usageError.hidden = true;
+    this.#usageContent = el("div", { className: "usage-content" });
+    const usageClose = button("Close", "small");
+    usageClose.type = "button";
+    usageClose.addEventListener("click", () => this.#usageDialog.close());
+    const usageHeader = el("header", { className: "usage-dialog-header" });
+    usageHeader.append(this.#usageTitle, usageClose);
+    this.#usageDialog.append(usageHeader, this.#usageError, this.#usageContent);
     compactForm.addEventListener("submit", (event) => {
       event.preventDefault();
       void this.#onCompact();
@@ -165,6 +197,7 @@ export class SessionPane {
       el("h2", { text: "Session" }),
       this.#empty,
       this.#note,
+      this.#usageDialog,
       this.#infoList,
       this.#controls,
     );
@@ -195,6 +228,8 @@ export class SessionPane {
       this.#pendingThinking = null;
       this.#unsupported = false;
       this.#busy = null;
+      this.#usageLoading = false;
+      this.#usageDialog.close();
       this.#compactInput.value = "";
       this.#update();
       if (this.#active) void this.refresh();
@@ -303,25 +338,35 @@ export class SessionPane {
   #renderModelOptions(): void {
     const query = this.#modelSearch.value.trim().toLowerCase();
     const matches = this.#models.filter((model) =>
-      `${model.name} ${model.provider} ${model.id}`.toLowerCase().includes(query),
+      `${model.name} ${model.provider} ${model.id}`
+        .toLowerCase()
+        .includes(query),
     );
     this.#modelOptions.hidden = !this.#modelOpen || !this.#canControl();
-    this.#modelSearch.setAttribute("aria-expanded", String(!this.#modelOptions.hidden));
-    this.#modelOptions.replaceChildren(...matches.map((model) => {
-      const option = button(`${model.name} (${model.provider})`, "model-option");
-      option.type = "button";
-      option.setAttribute("role", "option");
-      option.addEventListener("mousedown", (event) => event.preventDefault());
-      option.addEventListener("click", () => {
-        const value = modelValue(model);
-        this.#modelValue = value;
-        this.#modelSearch.value = model.name;
-        this.#modelOpen = false;
-        this.#renderModelOptions();
-        this.#onModelChange(value);
-      });
-      return option;
-    }));
+    this.#modelSearch.setAttribute(
+      "aria-expanded",
+      String(!this.#modelOptions.hidden),
+    );
+    this.#modelOptions.replaceChildren(
+      ...matches.map((model) => {
+        const option = button(
+          `${model.name} (${model.provider})`,
+          "model-option",
+        );
+        option.type = "button";
+        option.setAttribute("role", "option");
+        option.addEventListener("mousedown", (event) => event.preventDefault());
+        option.addEventListener("click", () => {
+          const value = modelValue(model);
+          this.#modelValue = value;
+          this.#modelSearch.value = model.name;
+          this.#modelOpen = false;
+          this.#renderModelOptions();
+          this.#onModelChange(value);
+        });
+        return option;
+      }),
+    );
   }
 
   #onThinkingChange(): void {
@@ -343,6 +388,41 @@ export class SessionPane {
     if (ok && this.#key === key) {
       this.#compactInput.value = "";
       this.#host.showStatus("Compaction started", "ok");
+    }
+  }
+  async #onUsage(): Promise<void> {
+    const session = this.#session;
+    const key = this.#key;
+    if (
+      !session ||
+      !key ||
+      this.#usageLoading ||
+      !supportsSessionUsage(session) ||
+      this.#info?.access !== "control"
+    )
+      return;
+    this.#usageLoading = true;
+    this.#usageError.hidden = true;
+    this.#usageContent.textContent = "Loading provider usage…";
+    this.#usageTitle.textContent = `Provider usage · ${sessionLabel(session)}`;
+    this.#usageDialog.showModal();
+    this.#update();
+    try {
+      const usage = await requestJson<SessionUsage>(
+        usageApiUrl(session.host_id, session.instanceId),
+      );
+      if (this.#key !== key || this.#info?.access !== "control") return;
+      this.#usageContent.replaceChildren(renderUsage(usage));
+    } catch (error) {
+      if (this.#key !== key || this.#info?.access !== "control") return;
+      this.#usageError.textContent = (error as Error).message;
+      this.#usageError.hidden = false;
+      this.#usageContent.replaceChildren();
+    } finally {
+      if (this.#key === key) {
+        this.#usageLoading = false;
+        this.#update();
+      }
     }
   }
 
@@ -416,17 +496,21 @@ export class SessionPane {
 
     const groups = groupModels(info?.models ?? [], info?.model ?? null);
     this.#models = groups.flatMap((group) =>
-      group.models.map((model) => ({ ...model })).sort((a, b) =>
-        b.name.localeCompare(a.name, undefined, { numeric: true }),
-      ),
+      group.models
+        .map((model) => ({ ...model }))
+        .sort((a, b) =>
+          b.name.localeCompare(a.name, undefined, { numeric: true }),
+        ),
     );
     const currentModel =
       this.#pendingModel ?? (info?.model ? modelValue(info.model) : "");
     this.#modelValue = currentModel;
     if (!this.#modelOpen)
       this.#modelSearch.value =
-        this.#models.find((model) => modelValue(model) === currentModel)?.name ??
-        (info?.model?.name ?? "");
+        this.#models.find((model) => modelValue(model) === currentModel)
+          ?.name ??
+        info?.model?.name ??
+        "";
     this.#renderModelOptions();
 
     const levels = info?.thinkingLevels ?? [];
@@ -453,7 +537,122 @@ export class SessionPane {
     this.#compactInput.disabled = viewOnly;
     this.#compactButton.disabled = !canControl;
     this.#abortButton.disabled = !canControl || !info || info.idle;
+    this.#usageButton.hidden = !supportsSessionUsage(this.#session ?? {});
+    const canReadUsage =
+      !this.#usageButton.hidden && info?.access === "control";
+    this.#usageButton.disabled = !canControl || this.#usageLoading;
+    if (!canReadUsage && this.#usageDialog.open) this.#usageDialog.close();
   }
+}
+function renderUsage(usage: SessionUsage): HTMLElement {
+  const providers = new Map<string, SessionUsage["reports"]>();
+  for (const report of usage.reports) {
+    const reports = providers.get(report.provider) ?? [];
+    reports.push(report);
+    providers.set(report.provider, reports);
+  }
+  const content = el("div", { className: "usage-providers" });
+  if (providers.size === 0) {
+    content.append(
+      el("p", {
+        className: "empty",
+        text: "No provider quota reports are available.",
+      }),
+    );
+    return content;
+  }
+  for (const [provider, reports] of [...providers].sort(([a], [b]) =>
+    a.localeCompare(b),
+  )) {
+    const section = el("section", { className: "usage-provider" });
+    section.append(el("h3", { text: provider }));
+    reports.forEach((report, index) => {
+      const account = el("div", { className: "usage-account" });
+      const updated =
+        report.fetchedAt === null
+          ? ""
+          : ` · updated ${elapsedText(Math.max(0, usage.generatedAt - report.fetchedAt))} ago`;
+      account.append(el("h4", { text: `Account ${index + 1}${updated}` }));
+      if (report.limits.length === 0) {
+        account.append(
+          el("p", { className: "empty", text: "No limits reported." }),
+        );
+      }
+      for (const limit of report.limits) {
+        const row = el("div", { className: "usage-limit" });
+        row.append(
+          el("span", { className: "usage-limit-label", text: limit.label }),
+        );
+        const summary = el("span", {
+          className: "usage-limit-summary",
+          text: usageAmountText(limit),
+        });
+        row.append(summary);
+        if (limit.usedFraction !== null) {
+          const percent = Math.max(0, Math.min(100, limit.usedFraction * 100));
+          const meter = el("div", { className: "usage-meter" });
+          meter.setAttribute("role", "progressbar");
+          meter.setAttribute("aria-label", `${limit.label} used`);
+          meter.setAttribute("aria-valuemin", "0");
+          meter.setAttribute("aria-valuemax", "100");
+          meter.setAttribute("aria-valuenow", String(Math.round(percent)));
+          const fill = el("span");
+          fill.style.width = `${percent}%`;
+          meter.append(fill);
+          row.append(meter);
+        }
+        if (
+          limit.window?.resetsAt !== null &&
+          limit.window?.resetsAt !== undefined
+        ) {
+          const reset = new Date(limit.window.resetsAt).toLocaleString();
+          row.append(
+            el("span", {
+              className: "usage-reset",
+              text: `${limit.window.resetLabel ?? "Resets"} ${reset}`,
+            }),
+          );
+        }
+        account.append(row);
+      }
+      section.append(account);
+    });
+    content.append(section);
+  }
+  return content;
+}
+
+function usageAmountText(
+  limit: SessionUsage["reports"][number]["limits"][number],
+): string {
+  if (limit.unit === "percent" && limit.used !== null) {
+    return `${formatUsageNumber(limit.used)}% used`;
+  }
+  if (limit.used !== null && limit.limit !== null) {
+    return `${formatUsageNumber(limit.used)} / ${formatUsageNumber(limit.limit)} ${limit.unit}`;
+  }
+  if (limit.remaining !== null) {
+    return `${formatUsageNumber(limit.remaining)} ${limit.unit} remaining`;
+  }
+  if (limit.usedFraction !== null)
+    return `${Math.round(limit.usedFraction * 100)}% used`;
+  return limit.status === "unknown"
+    ? "Usage unavailable"
+    : (limit.status ?? "Usage unavailable");
+}
+
+function formatUsageNumber(value: number): string {
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(
+    value,
+  );
+}
+
+function elapsedText(milliseconds: number): string {
+  if (milliseconds < 60_000) return "less than a minute";
+  if (milliseconds < 3_600_000) return `${Math.floor(milliseconds / 60_000)}m`;
+  if (milliseconds < 86_400_000)
+    return `${Math.floor(milliseconds / 3_600_000)}h`;
+  return `${Math.floor(milliseconds / 86_400_000)}d`;
 }
 
 function field(label: string, control: HTMLElement): HTMLElement {

@@ -24,6 +24,7 @@ import {
   SESSION_FEATURE,
   SESSION_FORK_FEATURE,
   SESSION_RPC_ERRORS,
+  USAGE_FEATURE,
 } from "./types";
 
 /** Per-RPC deadline; a call that exceeds it answers 504. */
@@ -352,6 +353,11 @@ export function sessionRpcRoutes(
       const resolved = target(params.id, params.instanceId);
       if (!("agentId" in resolved)) return fail(set, resolved);
       return forward(set, resolved.agentId, "session.info", {});
+    })
+    .get("/:id/sessions/:instanceId/usage", ({ params, set }) => {
+      const resolved = target(params.id, params.instanceId, USAGE_FEATURE);
+      if (!("agentId" in resolved)) return fail(set, resolved);
+      return forward(set, resolved.agentId, "session.usage", {});
     })
 
     .post("/:id/sessions/:instanceId/abort", ({ params, set }) =>

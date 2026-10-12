@@ -90,10 +90,11 @@ interface HostCollabSession {
 
 ### Session inspection and file transfer (`session.v1`)
 
-An extension that registers with `features: ["session.v1"]` answers the inspector calls for its own omp session. The optional `session.schedule.v1`, `session.exit.v1` and `session.fork.v1` features advertise scheduled prompts, graceful session exit and current-head session forking respectively. The hub sends each call to that agent's own connection (`AgentRegistry.callOnAgent`), never to another agent on the same host.
+An extension that registers with `features: ["session.v1"]` answers the inspector calls for its own omp session. The optional `session.schedule.v1`, `session.exit.v1`, `session.fork.v1` and `session.usage.v1` features advertise scheduled prompts, graceful session exit, current-head session forking and provider quota reports respectively. The hub sends each call to that agent's own connection (`AgentRegistry.callOnAgent`), never to another agent on the same host.
 
 ```ts
 "session.info" {} -> { cwd; pid; sessionName; access: "view" | "control"; idle; model; thinkingLevel; thinkingLevels: string[]; contextUsage; models }
+"session.usage" {} -> { generatedAt; reports: { provider; fetchedAt; limits: { label; unit; used; limit; remaining; usedFraction; status; window }[] }[] }
 "session.abort" {} -> { ok: true }
 "session.exit" {} -> { ok: true }  // shuts down OMP after its reply is sent; an ompc tmux server exits with its only pane
 "session.fork" { name } -> { ok: true; label }  // snapshots this idle session's current head into a new ompc session
@@ -108,7 +109,7 @@ An extension that registers with `features: ["session.v1"]` answers the inspecto
 "files.mkdir" { path } -> { ok: true }
 ```
 
-Paths are POSIX, relative to the session's working directory at start (realpath'd); the extension refuses absolute paths, NUL bytes, `..` above the root and anything whose realpath (including through a symlink) is outside the root. `session.info` and `session.model_roles` are readable with either access level; every other method needs the session's own Collab share to have `control` access. `session.exit` calls OMP's graceful shutdown after the RPC reply has been sent, so the dashboard receives an answer before the session disconnects. Uploads go to a temp file `.<name>.omp-upload-<uploadId>` next to the target and are renamed into place on the final chunk; unfinished uploads are discarded after 10 minutes without a chunk and when the session shuts down.
+Paths are POSIX, relative to the session's working directory at start (realpath'd); the extension refuses absolute paths, NUL bytes, `..` above the root and anything whose realpath (including through a symlink) is outside the root. `session.info` and `session.model_roles` are readable with either access level; every other method, including `session.usage`, needs the session's own Collab share to have `control` access. Usage reports contain quota details but omit account identities and provider-specific raw payloads. `session.exit` calls OMP's graceful shutdown after the RPC reply has been sent, so the dashboard receives an answer before the session disconnects. Uploads go to a temp file `.<name>.omp-upload-<uploadId>` next to the target and are renamed into place on the final chunk; unfinished uploads are discarded after 10 minutes without a chunk and when the session shuts down.
 Error codes and their REST mapping: -32001 not found (404), -32002 exists (409), -32003 forbidden (403), -32004 invalid (400), -32005 changed during a download (409), -32006 busy (409), -32601 unknown method (501), anything else 502. A call with no reply in 15 s answers 504.
 
 
@@ -121,6 +122,8 @@ The extension advertises `session.model_roles.v1` only when its running OMP cont
 "session.model_roles" {} -> { access: "view" | "control"; storage: "global" | "project"; roles: ModelRoleInfo[] }
 "session.set_model_role" { role: string; selector: string | null; scope?: "global" | "project" } -> ModelRolesInfo
 ```
+
+`session.usage.v1` adds a read-only `GET /api/hosts/:id/sessions/:instanceId/usage` endpoint. The inspector opens it from the Usage button beside Compact and shows the provider windows in a dialog.
 
 `ModelRoleInfo` contains the role id/name, effective selector and provenance, global/project selectors, resolved model, and eligible models with their thinking levels. A null selector resets the assignment. Reads are allowed with view access; writes require control access and are limited to 20 per 10 seconds per session. OMP owns selector validation, role resolution, fallback behavior, and persistence.
 
@@ -174,10 +177,10 @@ REST routes built on top of the same live registry:
 - `POST /api/hosts/:id/collab/:instanceId/link` `{ generation, access }` →
   `{ access, url, expiresAt }` — forwards a `collab.link` call the same
   way.
-- `/api/hosts/:id/sessions/:instanceId/...`: the `session.v1` calls for the agent `${id}:${instanceId}`: 404 when it isn't connected, 501 when it didn't advertise the required feature (`session.schedule.v1` for scheduling, `session.exit.v1` for exit, `session.fork.v1` for forking, `session.model_roles.v1` for role editing, otherwise `session.v1`).
-  - `GET info`, `POST abort`, `POST exit`, `POST fork` `{ name }`, `POST compact` `{ instructions? }`, `POST model` `{ provider, id }`, `POST thinking` `{ level }`.
+- `/api/hosts/:id/sessions/:instanceId/...`: the `session.v1` calls for the agent `${id}:${instanceId}`: 404 when it isn't connected, 501 when it didn't advertise the required feature (`session.schedule.v1` for scheduling, `session.exit.v1` for exit, `session.fork.v1` for forking, `session.model_roles.v1` for role editing, `session.usage.v1` for provider usage, otherwise `session.v1`).
+  - `GET info`, `POST abort`, `POST exit`, `POST fork` `{ name }`, `POST compact` `{ instructions? }`, `POST model` `{ provider, id }`, `POST thinking` `{ level }`, `GET usage`.
   - `GET model-roles` returns ModelRolesInfo; `POST model-roles` `{ role, selector, scope? }` returns fresh ModelRolesInfo. GET permits view shares; POST requires control.
-  - `GET scheduled`, `POST scheduled` `{ text, delayMs }`, `DELETE scheduled/:scheduleId`.
+  - `GET usage` returns quota windows for configured providers and requires control access.
   - `GET files?path=` lists a directory, `POST files/mkdir` `{ path }` creates one.
   - `GET files/download?path=[&inline=1]` streams a file as `files.read` chunks of 256 KiB, each checked against the size and mtime of the initial `files.stat`, so a file that changes mid-download errors the stream instead of mixing versions. The response is always `attachment` with `content-security-policy: sandbox` and `nosniff`; `inline=1` only applies to PNG, JPEG, GIF and WebP.
   - `PUT files/upload?path=&overwrite=0|1` streams the raw body into `files.write` chunks of 256 KiB, awaiting each before reading on; over 256 MiB answers 413 and aborts the upload.
@@ -256,7 +259,7 @@ deployment documentation use placeholder hostnames such as
   timestamp; expired links are rejected by the relay on connect. A fresh
   link must be requested (and freshly authorized by the host) for each new
   guest session — links are not long-lived bearer tokens.
-- **Session controls and files follow the Collab share.** The dashboard's `session.v1` routes have no authentication of their own beyond reaching the hub, like the rest of the REST API. What they can do is decided by the omp session: only `session.info` works on a view-only share, and file access is confined to the session's working directory by realpath. Downloads are always served with `content-security-policy: sandbox` and `x-content-type-options: nosniff`, and only raster images may be shown inline, so a file from a session cannot run script in the dashboard's origin.
+- **Session controls and files follow the Collab share.** The dashboard's `session.v1` routes have no authentication of their own beyond reaching the hub, like the rest of the REST API. What they can do is decided by the omp session: `session.info` and `session.model_roles` work with either access level, while provider usage and all controls require `control`. File access is confined to the session's working directory by realpath. Downloads are always served with `content-security-policy: sandbox` and `x-content-type-options: nosniff`, and only raster images may be shown inline, so a file from a session cannot run script in the dashboard's origin.
 
 ## Scope
 

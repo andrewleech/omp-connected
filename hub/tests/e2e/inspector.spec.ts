@@ -29,6 +29,27 @@ test("Session tab searches available models and switches its model", async ({
   await expect(modelSearch).toHaveValue("GPT B");
 });
 
+test("Session tab shows provider quota windows in a usage popup", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Session", exact: true }).click();
+  const pane = page.locator("[data-session-pane]");
+  const usageButton = pane.getByRole("button", { name: "Usage" });
+  await expect(usageButton).toBeEnabled();
+  await usageButton.click();
+
+  const dialog = page.getByRole("dialog", { name: /Provider usage/ });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("anthropic");
+  await expect(dialog).toContainText("Account 1");
+  await expect(dialog).toContainText("Weekly");
+  await expect(dialog).toContainText("42% used");
+  await expect(dialog).toContainText("Resets");
+  await dialog.getByRole("button", { name: "Close" }).click();
+  await expect(dialog).not.toBeVisible();
+});
+
 test("Session tab keeps typed compact instructions across a fleet poll", async ({
   page,
 }) => {

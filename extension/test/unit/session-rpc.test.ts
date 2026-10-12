@@ -7,369 +7,481 @@ import { FileService } from "../../src/files-rpc.js";
 import { RpcCode } from "../../src/protocol.js";
 import { PromptScheduler } from "../../src/scheduled-prompts.js";
 import {
-	type AccessSource,
-	type CollabAccess,
-	createAccessCache,
-	createSessionRpc,
-	type SessionRpcDeps,
-	thinkingLevelsFor,
+  type AccessSource,
+  type CollabAccess,
+  createAccessCache,
+  createSessionRpc,
+  type SessionRpcDeps,
+  thinkingLevelsFor,
 } from "../../src/session-rpc.js";
 
 type Model = NonNullable<ExtensionContext["model"]>;
 
 const sonnet = {
-	provider: "anthropic",
-	id: "claude-sonnet",
-	name: "Claude Sonnet",
-	reasoning: true,
-	thinking: { efforts: ["low", "medium", "high"] },
+  provider: "anthropic",
+  id: "claude-sonnet",
+  name: "Claude Sonnet",
+  reasoning: true,
+  thinking: { efforts: ["low", "medium", "high"] },
 } as unknown as Model;
-const plain = { provider: "openai", id: "gpt-plain", name: "GPT Plain", reasoning: false } as unknown as Model;
+const plain = {
+  provider: "openai",
+  id: "gpt-plain",
+  name: "GPT Plain",
+  reasoning: false,
+} as unknown as Model;
 
 let root: string;
 let files: FileService;
 
 beforeEach(async () => {
-	root = await fs.mkdtemp(path.join(os.tmpdir(), "omp-session-rpc-"));
-	files = await FileService.open(root);
+  root = await fs.mkdtemp(path.join(os.tmpdir(), "omp-session-rpc-"));
+  files = await FileService.open(root);
 });
 
 afterEach(async () => {
-	await files.dispose();
-	await fs.rm(root, { recursive: true, force: true });
+  await files.dispose();
+  await fs.rm(root, { recursive: true, force: true });
 });
 
-function harness(options: { access?: CollabAccess | AccessSource; idle?: boolean; pending?: boolean; setModelResult?: boolean } = {}) {
-	const level = typeof options.access === "string" ? options.access : "control";
-	const access: AccessSource =
-		typeof options.access === "object" ? options.access : { current: async () => level, refresh: async () => level };
-	const calls = {
-		abort: 0,
-		compact: [] as (string | undefined)[],
-		setModel: [] as Model[],
-		thinking: [] as string[],
-		forks: [] as { cwd: string; name: string; sessionFile: string }[],
-	};
-	const warnings: string[] = [];
-	let onWarn: () => void = () => undefined;
-	const compaction = Promise.withResolvers<void>();
-	const state = { model: sonnet as Model | undefined, idle: options.idle ?? true, pending: options.pending ?? false };
-	const ctx = {
-		get model() {
-			return state.model;
-		},
-		models: { list: () => [sonnet, plain] },
-		isIdle: () => state.idle,
-		hasPendingMessages: () => state.pending,
-		sessionManager: {
-			getCwd: () => root,
-			getSessionFile: () => path.join(root, "current.jsonl"),
-		},
-		abort: () => {
-			calls.abort += 1;
-		},
-		compact: (instructions?: string) => {
-			calls.compact.push(instructions);
-			return compaction.promise;
-		},
-		getContextUsage: () => ({ tokens: 1200, contextWindow: 200_000, percent: Number.NaN }),
-	} as unknown as ExtensionContext;
-	const pi = {
-		getThinkingLevel: () => "medium",
-		setThinkingLevel: (level: string) => calls.thinking.push(level),
-		setModel: async (model: Model) => {
-			calls.setModel.push(model);
-			return options.setModelResult ?? true;
-		},
-		getSessionName: () => undefined,
-		logger: {
-			warn: (message: string) => {
-				warnings.push(message);
-				onWarn();
-			},
-		},
-	} as unknown as SessionRpcDeps["pi"];
-	// Never fires within a test: the clock stands still and the timer is inert.
-	const scheduler = new PromptScheduler({
-		send: () => undefined,
-		onError: () => undefined,
-		now: () => 5_000,
-		setTimer: () => undefined,
-		clearTimer: () => undefined,
-	});
-	const handle = createSessionRpc({
-		pi,
-		context: () => ctx,
-		access,
-		files,
-		scheduler,
-		forkCurrentSession: async (params) => {
-			calls.forks.push(params);
-			return { ok: true, label: "project.fork" };
-		},
-	});
-	return {
-		handle,
-		calls,
-		warnings,
-		state,
-		compaction,
-		/** Resolves on the next logged warning. */
-		nextWarning: () => new Promise<void>((resolve) => {
-			onWarn = resolve;
-		}),
-	};
+function harness(
+  options: {
+    access?: CollabAccess | AccessSource;
+    idle?: boolean;
+    pending?: boolean;
+    setModelResult?: boolean;
+    usageReports?: unknown[];
+  } = {},
+) {
+  const level = typeof options.access === "string" ? options.access : "control";
+  const access: AccessSource =
+    typeof options.access === "object"
+      ? options.access
+      : { current: async () => level, refresh: async () => level };
+  const calls = {
+    abort: 0,
+    compact: [] as (string | undefined)[],
+    setModel: [] as Model[],
+    thinking: [] as string[],
+    forks: [] as { cwd: string; name: string; sessionFile: string }[],
+  };
+  const warnings: string[] = [];
+  let onWarn: () => void = () => undefined;
+  const compaction = Promise.withResolvers<void>();
+  const state = {
+    model: sonnet as Model | undefined,
+    idle: options.idle ?? true,
+    pending: options.pending ?? false,
+  };
+  const ctx = {
+    get model() {
+      return state.model;
+    },
+    models: { list: () => [sonnet, plain] },
+    modelRegistry: {
+      getProviderBaseUrl: () => undefined,
+      authStorage: {
+        usage: { reports: async () => options.usageReports ?? [] },
+      },
+    },
+    isIdle: () => state.idle,
+    hasPendingMessages: () => state.pending,
+    sessionManager: {
+      getCwd: () => root,
+      getSessionFile: () => path.join(root, "current.jsonl"),
+    },
+    abort: () => {
+      calls.abort += 1;
+    },
+    compact: (instructions?: string) => {
+      calls.compact.push(instructions);
+      return compaction.promise;
+    },
+    getContextUsage: () => ({ tokens: 1200, contextWindow: 200_000, percent: Number.NaN }),
+  } as unknown as ExtensionContext;
+  const pi = {
+    getThinkingLevel: () => "medium",
+    setThinkingLevel: (level: string) => calls.thinking.push(level),
+    setModel: async (model: Model) => {
+      calls.setModel.push(model);
+      return options.setModelResult ?? true;
+    },
+    getSessionName: () => undefined,
+    logger: {
+      warn: (message: string) => {
+        warnings.push(message);
+        onWarn();
+      },
+    },
+  } as unknown as SessionRpcDeps["pi"];
+  // Never fires within a test: the clock stands still and the timer is inert.
+  const scheduler = new PromptScheduler({
+    send: () => undefined,
+    onError: () => undefined,
+    now: () => 5_000,
+    setTimer: () => undefined,
+    clearTimer: () => undefined,
+  });
+  const handle = createSessionRpc({
+    pi,
+    context: () => ctx,
+    access,
+    files,
+    scheduler,
+    forkCurrentSession: async (params) => {
+      calls.forks.push(params);
+      return { ok: true, label: "project.fork" };
+    },
+  });
+  return {
+    handle,
+    calls,
+    warnings,
+    state,
+    compaction,
+    /** Resolves on the next logged warning. */
+    nextWarning: () =>
+      new Promise<void>((resolve) => {
+        onWarn = resolve;
+      }),
+  };
 }
 
 async function rpcCode(promise: Promise<unknown>): Promise<number | undefined> {
-	try {
-		await promise;
-	} catch (error) {
-		return (error as { code?: number }).code;
-	}
-	return undefined;
+  try {
+    await promise;
+  } catch (error) {
+    return (error as { code?: number }).code;
+  }
+  return undefined;
 }
 
 test("thinking levels are 'off' plus the model's efforts, and empty without controllable thinking", () => {
-	expect(thinkingLevelsFor(sonnet)).toEqual(["off", "low", "medium", "high"]);
-	expect(thinkingLevelsFor(plain)).toEqual([]);
-	expect(thinkingLevelsFor({ ...sonnet, thinking: undefined } as unknown as Model)).toEqual([]);
-	expect(thinkingLevelsFor(undefined)).toEqual([]);
+  expect(thinkingLevelsFor(sonnet)).toEqual(["off", "low", "medium", "high"]);
+  expect(thinkingLevelsFor(plain)).toEqual([]);
+  expect(thinkingLevelsFor({ ...sonnet, thinking: undefined } as unknown as Model)).toEqual([]);
+  expect(thinkingLevelsFor(undefined)).toEqual([]);
 });
 
 test("session.info reports the session, its model choices and usage, with non-finite numbers as null", async () => {
-	const { handle } = harness({ access: "view" });
-	expect(await handle("session.info", {})).toEqual({
-		cwd: files.root,
-		pid: process.pid,
-		sessionName: null,
-		access: "view",
-		idle: true,
-		model: { provider: "anthropic", id: "claude-sonnet", name: "Claude Sonnet" },
-		thinkingLevel: "medium",
-		thinkingLevels: ["off", "low", "medium", "high"],
-		contextUsage: { tokens: 1200, contextWindow: 200_000, percent: null },
-		models: [
-			{ provider: "anthropic", id: "claude-sonnet", name: "Claude Sonnet" },
-			{ provider: "openai", id: "gpt-plain", name: "GPT Plain" },
-		],
-	});
+  const { handle } = harness({ access: "view" });
+  expect(await handle("session.info", {})).toEqual({
+    cwd: files.root,
+    pid: process.pid,
+    sessionName: null,
+    access: "view",
+    idle: true,
+    model: { provider: "anthropic", id: "claude-sonnet", name: "Claude Sonnet" },
+    thinkingLevel: "medium",
+    thinkingLevels: ["off", "low", "medium", "high"],
+    contextUsage: { tokens: 1200, contextWindow: 200_000, percent: null },
+    models: [
+      { provider: "anthropic", id: "claude-sonnet", name: "Claude Sonnet" },
+      { provider: "openai", id: "gpt-plain", name: "GPT Plain" },
+    ],
+  });
+});
+test("session.usage returns quota values without provider account identity", async () => {
+  const { handle } = harness({
+    usageReports: [
+      {
+        provider: "anthropic",
+        fetchedAt: 1_000,
+        metadata: { email: "person@example.invalid" },
+        raw: { accessToken: "secret" },
+        limits: [
+          {
+            label: "Weekly",
+            amount: { unit: "percent", used: 37 },
+            status: "ok",
+            window: { label: "7 Day", resetsAt: 50_000, resetLabel: "Resets" },
+            scope: { accountId: "account-secret" },
+          },
+        ],
+      },
+    ],
+  });
+  const result = (await handle("session.usage", {})) as {
+    generatedAt: number;
+    reports: unknown[];
+  };
+  expect(result).toEqual({
+    generatedAt: expect.any(Number),
+    reports: [
+      {
+        provider: "anthropic",
+        fetchedAt: 1_000,
+        limits: [
+          {
+            label: "Weekly",
+            unit: "percent",
+            used: 37,
+            limit: null,
+            remaining: null,
+            usedFraction: 0.37,
+            status: "ok",
+            window: { label: "7 Day", resetsAt: 50_000, resetLabel: "Resets" },
+          },
+        ],
+      },
+    ],
+  });
+  expect(JSON.stringify(result)).not.toContain("person@example.invalid");
+  expect(JSON.stringify(result)).not.toContain("account-secret");
+  expect(JSON.stringify(result)).not.toContain("accessToken");
 });
 
 test("a view-only session answers session.info but refuses every other method as forbidden", async () => {
-	const { handle, calls } = harness({ access: "view" });
-	const gated: [string, unknown][] = [
-		["session.abort", {}],
-		["session.exit", {}],
-		["session.fork", { name: "fork" }],
-		["session.compact", {}],
-		["session.set_model", { provider: "openai", id: "gpt-plain" }],
-		["session.set_thinking", { level: "low" }],
-		["files.list", { path: "" }],
-		["files.stat", { path: "" }],
-		["files.read", { path: "x", offset: 0, length: 1 }],
-		["files.write", { path: "x", uploadId: "upload-01", offset: 0, data: "", final: true, overwrite: false }],
-		["files.write_abort", { path: "x", uploadId: "upload-01" }],
-		["files.mkdir", { path: "d" }],
-		["session.schedule_prompt", { text: "later", delayMs: 60_000 }],
-		["session.scheduled", {}],
-		["session.cancel_scheduled", { id: "x" }],
-	];
-	for (const [method, params] of gated) {
-		expect({ method, code: await rpcCode(handle(method, params)) }).toEqual({ method, code: RpcCode.Forbidden });
-	}
-	expect(calls.abort).toBe(0);
-	expect(await fs.readdir(root)).toEqual([]);
+  const { handle, calls } = harness({ access: "view" });
+  const gated: [string, unknown][] = [
+    ["session.usage", {}],
+    ["session.abort", {}],
+    ["session.exit", {}],
+    ["session.fork", { name: "fork" }],
+    ["session.compact", {}],
+    ["session.set_model", { provider: "openai", id: "gpt-plain" }],
+    ["session.set_thinking", { level: "low" }],
+    ["files.list", { path: "" }],
+    ["files.stat", { path: "" }],
+    ["files.read", { path: "x", offset: 0, length: 1 }],
+    [
+      "files.write",
+      { path: "x", uploadId: "upload-01", offset: 0, data: "", final: true, overwrite: false },
+    ],
+    ["files.write_abort", { path: "x", uploadId: "upload-01" }],
+    ["files.mkdir", { path: "d" }],
+    ["session.schedule_prompt", { text: "later", delayMs: 60_000 }],
+    ["session.scheduled", {}],
+    ["session.cancel_scheduled", { id: "x" }],
+  ];
+  for (const [method, params] of gated) {
+    expect({ method, code: await rpcCode(handle(method, params)) }).toEqual({
+      method,
+      code: RpcCode.Forbidden,
+    });
+  }
+  expect(calls.abort).toBe(0);
+  expect(await fs.readdir(root)).toEqual([]);
 });
 
 test("exit requires a live control-shared owner session", async () => {
-	const { handle } = harness();
-	expect(await handle("session.exit", {})).toEqual({ ok: true });
-	expect(await rpcCode(harness({ access: "view" }).handle("session.exit", {}))).toBe(RpcCode.Forbidden);
+  const { handle } = harness();
+  expect(await handle("session.exit", {})).toEqual({ ok: true });
+  expect(await rpcCode(harness({ access: "view" }).handle("session.exit", {}))).toBe(
+    RpcCode.Forbidden,
+  );
 });
 test("session.fork launches a snapshot of this persisted session", async () => {
-	const { handle, calls } = harness();
-	expect(await handle("session.fork", { name: "review" })).toEqual({ ok: true, label: "project.fork" });
-	expect(calls.forks).toEqual([{ cwd: root, name: "review", sessionFile: path.join(root, "current.jsonl") }]);
+  const { handle, calls } = harness();
+  expect(await handle("session.fork", { name: "review" })).toEqual({
+    ok: true,
+    label: "project.fork",
+  });
+  expect(calls.forks).toEqual([
+    { cwd: root, name: "review", sessionFile: path.join(root, "current.jsonl") },
+  ]);
 });
 
 test("session.fork refuses a busy session or queued prompt", async () => {
-	for (const options of [{ idle: false }, { pending: true }]) {
-		const { handle, calls } = harness(options);
-		expect(await rpcCode(handle("session.fork", { name: "review" }))).toBe(RpcCode.Busy);
-		expect(calls.forks).toEqual([]);
-	}
+  for (const options of [{ idle: false }, { pending: true }]) {
+    const { handle, calls } = harness(options);
+    expect(await rpcCode(handle("session.fork", { name: "review" }))).toBe(RpcCode.Busy);
+    expect(calls.forks).toEqual([]);
+  }
 });
 
-
 test("an unknown method is -32601 regardless of access", async () => {
-	expect(await rpcCode(harness({ access: "view" }).handle("session.reboot", {}))).toBe(RpcCode.MethodNotFound);
-	expect(await rpcCode(harness().handle("toString", {}))).toBe(RpcCode.MethodNotFound);
+  expect(await rpcCode(harness({ access: "view" }).handle("session.reboot", {}))).toBe(
+    RpcCode.MethodNotFound,
+  );
+  expect(await rpcCode(harness().handle("toString", {}))).toBe(RpcCode.MethodNotFound);
 });
 
 test("files methods reach the session root when control is shared", async () => {
-	const { handle } = harness();
-	expect(await handle("files.mkdir", { path: "made" })).toEqual({ ok: true });
-	expect(await handle("files.list", { path: "" })).toMatchObject({ path: "", entries: [{ name: "made", type: "dir" }] });
+  const { handle } = harness();
+  expect(await handle("files.mkdir", { path: "made" })).toEqual({ ok: true });
+  expect(await handle("files.list", { path: "" })).toMatchObject({
+    path: "",
+    entries: [{ name: "made", type: "dir" }],
+  });
 });
 
 test("set_thinking accepts only the current model's levels", async () => {
-	const { handle, calls, state } = harness();
-	expect(await handle("session.set_thinking", { level: "high" })).toEqual({ ok: true });
-	expect(await rpcCode(handle("session.set_thinking", { level: "xhigh" }))).toBe(RpcCode.Invalid);
-	expect(await rpcCode(handle("session.set_thinking", {}))).toBe(RpcCode.Invalid);
-	state.model = plain;
-	expect(await rpcCode(handle("session.set_thinking", { level: "off" }))).toBe(RpcCode.Invalid);
-	expect(calls.thinking).toEqual(["high"]);
+  const { handle, calls, state } = harness();
+  expect(await handle("session.set_thinking", { level: "high" })).toEqual({ ok: true });
+  expect(await rpcCode(handle("session.set_thinking", { level: "xhigh" }))).toBe(RpcCode.Invalid);
+  expect(await rpcCode(handle("session.set_thinking", {}))).toBe(RpcCode.Invalid);
+  state.model = plain;
+  expect(await rpcCode(handle("session.set_thinking", { level: "off" }))).toBe(RpcCode.Invalid);
+  expect(calls.thinking).toEqual(["high"]);
 });
 
 test("set_model resolves provider and id from the available models", async () => {
-	const { handle, calls } = harness();
-	expect(await handle("session.set_model", { provider: "openai", id: "gpt-plain" })).toEqual({ ok: true });
-	expect(calls.setModel).toEqual([plain]);
-	expect(await rpcCode(handle("session.set_model", { provider: "anthropic", id: "gpt-plain" }))).toBe(
-		RpcCode.NotFound,
-	);
-	expect(await rpcCode(handle("session.set_model", { provider: "openai" }))).toBe(RpcCode.Invalid);
+  const { handle, calls } = harness();
+  expect(await handle("session.set_model", { provider: "openai", id: "gpt-plain" })).toEqual({
+    ok: true,
+  });
+  expect(calls.setModel).toEqual([plain]);
+  expect(
+    await rpcCode(handle("session.set_model", { provider: "anthropic", id: "gpt-plain" })),
+  ).toBe(RpcCode.NotFound);
+  expect(await rpcCode(handle("session.set_model", { provider: "openai" }))).toBe(RpcCode.Invalid);
 });
 
 test("set_model is invalid when omp has no API key for the model", async () => {
-	const { handle } = harness({ setModelResult: false });
-	expect(await rpcCode(handle("session.set_model", { provider: "openai", id: "gpt-plain" }))).toBe(RpcCode.Invalid);
+  const { handle } = harness({ setModelResult: false });
+  expect(await rpcCode(handle("session.set_model", { provider: "openai", id: "gpt-plain" }))).toBe(
+    RpcCode.Invalid,
+  );
 });
 
 test("compact is busy while the session is working", async () => {
-	const { handle, calls } = harness({ idle: false });
-	expect(await rpcCode(handle("session.compact", { instructions: "keep it short" }))).toBe(RpcCode.Busy);
-	expect(calls.compact).toEqual([]);
+  const { handle, calls } = harness({ idle: false });
+  expect(await rpcCode(handle("session.compact", { instructions: "keep it short" }))).toBe(
+    RpcCode.Busy,
+  );
+  expect(calls.compact).toEqual([]);
 });
 
 test("compact starts compaction and replies before it finishes; a failure is logged", async () => {
-	const { handle, calls, warnings, compaction, nextWarning } = harness();
-	expect(await handle("session.compact", { instructions: "focus on the API" })).toEqual({ ok: true });
-	expect(calls.compact).toEqual(["focus on the API"]);
-	expect(warnings).toEqual([]);
+  const { handle, calls, warnings, compaction, nextWarning } = harness();
+  expect(await handle("session.compact", { instructions: "focus on the API" })).toEqual({
+    ok: true,
+  });
+  expect(calls.compact).toEqual(["focus on the API"]);
+  expect(warnings).toEqual([]);
 
-	const warned = nextWarning();
-	compaction.reject(new Error("provider down"));
-	await warned;
-	expect(warnings).toHaveLength(1);
-	expect(await rpcCode(handle("session.compact", { instructions: 5 }))).toBe(RpcCode.Invalid);
+  const warned = nextWarning();
+  compaction.reject(new Error("provider down"));
+  await warned;
+  expect(warnings).toHaveLength(1);
+  expect(await rpcCode(handle("session.compact", { instructions: 5 }))).toBe(RpcCode.Invalid);
 });
 
 test("compact is busy while a compaction it started is still running", async () => {
-	const { handle, calls, compaction } = harness();
-	expect(await handle("session.compact", {})).toEqual({ ok: true });
-	expect(await rpcCode(handle("session.compact", {}))).toBe(RpcCode.Busy);
-	expect(calls.compact).toEqual([undefined]);
+  const { handle, calls, compaction } = harness();
+  expect(await handle("session.compact", {})).toEqual({ ok: true });
+  expect(await rpcCode(handle("session.compact", {}))).toBe(RpcCode.Busy);
+  expect(calls.compact).toEqual([undefined]);
 
-	compaction.resolve();
-	// The handler clears its flag a few microtasks after the compaction settles.
-	let code = await rpcCode(handle("session.compact", {}));
-	for (let turn = 0; turn < 20 && code === RpcCode.Busy; turn += 1) {
-		code = await rpcCode(handle("session.compact", {}));
-	}
-	expect(code).toBeUndefined();
-	expect(calls.compact).toEqual([undefined, undefined]);
+  compaction.resolve();
+  // The handler clears its flag a few microtasks after the compaction settles.
+  let code = await rpcCode(handle("session.compact", {}));
+  for (let turn = 0; turn < 20 && code === RpcCode.Busy; turn += 1) {
+    code = await rpcCode(handle("session.compact", {}));
+  }
+  expect(code).toBeUndefined();
+  expect(calls.compact).toEqual([undefined, undefined]);
 });
 
 function accessHarness(options: { ttlMs?: number; staleMs?: number } = {}) {
-	const clock = { now: 0 };
-	const lookups: PromiseWithResolvers<CollabAccess | undefined>[] = [];
-	const cache = createAccessCache(
-		() => {
-			const lookup = Promise.withResolvers<CollabAccess | undefined>();
-			lookups.push(lookup);
-			return lookup.promise;
-		},
-		{ ttlMs: options.ttlMs ?? 5_000, staleMs: options.staleMs ?? 30_000, now: () => clock.now },
-	);
-	return { cache, clock, lookups };
+  const clock = { now: 0 };
+  const lookups: PromiseWithResolvers<CollabAccess | undefined>[] = [];
+  const cache = createAccessCache(
+    () => {
+      const lookup = Promise.withResolvers<CollabAccess | undefined>();
+      lookups.push(lookup);
+      return lookup.promise;
+    },
+    { ttlMs: options.ttlMs ?? 5_000, staleMs: options.staleMs ?? 30_000, now: () => clock.now },
+  );
+  return { cache, clock, lookups };
 }
 
 test("the access cache shares one in-flight lookup and reuses its answer until the TTL passes", async () => {
-	const { cache, clock, lookups } = accessHarness();
-	const first = cache.current();
-	const second = cache.current();
-	expect(lookups).toHaveLength(1);
-	lookups[0].resolve("control");
-	expect(await Promise.all([first, second])).toEqual(["control", "control"]);
+  const { cache, clock, lookups } = accessHarness();
+  const first = cache.current();
+  const second = cache.current();
+  expect(lookups).toHaveLength(1);
+  lookups[0].resolve("control");
+  expect(await Promise.all([first, second])).toEqual(["control", "control"]);
 
-	clock.now = 4_999;
-	expect(await cache.current()).toBe("control");
-	expect(lookups).toHaveLength(1);
+  clock.now = 4_999;
+  expect(await cache.current()).toBe("control");
+  expect(lookups).toHaveLength(1);
 
-	clock.now = 5_000;
-	const renewed = cache.current();
-	expect(lookups).toHaveLength(2);
-	lookups[1].resolve("view");
-	expect(await renewed).toBe("view");
+  clock.now = 5_000;
+  const renewed = cache.current();
+  expect(lookups).toHaveLength(2);
+  lookups[1].resolve("view");
+  expect(await renewed).toBe("view");
 });
 
 test("a failed lookup keeps the last known level until it is stale, and is view with none known", async () => {
-	const { cache, clock, lookups } = accessHarness();
-	const unknown = cache.current();
-	lookups[0].resolve(undefined);
-	expect(await unknown).toBe("view");
+  const { cache, clock, lookups } = accessHarness();
+  const unknown = cache.current();
+  lookups[0].resolve(undefined);
+  expect(await unknown).toBe("view");
 
-	const known = cache.refresh();
-	lookups[1].resolve("control");
-	expect(await known).toBe("control");
+  const known = cache.refresh();
+  lookups[1].resolve("control");
+  expect(await known).toBe("control");
 
-	clock.now = 10_000;
-	const failed = cache.current();
-	lookups[2].reject(new Error("registry unreadable"));
-	expect(await failed).toBe("control");
+  clock.now = 10_000;
+  const failed = cache.current();
+  lookups[2].reject(new Error("registry unreadable"));
+  expect(await failed).toBe("control");
 
-	clock.now = 30_001;
-	const stale = cache.current();
-	lookups[3].resolve(undefined);
-	expect(await stale).toBe("view");
-	expect(lookups).toHaveLength(4);
+  clock.now = 30_001;
+  const stale = cache.current();
+  lookups[3].resolve(undefined);
+  expect(await stale).toBe("view");
+  expect(lookups).toHaveLength(4);
 });
 
 test("session.info refreshes the gate's cached access, so a switch to view-only applies at once", async () => {
-	const { cache, lookups } = accessHarness();
-	const { handle } = harness({ access: cache });
+  const { cache, lookups } = accessHarness();
+  const { handle } = harness({ access: cache });
 
-	const shared = handle("session.info", {});
-	lookups[0].resolve("control");
-	expect(await shared).toMatchObject({ access: "control" });
-	expect(await handle("files.list", { path: "" })).toMatchObject({ path: "" });
+  const shared = handle("session.info", {});
+  lookups[0].resolve("control");
+  expect(await shared).toMatchObject({ access: "control" });
+  expect(await handle("files.list", { path: "" })).toMatchObject({ path: "" });
 
-	const revoked = handle("session.info", {});
-	lookups[1].resolve("view");
-	expect(await revoked).toMatchObject({ access: "view" });
-	expect(await rpcCode(handle("files.list", { path: "" }))).toBe(RpcCode.Forbidden);
-	expect(lookups).toHaveLength(2);
+  const revoked = handle("session.info", {});
+  lookups[1].resolve("view");
+  expect(await revoked).toMatchObject({ access: "view" });
+  expect(await rpcCode(handle("files.list", { path: "" }))).toBe(RpcCode.Forbidden);
+  expect(lookups).toHaveLength(2);
 });
 
 test("blank compact instructions are treated as none", async () => {
-	const { handle, calls } = harness();
-	await handle("session.compact", { instructions: "   " });
-	expect(calls.compact).toEqual([undefined]);
+  const { handle, calls } = harness();
+  await handle("session.compact", { instructions: "   " });
+  expect(calls.compact).toEqual([undefined]);
 });
 
 test("abort calls through to the session", async () => {
-	const { handle, calls } = harness();
-	expect(await handle("session.abort", undefined)).toEqual({ ok: true });
-	expect(calls.abort).toBe(1);
+  const { handle, calls } = harness();
+  expect(await handle("session.abort", undefined)).toEqual({ ok: true });
+  expect(calls.abort).toBe(1);
 });
 
 test("scheduled prompts can be queued, listed and cancelled; bad requests are invalid", async () => {
-	const { handle } = harness();
-	const queued = (await handle("session.schedule_prompt", { text: "run the tests", delayMs: 90_000 })) as {
-		id: string;
-		fireAt: number;
-	};
-	expect(queued).toMatchObject({ text: "run the tests", fireAt: 95_000, createdAt: 5_000 });
-	expect(await handle("session.scheduled", {})).toEqual({ prompts: [queued] });
+  const { handle } = harness();
+  const queued = (await handle("session.schedule_prompt", {
+    text: "run the tests",
+    delayMs: 90_000,
+  })) as {
+    id: string;
+    fireAt: number;
+  };
+  expect(queued).toMatchObject({ text: "run the tests", fireAt: 95_000, createdAt: 5_000 });
+  expect(await handle("session.scheduled", {})).toEqual({ prompts: [queued] });
 
-	expect(await rpcCode(handle("session.schedule_prompt", { text: "", delayMs: 1_000 }))).toBe(RpcCode.Invalid);
-	expect(await rpcCode(handle("session.schedule_prompt", { text: "x", delayMs: "soon" }))).toBe(RpcCode.Invalid);
-	expect(await rpcCode(handle("session.schedule_prompt", { text: "x", delayMs: -5 }))).toBe(RpcCode.Invalid);
+  expect(await rpcCode(handle("session.schedule_prompt", { text: "", delayMs: 1_000 }))).toBe(
+    RpcCode.Invalid,
+  );
+  expect(await rpcCode(handle("session.schedule_prompt", { text: "x", delayMs: "soon" }))).toBe(
+    RpcCode.Invalid,
+  );
+  expect(await rpcCode(handle("session.schedule_prompt", { text: "x", delayMs: -5 }))).toBe(
+    RpcCode.Invalid,
+  );
 
-	expect(await handle("session.cancel_scheduled", { id: queued.id })).toEqual({ ok: true });
-	expect(await rpcCode(handle("session.cancel_scheduled", { id: queued.id }))).toBe(RpcCode.NotFound);
-	expect(await handle("session.scheduled", {})).toEqual({ prompts: [] });
+  expect(await handle("session.cancel_scheduled", { id: queued.id })).toEqual({ ok: true });
+  expect(await rpcCode(handle("session.cancel_scheduled", { id: queued.id }))).toBe(
+    RpcCode.NotFound,
+  );
+  expect(await handle("session.scheduled", {})).toEqual({ prompts: [] });
 });

@@ -13,6 +13,31 @@ export const VIEW_ONLY_CONTROLS_NOTE =
 export const MAX_COMPACT_INSTRUCTIONS = 4000;
 export const MAX_UPLOAD_BYTES = 256 * 1024 * 1024;
 export const MODEL_ROLES_FEATURE = "session.model_roles.v1";
+export const USAGE_FEATURE = "session.usage.v1";
+
+export interface SessionUsageLimit {
+  label: string;
+  unit: string;
+  used: number | null;
+  limit: number | null;
+  remaining: number | null;
+  usedFraction: number | null;
+  status: string | null;
+  window: {
+    label: string;
+    resetsAt: number | null;
+    resetLabel: string | null;
+  } | null;
+}
+
+export interface SessionUsage {
+  generatedAt: number;
+  reports: Array<{
+    provider: string;
+    fetchedAt: number | null;
+    limits: SessionUsageLimit[];
+  }>;
+}
 
 export interface RoleModel {
   provider: string;
@@ -133,6 +158,15 @@ export function modelRolesApiUrl(hostId: string, instanceId: string): string {
 
 export function supportsModelRoles(session: { features?: string[] }): boolean {
   return session.features?.includes(MODEL_ROLES_FEATURE) ?? false;
+}
+export function usageApiUrl(hostId: string, instanceId: string): string {
+  return `${sessionApiBase(hostId, instanceId)}/usage`;
+}
+
+export function supportsSessionUsage(session: {
+  features?: string[];
+}): boolean {
+  return session.features?.includes(USAGE_FEATURE) ?? false;
 }
 
 export interface RequestTicket {
