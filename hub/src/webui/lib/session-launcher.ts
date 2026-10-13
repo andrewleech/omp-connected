@@ -21,6 +21,8 @@ export class SessionLauncher {
   readonly #submit = button("Start session");
   readonly #new = button("New session", "small");
   #selected: PastSession | undefined;
+  #sessions: PastSession[] = [];
+  readonly #filter = document.createElement("input");
   #host = "";
   #request = 0;
   #submitting = false;
@@ -68,11 +70,17 @@ export class SessionLauncher {
       event.preventDefault();
       void this.#start();
     };
+    this.#filter.type = "search";
+    this.#filter.placeholder = "Filter past sessions";
+    this.#filter.className = "session-history-filter";
+    this.#filter.setAttribute("aria-label", "Filter past sessions");
+    this.#filter.oninput = () => this.#render();
     this.#history.setAttribute("aria-label", "Past sessions, newest first");
     this.#dialog.append(
       header,
       form,
       el("h3", { text: "Resume a past session" }),
+      this.#filter,
       this.#history,
     );
     this.#dialog.addEventListener("click", (event) => {
@@ -117,15 +125,54 @@ export class SessionLauncher {
       );
       if (request !== this.#request) return;
       this.#status.textContent = "";
-      for (const session of result.sessions.sort(
-        (a, b) => b.modifiedAt - a.modifiedAt,
-      )) {
+      this.#sessions = result.sessions;
+      this.#filter.value = "";
+      this.#render();
+      if (result.sessions.length === 0)
+        this.#history.append(
+          el("p", {
+            className: "empty",
+            text: "No past sessions available. Conversations already open on this host are excluded.",
+          }),
+        );
+    } catch (error) {
+      if (request !== this.#request) return;
+      this.#status.textContent = (error as Error).message;
+    }
+  }
+
+  /** Sessions with the same cwd and title (batch jobs) collapse into the newest one with a count. */
+  #render(): void {
+    const needle = this.#filter.value.trim().toLowerCase();
+    const groups = new Map<string, { latest: PastSession; count: number }>();
+    for (const session of [...this.#sessions].sort(
+      (a, b) => b.modifiedAt - a.modifiedAt,
+    )) {
+      if (
+        needle &&
+        !`${session.title}\n${session.cwd}`.toLowerCase().includes(needle)
+      )
+        continue;
+      const key = `${session.cwd}\n${session.title}`;
+      const group = groups.get(key);
+      if (group) group.count++;
+      else groups.set(key, { latest: session, count: 1 });
+    }
+    this.#history.replaceChildren();
+    {
+      for (const { latest: session, count } of groups.values()) {
         const row = button("", "past-session");
         row.dataset.sessionId = session.sessionId;
-        row.title = session.sessionId;
+        row.title =
+          count > 1
+            ? `${count} similar sessions; newest is ${session.sessionId}`
+            : session.sessionId;
         row.setAttribute("aria-pressed", "false");
         row.append(
-          el("strong", { text: session.title, title: session.title }),
+          el("strong", {
+            text: count > 1 ? `${session.title} (×${count})` : session.title,
+            title: session.title,
+          }),
           el("span", {
             text: session.cwd || "Working directory unknown",
             title: session.cwd || "Working directory unknown",
@@ -140,17 +187,8 @@ export class SessionLauncher {
         };
         this.#history.append(row);
       }
-      if (result.sessions.length === 0)
-        this.#history.append(
-          el("p", {
-            className: "empty",
-            text: "No past sessions available. Conversations already open on this host are excluded.",
-          }),
-        );
-    } catch (error) {
-      if (request !== this.#request) return;
-      this.#status.textContent = (error as Error).message;
     }
+    this.#syncSelection();
   }
 
   #syncSelection(): void {
