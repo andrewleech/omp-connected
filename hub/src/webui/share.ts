@@ -21,6 +21,19 @@ interface LiveSession extends ShareCandidate {
 const POLL_MS = 3000;
 const LAUNCH_WAIT_MS = 90_000;
 
+// Lets an embedding page close its chat pane from the keyboard: key events
+// inside the nested guest never reach the parent document, so an Escape that
+// nothing in the guest handled is reported with a postMessage.
+function requestCloseOnEscape(event: KeyboardEvent): void {
+  if (
+    event.key !== "Escape" ||
+    event.defaultPrevented ||
+    window.parent === window
+  )
+    return;
+  window.parent.postMessage({ type: "ompc:close-chat" }, "*");
+}
+
 const statusBox = document.querySelector<HTMLElement>(
   "[data-status]",
 ) as HTMLElement;
@@ -155,9 +168,12 @@ async function run(target: ShareTarget): Promise<void> {
   };
   frame.addEventListener("load", () => {
     const doc = frame.contentDocument;
-    if (doc?.head && doc.location.href !== "about:blank")
+    if (doc?.head && doc.location.href !== "about:blank") {
       customizeCollabFrame(doc, localStorage);
+      doc.addEventListener("keydown", requestCloseOnEscape);
+    }
   });
+  document.addEventListener("keydown", requestCloseOnEscape);
   for (;;) {
     await tick();
     await new Promise((resolve) => setTimeout(resolve, POLL_MS));
