@@ -155,9 +155,12 @@ async function run(target: ShareTarget): Promise<void> {
   };
   frame.addEventListener("load", () => {
     const doc = frame.contentDocument;
-    if (doc?.head && doc.location.href !== "about:blank")
+    if (doc?.head && doc.location.href !== "about:blank") {
       customizeCollabFrame(doc, localStorage);
+      doc.addEventListener("keydown", requestCloseOnEscape);
+    }
   });
+  document.addEventListener("keydown", requestCloseOnEscape);
   for (;;) {
     await tick();
     await new Promise((resolve) => setTimeout(resolve, POLL_MS));
