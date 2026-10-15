@@ -9,8 +9,9 @@
 
 import { customizeCollabFrame } from "./lib/collab-frame";
 import { collabFrameUrl } from "./lib/collab-link";
+import { buildShareUrl } from "./lib/share-link";
 import { CollabTailViewer } from "./lib/collab-tail";
-import { el } from "./lib/dom";
+import { copyText, el } from "./lib/dom";
 import { type EdgeSwipeOptions, attachEdgeSwipe } from "./lib/edge-swipe";
 import { FilesPane } from "./lib/files-pane";
 import { ModelRolesPane } from "./lib/model-roles-pane";
@@ -526,6 +527,24 @@ function createDashboard(root: HTMLElement): void {
           void navigator.clipboard.writeText(sessionLabel(session)).then(
             () => showStatus("Session name copied", "ok"),
             () => showStatus("Copy failed — clipboard unavailable", "warning"),
+          );
+        },
+      },
+      {
+        label: "Copy share link",
+        disabled: session.access !== "control",
+        onSelect: () => {
+          const link = buildShareUrl(location.origin, {
+            host: session.host_id,
+            instance: session.instanceId,
+            sessionId: session.sessionId,
+            cwd: session.cwd,
+            label: session.label,
+          });
+          void copyText(link).then((ok) =>
+            ok
+              ? showStatus("Share link copied", "ok")
+              : showStatus("Copy failed", "warning"),
           );
         },
       },
