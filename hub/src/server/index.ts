@@ -55,6 +55,8 @@ export function createHub(options: CreateHubOptions = {}): Hub {
           headers: { "content-type": "text/html" },
         }),
     )
+    // Standalone single-session page; the link it serves carries no secret.
+    .get("/s/", () => revalidatedFile(`${webuiRoot}/share.html`))
     // Fixed-name PWA files must revalidate on every load so installed
     // clients see updates, so they're served here and excluded from the
     // static plugin below, which stamps its day-long max-age on them.

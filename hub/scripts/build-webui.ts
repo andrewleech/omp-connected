@@ -9,8 +9,9 @@ const dist = `${root}dist/webui`;
 
 await $`mkdir -p ${dist}`;
 // Clean old hashed bundles
-for (const f of new Bun.Glob("app*.js").scanSync(dist)) await $`rm -f ${dist}/${f}`;
-await $`rm -f ${dist}/index.html`;
+for (const f of new Bun.Glob("{app,share}.*.js").scanSync(dist))
+  await $`rm -f ${dist}/${f}`;
+await $`rm -f ${dist}/index.html ${dist}/share.html`;
 // Build with content hash in the filename
 const result = await Bun.build({
   entrypoints: [`${root}src/webui/app.ts`],
@@ -27,6 +28,22 @@ const outName = result.outputs[0]?.path.split("/").pop() ?? "";
 let html = await Bun.file(`${root}src/webui/index.html`).text();
 html = html.replace(/src="\/app[^"]*\.js"/, `src="/${outName}"`);
 await Bun.write(`${dist}/index.html`, html);
+// Standalone single-session page served at /s/
+const share = await Bun.build({
+  entrypoints: [`${root}src/webui/share.ts`],
+  outdir: dist,
+  naming: "share.[hash].js",
+  minify: false,
+});
+if (!share.success) {
+  for (const log of share.logs) console.error(log);
+  process.exit(1);
+}
+const shareName = share.outputs[0].path.split("/").pop() ?? "";
+const shareHtml = (
+  await Bun.file(`${root}src/webui/share.html`).text()
+).replace('src="/share.js"', `src="/${shareName}"`);
+await Bun.write(`${dist}/share.html`, shareHtml);
 // Copy static assets
 await $`cp ${root}src/webui/favicon.ico ${root}src/webui/favicon-32x32.png ${root}src/webui/favicon-180x180.png ${dist}/`;
 // PWA: manifest, icons (see render-icons.ts), offline page, service worker
@@ -44,4 +61,6 @@ await Bun.write(
   `${dist}/sw.js`,
   sw.replaceAll("__OFFLINE_HASH__", offlineHash),
 );
-console.log(`Built fleet dashboard shell into dist/webui\n  ${outName}`);
+console.log(
+  `Built fleet dashboard shell into dist/webui\n  ${outName}\n  ${shareName}`,
+);
