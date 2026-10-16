@@ -17,11 +17,14 @@ import {
 // Escape inside the nested guest cannot bubble into the embedding document.
 // Forward an unhandled Escape so an embedding page can close its chat UI.
 function requestCloseOnEscape(event: KeyboardEvent): void {
-  if (event.key !== "Escape" || event.defaultPrevented || window.parent === window)
+  if (
+    event.key !== "Escape" ||
+    event.defaultPrevented ||
+    window.parent === window
+  )
     return;
   window.parent.postMessage({ type: "ompc:close-chat" }, "*");
 }
-
 
 interface LiveSession extends ShareCandidate {
   generation: number;
