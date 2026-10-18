@@ -124,8 +124,13 @@ The extension advertises `session.model_roles.v1` only when its running OMP cont
 ```
 
 `session.usage.v1` adds a read-only `GET /api/hosts/:id/sessions/:instanceId/usage` endpoint. The inspector opens it from the Usage button beside Compact and shows the provider windows in a dialog.
-
 `ModelRoleInfo` contains the role id/name, effective selector and provenance, global/project selectors, resolved model, and eligible models with their thinking levels. A null selector resets the assignment. Reads are allowed with view access; writes require control access and are limited to 20 per 10 seconds per session. OMP owns selector validation, role resolution, fallback behavior, and persistence.
+
+### Agent roles (`session.agent_roles.v1`)
+
+Advertised together with `session.model_roles.v1`. `"session.agent_roles" {} -> { agents: AgentRoleInfo[] }`: one entry per agent definition discovered for the session's working directory, with `origin` (`override` for `task.agentModelOverrides`, `frontmatter` for the agent file's `model`, `session` when it inherits the spawning session's model), the `role` the selector expanded from (null for a literal model), the expanded `patterns`, the `resolvedModel` and the `thinking` level an explicit suffix or the agent's `thinkingLevel` asks for. The extension takes this from OMP's own `resolveAgentModelSelection`/`resolveModelOverride`, so plan-mode rewriting and per-spawn `model` arguments, which only exist at spawn time, are not reflected.
+
+
 
 
 ### Scheduled prompts (`session.schedule.v1`)
@@ -180,6 +185,7 @@ REST routes built on top of the same live registry:
 - `/api/hosts/:id/sessions/:instanceId/...`: the `session.v1` calls for the agent `${id}:${instanceId}`: 404 when it isn't connected, 501 when it didn't advertise the required feature (`session.schedule.v1` for scheduling, `session.exit.v1` for exit, `session.fork.v1` for forking, `session.model_roles.v1` for role editing, `session.usage.v1` for provider usage, otherwise `session.v1`).
   - `GET info`, `POST abort`, `POST exit`, `POST fork` `{ name }`, `POST compact` `{ instructions? }`, `POST model` `{ provider, id }`, `POST thinking` `{ level }`, `GET usage`.
   - `GET model-roles` returns ModelRolesInfo; `POST model-roles` `{ role, selector, scope? }` returns fresh ModelRolesInfo. GET permits view shares; POST requires control.
+  - `GET agent-roles` returns AgentRolesInfo (`session.agent_roles.v1`); like `model-roles` GET it permits view shares.
   - `GET usage` returns quota windows for configured providers and requires control access.
   - `GET files?path=` lists a directory, `POST files/mkdir` `{ path }` creates one.
   - `GET files/download?path=[&inline=1]` streams a file as `files.read` chunks of 256 KiB, each checked against the size and mtime of the initial `files.stat`, so a file that changes mid-download errors the stream instead of mixing versions. The response is always `attachment` with `content-security-policy: sandbox` and `nosniff`; `inline=1` only applies to PNG, JPEG, GIF and WebP.

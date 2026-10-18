@@ -5,6 +5,7 @@ import {
   sessionRpcRoutes,
 } from "@/server/session-rpc-routes";
 import {
+  AGENT_ROLES_FEATURE,
   MODEL_ROLES_FEATURE,
   SESSION_FORK_FEATURE,
   USAGE_FEATURE,
@@ -1174,5 +1175,31 @@ describe("session-rpc-routes: model roles", () => {
 
     expect(response.status).toBe(501);
     expect(calls).toEqual([]);
+  });
+});
+
+describe("session-rpc-routes: agent roles", () => {
+  const info = { agents: [] };
+  const url = `${BASE}/inst-1/agent-roles`;
+
+  test("reads the agent mapping with the capability, even on a view share", async () => {
+    const registry = new AgentRegistry();
+    const calls = registerSessionAgent(
+      registry,
+      (method) => (method === "session.agent_roles" ? info : { ok: true }),
+      { features: ["session.v1", AGENT_ROLES_FEATURE] },
+    );
+    const response = await sessionRpcRoutes(registry).handle(new Request(url));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(info);
+    expect(calls).toEqual([{ method: "session.agent_roles", params: {} }]);
+  });
+
+  test("is refused when the session lacks the capability", async () => {
+    const registry = new AgentRegistry();
+    registerSessionAgent(registry, () => info, { features: ["session.v1"] });
+    const response = await sessionRpcRoutes(registry).handle(new Request(url));
+    expect(response.status).toBeGreaterThanOrEqual(400);
   });
 });

@@ -86,3 +86,23 @@ test("session and role selectors show higher model versions first within provide
     "GPT 10 (openai/gpt-10)", "GPT 9 (openai/gpt-9)",
   ]);
 });
+
+test("agents tab shows each agent's role mapping and links both ways", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Roles", exact: true }).click();
+  const pane = page.locator("[data-model-roles-pane]");
+  const defaultItem = pane.locator(".role-item", { hasText: "Default" });
+  await expect(defaultItem.getByRole("button", { name: "reviewer" })).toBeVisible();
+
+  await defaultItem.getByRole("button", { name: "reviewer" }).click();
+  const reviewer = pane.locator('[data-agent-name="reviewer"]');
+  await expect(reviewer).toHaveClass(/selected/);
+  await expect(reviewer.locator(".agent-chain")).toContainText("agent file: @default");
+  await expect(reviewer.locator(".agent-chain")).toContainText("Claude A (anthropic/claude-a)");
+  await expect(reviewer.locator(".agent-chain")).toContainText("thinking high");
+  await expect(pane.locator('[data-agent-name="pinned-agent"] .agent-chain')).toContainText("pinned model");
+
+  await reviewer.getByRole("button", { name: "role default" }).click();
+  await expect(pane.getByLabel("Selector")).toHaveValue("anthropic/claude-a:high");
+  await expect(pane.locator(".agent-list")).toBeHidden();
+});

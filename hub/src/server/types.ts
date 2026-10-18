@@ -485,6 +485,7 @@ export interface SessionMethodParams {
   "session.scheduled": Record<string, never>;
   "session.cancel_scheduled": { id: string };
   "session.model_roles": Record<string, never>;
+  "session.agent_roles": Record<string, never>;
   "session.set_model_role": SetModelRoleParams;
   "session.usage": Record<string, never>;
 }
@@ -507,6 +508,7 @@ export interface SessionMethodResult {
   "session.scheduled": { prompts: ScheduledPromptResult[] };
   "session.cancel_scheduled": OkResult;
   "session.model_roles": ModelRolesInfo;
+  "session.agent_roles": AgentRolesInfo;
   "session.usage": SessionUsageResult;
   "session.set_model_role": ModelRolesInfo;
 }
@@ -543,4 +545,25 @@ export interface SetModelRoleParams {
   role: string;
   selector: string | null;
   scope?: "global" | "project";
+}
+
+export const AGENT_ROLES_FEATURE = "session.agent_roles.v1";
+
+export interface AgentRoleInfo {
+  name: string;
+  description: string;
+  source: string;
+  filePath: string | null;
+  disabled: boolean;
+  frontmatterModel: string[];
+  overrideModel: string | null;
+  origin: "override" | "frontmatter" | "session";
+  role: string | null;
+  patterns: string[];
+  resolvedModel: SessionModelRef | null;
+  thinking: string | null;
+}
+
+export interface AgentRolesInfo {
+  agents: AgentRoleInfo[];
 }

@@ -2,6 +2,7 @@
 // the session that owns this process's hub connection.
 
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import { type AgentRolesInfo, loadAgentRoles } from "./agent-roles.js";
 import type { FileService } from "./files-rpc.js";
 import { RpcCode, RpcError, paramsRecord } from "./protocol.js";
 import { type PromptScheduler, ScheduleError, type ScheduledPrompt } from "./scheduled-prompts.js";
@@ -15,6 +16,8 @@ export const SCHEDULE_FEATURE = "session.schedule.v1";
 export const EXIT_FEATURE = "session.exit.v1";
 /** Advertised only when the running OMP API serves model-role assignment. */
 export const MODEL_ROLES_FEATURE = "session.model_roles.v1";
+/** Advertised alongside MODEL_ROLES_FEATURE when agent definitions can be mapped to roles. */
+export const AGENT_ROLES_FEATURE = "session.agent_roles.v1";
 /** Advertised by sessions that expose provider quota reports to control guests. */
 export const USAGE_FEATURE = "session.usage.v1";
 /** Advertised by sessions that can fork their current transcript into a new ompc session. */
@@ -377,6 +380,9 @@ export function createSessionRpc(deps: SessionRpcDeps): SessionRequestHandler {
 			if (!api) throw new RpcError(RpcCode.MethodNotFound, "this OMP version does not support model roles");
 			return { ...(await api.roles()), access: await deps.access.current() };
 		},
+		async "session.agent_roles"(): Promise<AgentRolesInfo> {
+			return loadAgentRoles(requireContext());
+		},
 		async "session.set_model_role"(params): Promise<ModelRoleConfiguration & { access: CollabAccess }> {
 			const { role, selector, scope } = paramsRecord(params);
 			if (
@@ -416,7 +422,12 @@ export function createSessionRpc(deps: SessionRpcDeps): SessionRequestHandler {
 	return async (method, params) => {
 		const handler = Object.hasOwn(handlers, method) ? handlers[method] : undefined;
 		if (!handler) throw new RpcError(RpcCode.MethodNotFound, `unknown method '${method}'`);
-		if (method !== "session.info" && method !== "session.model_roles" && (await deps.access.current()) !== "control") {
+		if (
+			method !== "session.info" &&
+			method !== "session.model_roles" &&
+			method !== "session.agent_roles" &&
+			(await deps.access.current()) !== "control"
+		) {
 			throw new RpcError(RpcCode.Forbidden, "this session is shared view-only");
 		}
 		return handler(params);

@@ -1,11 +1,15 @@
+import { agentsByRole, renderAgentRow } from "./agent-roles-view";
 import { el } from "./dom";
 import {
+  AGENT_ROLES_FEATURE,
+  type AgentRolesInfo,
   ApiError,
   LatestResponseGate,
   MODEL_ROLES_FEATURE,
   type ModelRoleInfo,
   type ModelRolesInfo,
   type RoleModel,
+  agentRolesApiUrl,
   modelRolesApiUrl,
   postJson,
   requestJson,
@@ -44,6 +48,12 @@ export class ModelRolesPane {
   #modelOpen = false;
   #selectedModel = "";
   #dirty = false;
+  readonly #tabs: HTMLElement;
+  readonly #agentList: HTMLElement;
+  #agents: AgentRolesInfo | null = null;
+  #agentSignature = "";
+  #highlightAgent: string | null = null;
+  #view: "roles" | "agents" = "roles";
 
   constructor(host: PaneHost) {
     this.#host = host;
@@ -154,11 +164,31 @@ export class ModelRolesPane {
       this.#save,
       this.#reset,
     );
+    this.#tabs = el("div", { className: "view-tabs" });
+    this.#tabs.setAttribute("role", "tablist");
+    this.#tabs.hidden = true;
+    for (const [view, label] of [
+      ["roles", "Roles"],
+      ["agents", "Agents"],
+    ] as const) {
+      const tab = el("button", { type: "button", text: label });
+      tab.dataset.view = view;
+      tab.setAttribute("role", "tab");
+      tab.addEventListener("click", () => {
+        this.#view = view;
+        this.#update();
+      });
+      this.#tabs.append(tab);
+    }
+    this.#agentList = el("div", { className: "agent-list" });
+    this.#agentList.hidden = true;
     this.element.append(
       el("h2", { text: "Model roles" }),
       this.#empty,
       this.#note,
+      this.#tabs,
       this.#list,
+      this.#agentList,
       this.#editor,
     );
     this.#update();
@@ -185,6 +215,10 @@ export class ModelRolesPane {
       this.#modelOpen = false;
       this.#search.value = "";
       this.#roleSignature = "";
+      this.#agents = null;
+      this.#agentSignature = "";
+      this.#highlightAgent = null;
+      this.#view = "roles";
       this.#list.replaceChildren();
       this.#update();
       if (this.#active) void this.refresh();
@@ -219,10 +253,17 @@ export class ModelRolesPane {
       return;
     const ticket = this.#gate.begin(key);
     try {
+      const agentsRequest = session.features?.includes(AGENT_ROLES_FEATURE)
+        ? requestJson<AgentRolesInfo>(
+            agentRolesApiUrl(session.host_id, session.instanceId),
+          ).catch(() => null)
+        : Promise.resolve(null);
       const info = await requestJson<ModelRolesInfo>(
         modelRolesApiUrl(session.host_id, session.instanceId),
       );
+      const agents = await agentsRequest;
       if (!this.#gate.accept(ticket, this.#key)) return;
+      this.#agents = agents ?? this.#agents;
       this.#info = info;
       this.#loadError = null;
       this.#unsupported = false;
@@ -267,6 +308,38 @@ export class ModelRolesPane {
     this.#updateButtons();
   }
 
+  #showAgent(name: string): void {
+    this.#view = "agents";
+    this.#highlightAgent = name;
+    this.#update();
+    this.#agentList
+      .querySelector(`[data-agent-name="${CSS.escape(name)}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }
+
+  #showRole(roleId: string): void {
+    this.#view = "roles";
+    this.#update();
+    const role = this.#info?.roles.find((candidate) => candidate.id === roleId);
+    if (role) this.#selectRole(role);
+  }
+
+  #renderAgents(): void {
+    const agents = this.#agents?.agents ?? [];
+    const signature = JSON.stringify([this.#highlightAgent, agents]);
+    if (signature === this.#agentSignature) return;
+    this.#agentSignature = signature;
+    this.#agentList.replaceChildren(
+      ...agents.map((agent) =>
+        renderAgentRow(
+          agent,
+          { onRole: (roleId) => this.#showRole(roleId) },
+          agent.name === this.#highlightAgent,
+        ),
+      ),
+    );
+  }
+
   #assignmentForScope(role: ModelRoleInfo): string | null {
     return this.#scope.value === "project"
       ? role.projectSelector
@@ -292,9 +365,10 @@ export class ModelRolesPane {
   }
 
   #seedEditor(role: ModelRoleInfo): void {
-    this.#models = [...role.models].sort((a, b) =>
-      a.provider.localeCompare(b.provider) ||
-      b.name.localeCompare(a.name, undefined, { numeric: true }),
+    this.#models = [...role.models].sort(
+      (a, b) =>
+        a.provider.localeCompare(b.provider) ||
+        b.name.localeCompare(a.name, undefined, { numeric: true }),
     );
     const assignment = this.#assignmentForScope(role);
     const selected = this.#modelSelection(assignment, role.models);
@@ -324,7 +398,12 @@ export class ModelRolesPane {
 
   #renderList(): void {
     const info = this.#info;
-    const signature = JSON.stringify([this.#selectedRole, info?.roles ?? []]);
+    const byRole = agentsByRole(this.#agents?.agents ?? []);
+    const signature = JSON.stringify([
+      this.#selectedRole,
+      info?.roles ?? [],
+      [...byRole].map(([id, list]) => [id, list.map((agent) => agent.name)]),
+    ]);
     if (signature === this.#roleSignature) return;
     this.#roleSignature = signature;
     this.#list.replaceChildren(
@@ -356,7 +435,25 @@ export class ModelRolesPane {
           }),
         );
         row.addEventListener("click", () => this.#selectRole(role));
-        return row;
+        const users = byRole.get(role.id) ?? [];
+        const item = el("div", { className: "role-item" });
+        item.append(row);
+        if (users.length > 0) {
+          const used = el("span", { className: "role-used-by" });
+          used.append(document.createTextNode("Used by"));
+          for (const agent of users) {
+            const chip = el("button", {
+              type: "button",
+              className: "role-chip",
+              text: agent.name,
+            });
+            chip.title = "Show this agent";
+            chip.addEventListener("click", () => this.#showAgent(agent.name));
+            used.append(chip);
+          }
+          item.append(used);
+        }
+        return item;
       }),
     );
   }
@@ -539,6 +636,21 @@ export class ModelRolesPane {
       });
       if (!this.#editor.querySelector(".role-fallback-note"))
         this.#editor.prepend(tip);
+    }
+    const showAgents =
+      this.#view === "agents" && !unsupported && this.#agents !== null;
+    this.#tabs.hidden = unsupported || this.#agents === null;
+    this.#agentList.hidden = !showAgents;
+    if (showAgents) {
+      this.#list.hidden = true;
+      this.#editor.hidden = true;
+      this.#renderAgents();
+    }
+    for (const button of this.#tabs.querySelectorAll("button")) {
+      button.setAttribute(
+        "aria-selected",
+        String(button.dataset.view === (showAgents ? "agents" : "roles")),
+      );
     }
   }
 }
