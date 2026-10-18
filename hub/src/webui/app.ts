@@ -9,7 +9,6 @@
 
 import { customizeCollabFrame } from "./lib/collab-frame";
 import { collabFrameUrl } from "./lib/collab-link";
-import { buildShareUrl } from "./lib/share-link";
 import { CollabTailViewer } from "./lib/collab-tail";
 import { copyText, el } from "./lib/dom";
 import { type EdgeSwipeOptions, attachEdgeSwipe } from "./lib/edge-swipe";
@@ -27,6 +26,7 @@ import {
 } from "./lib/session-api";
 import { SessionLauncher } from "./lib/session-launcher";
 import { SessionPane } from "./lib/session-pane";
+import { buildShareUrl } from "./lib/share-link";
 import {
   type CollabSession,
   INSPECTOR_PANES,
@@ -177,7 +177,11 @@ function createDashboard(root: HTMLElement): void {
   const filesPane = new FilesPane({ showStatus }, (session) =>
     sessionPane.cwdFor(session),
   );
-  const modelRolesPane = new ModelRolesPane({ showStatus });
+  const modelRolesPane = new ModelRolesPane({ showStatus }, (pane) => {
+    state.inspector = pane;
+    persist();
+    render();
+  });
   let inspectorShell:
     | { tabs: Map<InspectorPane, HTMLButtonElement>; body: HTMLElement }
     | undefined;
@@ -802,6 +806,7 @@ function createDashboard(root: HTMLElement): void {
   const INSPECTOR_LABELS: Record<InspectorPane, string> = {
     session: "Session",
     files: "Files",
+    agents: "Agents",
     models: "Roles",
   };
 
@@ -843,7 +848,10 @@ function createDashboard(root: HTMLElement): void {
     filesPane.setSession(state.selectedSession);
     sessionPane.setActive(state.inspector === "session");
     modelRolesPane.setSession(state.selectedSession);
-    modelRolesPane.setActive(state.inspector === "models");
+    modelRolesPane.setView(state.inspector === "agents" ? "agents" : "roles");
+    modelRolesPane.setActive(
+      state.inspector === "models" || state.inspector === "agents",
+    );
     filesPane.setActive(state.inspector === "files");
     const pane =
       state.inspector === "session"

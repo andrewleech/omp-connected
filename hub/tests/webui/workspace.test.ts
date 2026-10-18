@@ -103,9 +103,11 @@ describe("fleet dashboard workspace", () => {
     expect(restored.inspector).toBe("files");
   });
 
-  test("INSPECTOR_PANES includes model roles instead of agents", () => {
-    expect(INSPECTOR_PANES).toContain("models");
-    expect(INSPECTOR_PANES).not.toContain("agents");
+  test("INSPECTOR_PANES lists agents before model roles", () => {
+    expect(INSPECTOR_PANES.indexOf("agents")).toBeGreaterThanOrEqual(0);
+    expect(INSPECTOR_PANES.indexOf("agents")).toBeLessThan(
+      INSPECTOR_PANES.indexOf("models"),
+    );
   });
 
   test("round-trips the model roles inspector pane through storage", () => {
@@ -119,15 +121,15 @@ describe("fleet dashboard workspace", () => {
     expect(readWorkspace(storage).inspector).toBe("models");
   });
 
-  test("maps the retired agents pane to model roles", () => {
+  test("round-trips the agents inspector pane through storage", () => {
     const storage = new MemoryStorage();
-    storage.value = JSON.stringify({
+    writeWorkspace(storage, {
       version: 1,
       groups: [],
       selected: null,
       inspector: "agents",
     });
-    expect(readWorkspace(storage).inspector).toBe("models");
+    expect(readWorkspace(storage).inspector).toBe("agents");
   });
 
   test("falls back to the default inspector pane for an unknown stored value", () => {

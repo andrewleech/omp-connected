@@ -260,7 +260,9 @@ test("sessions from responsive hosts show while another host's listing is still 
   ).toBeVisible();
 });
 
-test("session rail refresh preserves its visible position", async ({ page }) => {
+test("session rail refresh preserves its visible position", async ({
+  page,
+}) => {
   await page.clock.install();
   let changed = false;
   let releaseWriterRefresh = () => {};

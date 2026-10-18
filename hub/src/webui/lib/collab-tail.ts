@@ -139,11 +139,10 @@ function renderMarkdown(src: string): string {
         codeLang = raw.trimStart().slice(3).trim();
         out.push(`<div class="md-codeblock">`);
         continue;
-      } else {
-        inCode = false;
-        out.push(`</div>`);
-        continue;
       }
+      inCode = false;
+      out.push("</div>");
+      continue;
     }
     if (inCode) {
       out.push(escapeHtml(raw));
@@ -188,7 +187,7 @@ function renderMarkdown(src: string): string {
     }
 
     // Regular line
-    out.push(inlineMarkdown(escaped) + "\n");
+    out.push(`${inlineMarkdown(escaped)}\n`);
   }
 
   // Close unclosed code block
@@ -221,7 +220,7 @@ function renderTextBlock(
 ): HTMLElement {
   const el = document.createElement("div");
   el.className = className;
-  const trimmed = text.length > maxLen ? text.slice(0, maxLen) + " …" : text;
+  const trimmed = text.length > maxLen ? `${text.slice(0, maxLen)} …` : text;
   el.innerHTML = renderMarkdown(trimmed);
   return el;
 }
@@ -299,7 +298,7 @@ const CONTENT_TOOLS: Record<string, true> = {
 function truncLines(text: string, n: number): string {
   const lines = text.split("\n");
   if (lines.length <= n) return text;
-  return lines.slice(0, n).join("\n") + `\n… ${lines.length - n} more lines`;
+  return `${lines.slice(0, n).join("\n")}\n… ${lines.length - n} more lines`;
 }
 
 /** Get the args object from a toolCall/tool_use block (handles both wire formats). */
@@ -315,7 +314,7 @@ function isToolCall(block: ContentBlock): boolean {
 // ── Assistant message ───────────────────────────────────────────────────
 
 function renderAssistantEntry(entry: SessionEntry): HTMLElement {
-  const content = entry.message!.content;
+  const content = entry.message?.content;
   const blocks = Array.isArray(content) ? (content as ContentBlock[]) : [];
   const hasText = blocks.some((b) => b.type === "text" && b.text?.trim());
   const hasThinking = blocks.some(
@@ -340,8 +339,8 @@ function renderAssistantEntry(entry: SessionEntry): HTMLElement {
     if (block.type === "thinking" && block.thinking?.trim()) {
       const el = document.createElement("div");
       el.className = "entry-thinking";
-      const text = block.thinking!;
-      el.textContent = text.length > 500 ? text.slice(0, 500) + " …" : text;
+      const text = block.thinking ?? "";
+      el.textContent = text.length > 500 ? `${text.slice(0, 500)} …` : text;
       div.appendChild(el);
     } else if (block.type === "text" && block.text?.trim()) {
       div.appendChild(renderTextBlock(block.text ?? "", "tail-body"));
@@ -400,7 +399,7 @@ function renderToolCallEntry(toolCalls: ContentBlock[]): HTMLElement {
     full.className = "tail-body tail-full";
     const fullText = args !== undefined ? JSON.stringify(args, null, 2) : "";
     full.textContent =
-      fullText.length > 4000 ? fullText.slice(0, 4000) + " …" : fullText;
+      fullText.length > 4000 ? `${fullText.slice(0, 4000)} …` : fullText;
     card.appendChild(full);
 
     card.addEventListener("click", () => card.classList.toggle("collapsed"));
@@ -445,7 +444,7 @@ function renderToolResultEntry(entry: SessionEntry): HTMLElement {
 
   const full = document.createElement("div");
   full.className = "tail-body tail-full";
-  full.textContent = text.length > 4000 ? text.slice(0, 4000) + " …" : text;
+  full.textContent = text.length > 4000 ? `${text.slice(0, 4000)} …` : text;
   card.appendChild(full);
 
   card.addEventListener("click", () => card.classList.toggle("collapsed"));
@@ -463,7 +462,7 @@ function renderUserEntry(entry: SessionEntry): HTMLElement {
   label.textContent = "user";
   div.appendChild(label);
 
-  const content = entry.message!.content;
+  const content = entry.message?.content;
   const text =
     typeof content === "string"
       ? content

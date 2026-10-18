@@ -501,8 +501,7 @@ Bun.serve({
       }
     }
     if (
-      url.pathname ===
-        "/api/hosts/writer/sessions/writer-room/agent-roles" &&
+      url.pathname === "/api/hosts/writer/sessions/writer-room/agent-roles" &&
       request.method === "GET"
     )
       return json(agentRolesInfo());

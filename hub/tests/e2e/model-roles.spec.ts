@@ -55,16 +55,35 @@ test("model roles show custom roles, save assignments, reset, and honor view acc
   ).toBeDisabled();
 });
 
-test("session and role selectors show higher model versions first within providers", async ({ page }) => {
+test("session and role selectors show higher model versions first within providers", async ({
+  page,
+}) => {
   const models = [
     { provider: "openai", id: "gpt-9", name: "GPT 9", thinkingLevels: ["low"] },
-    { provider: "openai", id: "gpt-10", name: "GPT 10", thinkingLevels: ["low"] },
-    { provider: "anthropic", id: "claude-3", name: "Claude 3", thinkingLevels: ["low"] },
-    { provider: "anthropic", id: "claude-4", name: "Claude 4", thinkingLevels: ["low"] },
+    {
+      provider: "openai",
+      id: "gpt-10",
+      name: "GPT 10",
+      thinkingLevels: ["low"],
+    },
+    {
+      provider: "anthropic",
+      id: "claude-3",
+      name: "Claude 3",
+      thinkingLevels: ["low"],
+    },
+    {
+      provider: "anthropic",
+      id: "claude-4",
+      name: "Claude 4",
+      thinkingLevels: ["low"],
+    },
   ];
   await page.route("**/api/hosts/*/sessions/*/info", async (route) => {
     const response = await route.fetch();
-    await route.fulfill({ json: { ...await response.json(), models, model: models[2] } });
+    await route.fulfill({
+      json: { ...(await response.json()), models, model: models[2] },
+    });
   });
   await page.route("**/api/hosts/*/sessions/*/model-roles", async (route) => {
     const response = await route.fetch();
@@ -74,35 +93,61 @@ test("session and role selectors show higher model versions first within provide
   });
   await page.goto("/");
   await page.getByRole("button", { name: "Session", exact: true }).click();
-  await page.getByRole("combobox", { name: "Search models", exact: true }).fill("");
-  await expect(page.locator(".model-options:not([hidden]) [role=option]")).toHaveText([
-    "Claude 4 (anthropic)", "Claude 3 (anthropic)", "GPT 10 (openai)", "GPT 9 (openai)",
+  await page
+    .getByRole("combobox", { name: "Search models", exact: true })
+    .fill("");
+  await expect(
+    page.locator(".model-options:not([hidden]) [role=option]"),
+  ).toHaveText([
+    "Claude 4 (anthropic)",
+    "Claude 3 (anthropic)",
+    "GPT 10 (openai)",
+    "GPT 9 (openai)",
   ]);
   await page.getByRole("button", { name: "Roles", exact: true }).click();
   await page.getByRole("button", { name: /Custom review/ }).click();
   await page.getByRole("combobox", { name: "Search eligible models" }).fill("");
-  await expect(page.locator(".model-options:not([hidden]) [role=option]")).toHaveText([
-    "Claude 4 (anthropic/claude-4)", "Claude 3 (anthropic/claude-3)",
-    "GPT 10 (openai/gpt-10)", "GPT 9 (openai/gpt-9)",
+  await expect(
+    page.locator(".model-options:not([hidden]) [role=option]"),
+  ).toHaveText([
+    "Claude 4 (anthropic/claude-4)",
+    "Claude 3 (anthropic/claude-3)",
+    "GPT 10 (openai/gpt-10)",
+    "GPT 9 (openai/gpt-9)",
   ]);
 });
 
-test("agents tab shows each agent's role mapping and links both ways", async ({ page }) => {
+test("agents tab shows each agent's role mapping and links both ways", async ({
+  page,
+}) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Roles", exact: true }).click();
   const pane = page.locator("[data-model-roles-pane]");
   const defaultItem = pane.locator(".role-item", { hasText: "Default" });
-  await expect(defaultItem.getByRole("button", { name: "reviewer" })).toBeVisible();
+  await expect(
+    defaultItem.getByRole("button", { name: "reviewer" }),
+  ).toBeVisible();
 
   await defaultItem.getByRole("button", { name: "reviewer" }).click();
   const reviewer = pane.locator('[data-agent-name="reviewer"]');
   await expect(reviewer).toHaveClass(/selected/);
-  await expect(reviewer.locator(".agent-chain")).toContainText("agent file: @default");
-  await expect(reviewer.locator(".agent-chain")).toContainText("Claude A (anthropic/claude-a)");
+  await expect(reviewer.locator(".agent-chain")).toContainText(
+    "agent file: @default",
+  );
+  await expect(reviewer.locator(".agent-chain")).toContainText(
+    "Claude A (anthropic/claude-a)",
+  );
   await expect(reviewer.locator(".agent-chain")).toContainText("thinking high");
-  await expect(pane.locator('[data-agent-name="pinned-agent"] .agent-chain')).toContainText("pinned model");
+  await expect(
+    pane.locator('[data-agent-name="pinned-agent"] .agent-chain'),
+  ).toContainText("pinned model");
 
   await reviewer.getByRole("button", { name: "role default" }).click();
-  await expect(pane.getByLabel("Selector")).toHaveValue("anthropic/claude-a:high");
+  await expect(pane.getByLabel("Selector")).toHaveValue(
+    "anthropic/claude-a:high",
+  );
   await expect(pane.locator(".agent-list")).toBeHidden();
+  await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await expect(pane.locator(".agent-list")).toBeVisible();
+  await expect(pane.getByRole("heading", { name: "Agents" })).toBeVisible();
 });

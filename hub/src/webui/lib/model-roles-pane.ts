@@ -48,14 +48,16 @@ export class ModelRolesPane {
   #modelOpen = false;
   #selectedModel = "";
   #dirty = false;
-  readonly #tabs: HTMLElement;
+  readonly #heading: HTMLElement;
+  readonly #navigate: (pane: "models" | "agents") => void;
   readonly #agentList: HTMLElement;
   #agents: AgentRolesInfo | null = null;
   #agentSignature = "";
   #highlightAgent: string | null = null;
   #view: "roles" | "agents" = "roles";
 
-  constructor(host: PaneHost) {
+  constructor(host: PaneHost, navigate: (pane: "models" | "agents") => void) {
+    this.#navigate = navigate;
     this.#host = host;
     this.element = el("section", { className: "model-roles-pane" });
     this.element.dataset.modelRolesPane = "";
@@ -164,29 +166,13 @@ export class ModelRolesPane {
       this.#save,
       this.#reset,
     );
-    this.#tabs = el("div", { className: "view-tabs" });
-    this.#tabs.setAttribute("role", "tablist");
-    this.#tabs.hidden = true;
-    for (const [view, label] of [
-      ["roles", "Roles"],
-      ["agents", "Agents"],
-    ] as const) {
-      const tab = el("button", { type: "button", text: label });
-      tab.dataset.view = view;
-      tab.setAttribute("role", "tab");
-      tab.addEventListener("click", () => {
-        this.#view = view;
-        this.#update();
-      });
-      this.#tabs.append(tab);
-    }
     this.#agentList = el("div", { className: "agent-list" });
     this.#agentList.hidden = true;
+    this.#heading = el("h2", { text: "Model roles" });
     this.element.append(
-      el("h2", { text: "Model roles" }),
+      this.#heading,
       this.#empty,
       this.#note,
-      this.#tabs,
       this.#list,
       this.#agentList,
       this.#editor,
@@ -218,7 +204,7 @@ export class ModelRolesPane {
       this.#agents = null;
       this.#agentSignature = "";
       this.#highlightAgent = null;
-      this.#view = "roles";
+      this.#agentList.replaceChildren();
       this.#list.replaceChildren();
       this.#update();
       if (this.#active) void this.refresh();
@@ -308,24 +294,38 @@ export class ModelRolesPane {
     this.#updateButtons();
   }
 
-  #showAgent(name: string): void {
-    this.#view = "agents";
-    this.#highlightAgent = name;
+  setView(view: "roles" | "agents"): void {
+    if (view === this.#view) return;
+    this.#view = view;
     this.#update();
+  }
+
+  #showAgent(name: string): void {
+    this.#highlightAgent = name;
+    this.#navigate("agents");
     this.#agentList
       .querySelector(`[data-agent-name="${CSS.escape(name)}"]`)
       ?.scrollIntoView({ block: "nearest" });
   }
 
   #showRole(roleId: string): void {
-    this.#view = "roles";
-    this.#update();
+    this.#navigate("models");
     const role = this.#info?.roles.find((candidate) => candidate.id === roleId);
     if (role) this.#selectRole(role);
   }
 
   #renderAgents(): void {
-    const agents = this.#agents?.agents ?? [];
+    if (!this.#agents) {
+      this.#agentSignature = "";
+      this.#agentList.replaceChildren(
+        el("p", {
+          className: "empty",
+          text: "This session does not report its agents. Restart it on the current extension.",
+        }),
+      );
+      return;
+    }
+    const agents = this.#agents.agents;
     const signature = JSON.stringify([this.#highlightAgent, agents]);
     if (signature === this.#agentSignature) return;
     this.#agentSignature = signature;
@@ -637,20 +637,13 @@ export class ModelRolesPane {
       if (!this.#editor.querySelector(".role-fallback-note"))
         this.#editor.prepend(tip);
     }
-    const showAgents =
-      this.#view === "agents" && !unsupported && this.#agents !== null;
-    this.#tabs.hidden = unsupported || this.#agents === null;
+    const showAgents = this.#view === "agents" && !unsupported;
     this.#agentList.hidden = !showAgents;
+    this.#heading.textContent = showAgents ? "Agents" : "Model roles";
     if (showAgents) {
       this.#list.hidden = true;
       this.#editor.hidden = true;
       this.#renderAgents();
-    }
-    for (const button of this.#tabs.querySelectorAll("button")) {
-      button.setAttribute(
-        "aria-selected",
-        String(button.dataset.view === (showAgents ? "agents" : "roles")),
-      );
     }
   }
 }
