@@ -159,34 +159,32 @@ export class SessionLauncher {
       else groups.set(key, { latest: session, count: 1 });
     }
     this.#history.replaceChildren();
-    {
-      for (const { latest: session, count } of groups.values()) {
-        const row = button("", "past-session");
-        row.dataset.sessionId = session.sessionId;
-        row.title =
-          count > 1
-            ? `${count} similar sessions; newest is ${session.sessionId}`
-            : session.sessionId;
-        row.setAttribute("aria-pressed", "false");
-        row.append(
-          el("strong", {
-            text: count > 1 ? `${session.title} (×${count})` : session.title,
-            title: session.title,
-          }),
-          el("span", {
-            text: session.cwd || "Working directory unknown",
-            title: session.cwd || "Working directory unknown",
-          }),
-          el("time", { text: new Date(session.modifiedAt).toLocaleString() }),
-        );
-        row.onclick = () => {
-          this.#selected = session;
-          this.#path.value = session.cwd;
-          this.#name.value = session.name ?? "";
-          this.#syncSelection();
-        };
-        this.#history.append(row);
-      }
+    for (const { latest: session, count } of groups.values()) {
+      const row = button("", "past-session");
+      row.dataset.sessionId = session.sessionId;
+      row.title =
+        count > 1
+          ? `${count} similar sessions; newest is ${session.sessionId}`
+          : session.sessionId;
+      row.setAttribute("aria-pressed", "false");
+      row.append(
+        el("strong", {
+          text: count > 1 ? `${session.title} (×${count})` : session.title,
+          title: session.title,
+        }),
+        el("span", {
+          text: session.cwd || "Working directory unknown",
+          title: session.cwd || "Working directory unknown",
+        }),
+        el("time", { text: new Date(session.modifiedAt).toLocaleString() }),
+      );
+      row.onclick = () => {
+        this.#selected = session;
+        this.#path.value = session.cwd;
+        this.#name.value = session.name ?? "";
+        this.#syncSelection();
+      };
+      this.#history.append(row);
     }
     this.#syncSelection();
   }

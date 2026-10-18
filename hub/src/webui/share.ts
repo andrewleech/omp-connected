@@ -4,8 +4,8 @@
 // Resolution happens on every load, and again whenever the session goes away,
 // so the link keeps working across omp restarts.
 
-import { collabFrameUrl } from "./lib/collab-link";
 import { customizeCollabFrame } from "./lib/collab-frame";
+import { collabFrameUrl } from "./lib/collab-link";
 import {
   type ShareCandidate,
   type ShareTarget,
