@@ -12,6 +12,7 @@ import {
 	createAccessCache,
 	createSessionRpc,
 	EXIT_FEATURE,
+	AGENT_ROLES_FEATURE,
 	MODEL_ROLES_FEATURE,
 	SCHEDULE_FEATURE,
 	SESSION_FEATURE,
@@ -230,7 +231,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 							SESSION_FORK_FEATURE,
 							HOST_SESSIONS_FEATURE,
 							USAGE_FEATURE,
-							...(supportsModelRoles(ownerContext) ? [MODEL_ROLES_FEATURE] : []),
+							...(supportsModelRoles(ownerContext) ? [MODEL_ROLES_FEATURE, AGENT_ROLES_FEATURE] : []),
 						],
 					});
 					hub.identity = result.agent;

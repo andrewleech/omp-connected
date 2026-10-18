@@ -159,6 +159,31 @@ export function modelRolesApiUrl(hostId: string, instanceId: string): string {
 export function supportsModelRoles(session: { features?: string[] }): boolean {
   return session.features?.includes(MODEL_ROLES_FEATURE) ?? false;
 }
+
+export const AGENT_ROLES_FEATURE = "session.agent_roles.v1";
+
+export interface AgentRoleInfo {
+  name: string;
+  description: string;
+  source: string;
+  filePath: string | null;
+  disabled: boolean;
+  frontmatterModel: string[];
+  overrideModel: string | null;
+  origin: "override" | "frontmatter" | "session";
+  role: string | null;
+  patterns: string[];
+  resolvedModel: ModelRef | null;
+  thinking: string | null;
+}
+
+export interface AgentRolesInfo {
+  agents: AgentRoleInfo[];
+}
+
+export function agentRolesApiUrl(hostId: string, instanceId: string): string {
+  return `${sessionApiBase(hostId, instanceId)}/agent-roles`;
+}
 export function usageApiUrl(hostId: string, instanceId: string): string {
   return `${sessionApiBase(hostId, instanceId)}/usage`;
 }

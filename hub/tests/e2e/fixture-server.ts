@@ -23,6 +23,7 @@ const sessions = {
       "session.exit.v1",
       "session.fork.v1",
       "session.model_roles.v1",
+      "session.agent_roles.v1",
       "session.usage.v1",
     ],
   },
@@ -129,6 +130,42 @@ function modelRolesInfo(access: "view" | "control") {
         projectSelector: custom,
         resolvedModel: { provider: "openai", id: "gpt-b", name: "GPT B" },
         models: roleModels,
+      },
+    ],
+  };
+}
+function agentRolesInfo() {
+  const claudeA = { provider: "anthropic", id: "claude-a", name: "Claude A" };
+  const base = {
+    description: "",
+    source: "bundled",
+    filePath: null,
+    disabled: false,
+    overrideModel: null,
+  };
+  return {
+    agents: [
+      {
+        ...base,
+        name: "reviewer",
+        description: "Reviews code",
+        frontmatterModel: ["@default"],
+        origin: "frontmatter",
+        role: "default",
+        patterns: ["anthropic/claude-a:high"],
+        resolvedModel: claudeA,
+        thinking: "high",
+      },
+      {
+        ...base,
+        name: "pinned-agent",
+        source: "user",
+        frontmatterModel: ["openai/gpt-b"],
+        origin: "frontmatter",
+        role: null,
+        patterns: ["openai/gpt-b"],
+        resolvedModel: { provider: "openai", id: "gpt-b", name: "GPT B" },
+        thinking: null,
       },
     ],
   };
@@ -463,6 +500,12 @@ Bun.serve({
         return json(modelRolesInfo(access));
       }
     }
+    if (
+      url.pathname ===
+        "/api/hosts/writer/sessions/writer-room/agent-roles" &&
+      request.method === "GET"
+    )
+      return json(agentRolesInfo());
     const writerApi = "/api/hosts/writer/sessions/writer-room";
     if (url.pathname.startsWith(`${writerApi}/`))
       return writerSessionApi(

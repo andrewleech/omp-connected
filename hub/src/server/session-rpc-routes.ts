@@ -19,6 +19,7 @@ import {
   type FilesStatResult,
   MAX_SCHEDULED_TEXT,
   MAX_SCHEDULE_DELAY_MS,
+  AGENT_ROLES_FEATURE,
   MODEL_ROLES_FEATURE,
   SCHEDULE_FEATURE,
   SESSION_FEATURE,
@@ -436,6 +437,16 @@ export function sessionRpcRoutes(
       );
       if (!("agentId" in resolved)) return fail(set, resolved);
       return forward(set, resolved.agentId, "session.model_roles", {});
+    })
+
+    .get("/:id/sessions/:instanceId/agent-roles", ({ params, set }) => {
+      const resolved = target(
+        params.id,
+        params.instanceId,
+        AGENT_ROLES_FEATURE,
+      );
+      if (!("agentId" in resolved)) return fail(set, resolved);
+      return forward(set, resolved.agentId, "session.agent_roles", {});
     })
 
     .post("/:id/sessions/:instanceId/model-roles", ({ params, body, set }) => {
