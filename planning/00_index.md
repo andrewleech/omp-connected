@@ -23,6 +23,8 @@ HEAD: ea1ccb0695
 
 8. Collab guest slash commands, archived in `archive/collab-guest-commands/` (fork branch `collab-guest-commands`, no upstream PR): [design, reviews and verification](archive/collab-guest-commands/20260930_guest_slash_commands.md), the only record of the track.
 
+9. Per-model profiles that reduce initial context, active design for an upstream proposal (no fork branch, no upstream issue yet): [design](20261019_model_profiles_design.md): `modelProfiles` in `models.yml`, one resolution function for subagent spawn and live model switch, phases 1 to 3, open questions 1 to 12.
+
 ## Operating conventions
 - Every document is stamped with its date and HEAD revision.
 - Tickets have immutable `Written:` metadata and append-only `Revalidated:` entries.
