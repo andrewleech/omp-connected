@@ -59,10 +59,18 @@ interface AgentActivityParams { busy: boolean; }
 
 // Server -> Extension (server-initiated push; the extension's {result: ...}
 // reply is its delivery receipt, matched on the message's own id)
-interface AgentMessagePush { messageId: string; from: string; to: string; content: string; replyTo?: string; }
+interface AgentMessagePush {
+  messageId: string;
+  from: string; // canonical routing id
+  fromDisplayName?: string; // absent for non-agent senders or older hubs
+  to: string;
+  content: string;
+  replyTo?: string;
+}
 
 interface AgentSummary {
   id: string; // canonical: `${hostId}:${instanceId}`
+  displayName: string; // `${label}:${hostId} (${instanceId})`
   hostId: string; instanceId: string; label: string; // registered label, else basename(cwd); not unique
   features: string[]; // advertised at registration
   busy?: boolean; // mid-turn, once the extension has reported it

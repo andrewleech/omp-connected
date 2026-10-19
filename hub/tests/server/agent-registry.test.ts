@@ -60,8 +60,16 @@ describe("AgentRegistry — identity resolution", () => {
     expect(resolved.data.address).toBe("api");
     expect(resolved.data.candidates).toEqual(
       expect.arrayContaining([
-        { id: "user@hub-host:inst-1", cwd: "/home/user/api" },
-        { id: "user@worker-host:inst-2", cwd: "/srv/api" },
+        {
+          id: "user@hub-host:inst-1",
+          displayName: "api:user@hub-host (inst-1)",
+          cwd: "/home/user/api",
+        },
+        {
+          id: "user@worker-host:inst-2",
+          displayName: "api:user@worker-host (inst-2)",
+          cwd: "/srv/api",
+        },
       ]),
     );
     expect(resolved.data.candidates).toHaveLength(2);
@@ -104,6 +112,7 @@ describe("AgentRegistry — registration", () => {
 
     expect(summary).toEqual({
       id: "user@hub-host:inst-1",
+      displayName: "api:user@hub-host (inst-1)",
       hostId: "user@hub-host",
       instanceId: "inst-1",
       label: "api",
@@ -182,9 +191,14 @@ describe("AgentRegistry — mailbox", () => {
       { hostId: "user@hub-host", instanceId: "inst-1" },
       fakeConn((data) => pushed.push(data)),
     );
+    registerAgent(registry, {
+      hostId: "user@worker-host",
+      instanceId: "worker-1",
+      cwd: "/home/user/worker",
+    });
 
     const result = registry.send({
-      from: "operator@hub-host",
+      from: "user@worker-host:worker-1",
       to: "user@hub-host:inst-1",
       content: "hello",
       idempotencyKey: "k1",
@@ -197,10 +211,13 @@ describe("AgentRegistry — mailbox", () => {
       jsonrpc: "2.0",
       id: result.messageId,
       method: "agent.message",
-      params: { from: "operator@hub-host", content: "hello" },
+      params: {
+        from: "user@worker-host:worker-1",
+        fromDisplayName: "worker:user@worker-host (worker-1)",
+        content: "hello",
+      },
     });
   });
-
   test("sending to an offline agent queues the message in its mailbox", () => {
     const registry = new AgentRegistry();
     const conn = fakeConn();
@@ -219,6 +236,9 @@ describe("AgentRegistry — mailbox", () => {
     });
 
     expect(result.recipientOnline).toBe(false);
+    expect(registry.getMailbox("user@hub-host:inst-1")[0]).not.toHaveProperty(
+      "fromDisplayName",
+    );
     expect(registry.getMailbox("user@hub-host:inst-1")).toEqual([
       expect.objectContaining({ content: "queued" }),
     ]);
@@ -427,7 +447,14 @@ describe("AgentRegistry — teams", () => {
 
     expect(result.team).toEqual({
       name: "eng",
-      members: [{ id: "user@hub-host:inst-1", label: "api", status: "online" }],
+      members: [
+        {
+          id: "user@hub-host:inst-1",
+          displayName: "api:user@hub-host (inst-1)",
+          label: "api",
+          status: "online",
+        },
+      ],
     });
     expect(registry.listTeams()).toEqual([result.team]);
   });
@@ -476,6 +503,11 @@ describe("AgentRegistry — teams", () => {
     expect(result.onlineRecipientCount).toBe(1);
     expect(pushedA).toHaveLength(0); // sender excluded
     expect(pushedB).toHaveLength(1);
+    const frame = JSON.parse(pushedB[0] ?? "{}");
+    expect(frame.params).toMatchObject({
+      from: "user@hub-host:a",
+      fromDisplayName: "a:user@hub-host (a)",
+    });
   });
 
   test("team members report correct online/offline status", () => {
@@ -498,7 +530,12 @@ describe("AgentRegistry — teams", () => {
     const summary = registry.leaveTeam("user@hub-host:b", "eng");
     // leaveTeam's remainingMembers reflects who's left (agent a, offline).
     expect(summary.remainingMembers).toEqual([
-      { id: "user@hub-host:a", label: "a", status: "offline" },
+      {
+        id: "user@hub-host:a",
+        displayName: "a:user@hub-host (a)",
+        label: "a",
+        status: "offline",
+      },
     ]);
   });
 });

@@ -131,6 +131,7 @@ export type DashboardEvent =
 
 export interface AgentSummary {
   id: string; // canonical: `${hostId}:${instanceId}`
+  displayName: string; // `${label}:${hostId} (${instanceId})`
   hostId: string;
   instanceId: string;
   label: string; // extension-reported ompc session name, else basename(cwd)
@@ -149,6 +150,7 @@ export type AgentMessageType = "message" | "reply";
 export interface AgentMessage {
   messageId: string; // server-assigned monotonic, decimal string
   from: string;
+  fromDisplayName?: string; // absent for non-agent senders and messages from older hubs
   to: string;
   type: AgentMessageType;
   content: string;
@@ -159,6 +161,7 @@ export interface AgentMessage {
 
 export interface AgentTeamMember {
   id: string;
+  displayName: string;
   label: string;
   status: "online" | "offline";
 }
@@ -182,6 +185,7 @@ export interface AgentHubEvent {
 
 export interface AgentAddressCandidate {
   id: string;
+  displayName: string;
   cwd: string;
 }
 
