@@ -330,3 +330,19 @@ test("session rail refresh preserves its visible position", async ({
     .poll(() => anchorCard.evaluate((card) => card.getBoundingClientRect().top))
     .toBeCloseTo(anchor.top);
 });
+
+test("the guest composer keeps vertical swipes for prompt history", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const input = page
+    .frameLocator("[data-collab-frame]")
+    .locator(".sh-composer-input");
+  await expect(input).toBeVisible();
+  await expect(input).toHaveCSS("touch-action", "pan-x");
+  await expect(input).toHaveCSS("overscroll-behavior-y", "contain");
+  await input.evaluate((el) => {
+    el.style.overflowY = "auto";
+  });
+  await expect(input).toHaveCSS("touch-action", "pan-y");
+});

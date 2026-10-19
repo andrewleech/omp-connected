@@ -4,6 +4,12 @@
 // - The guest sets `overscroll-behavior-y: none` on its root, which stops
 //   overscroll chaining out of the iframe and so kills the browser's
 //   pull-to-refresh; restore default chaining.
+// - The composer textarea claims horizontal pans only, with its own overscroll
+//   contained. With the guest's default `touch-action: manipulation` the
+//   browser takes a downward swipe (pull-to-refresh / pan) and cancels the
+//   pointer before the guest's history swipe sees it, so swipe down never
+//   navigated back through prompt history. Drafts taller than the autosize
+//   cap scroll vertically, so those keep `pan-y`.
 // - The dashboard owns session selection, so hide the guest's own
 //   "leave session" button.
 // - Text selection gets an explicit high-contrast highlight, and the dark
@@ -18,6 +24,8 @@ const MAX_TEXT_SCALE = 2.5;
 
 const GUEST_CSS = `
 html, body { overscroll-behavior-y: auto; touch-action: pan-x pan-y; }
+.sh-composer-input { touch-action: pan-x; overscroll-behavior-y: contain; }
+.sh-composer-input[style*="overflow-y: auto"] { touch-action: pan-y; }
 .sh-header button[title="leave session"] { display: none; }
 .tr-root > * { zoom: var(--omp-text-scale, 1); }
 ::selection { background: #8e2c6b; color: #fff; }
