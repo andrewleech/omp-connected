@@ -447,6 +447,7 @@ export class AgentRegistry {
     const recipient = resolved.entry;
     const message = this.buildMessage({
       from: params.from,
+      fromDisplayName: this.displayNameForId(params.from),
       to: recipient.id,
       content: params.content,
       replyTo: params.replyTo,
@@ -505,6 +506,7 @@ export class AgentRegistry {
     const recipients = [...this.agents.values()].filter(
       (e) => e.teams.has(params.team) && e.id !== params.from,
     );
+    const fromDisplayName = this.displayNameForId(params.from);
     const messageId = String(this.nextMessageId++);
     const timestamp = new Date(this.now()).toISOString();
     const type: AgentMessageType =
@@ -514,6 +516,7 @@ export class AgentRegistry {
       const message: AgentMessage = {
         messageId,
         from: params.from,
+        ...(fromDisplayName !== undefined ? { fromDisplayName } : {}),
         to: entry.id,
         type,
         content: params.content,
@@ -650,7 +653,11 @@ export class AgentRegistry {
         kind: "ambiguous",
         data: {
           address,
-          candidates: candidates.map((e) => ({ id: e.id, cwd: e.cwd })),
+          candidates: candidates.map((e) => ({
+            id: e.id,
+            displayName: this.displayName(e),
+            cwd: e.cwd,
+          })),
         },
       };
     }
@@ -669,6 +676,7 @@ export class AgentRegistry {
       .filter((e) => e.teams.has(team))
       .map((e) => ({
         id: e.id,
+        displayName: this.displayName(e),
         label: e.label,
         status: e.conn !== undefined ? "online" : "offline",
       }));
@@ -680,6 +688,7 @@ export class AgentRegistry {
 
   private buildMessage(params: {
     from: string;
+    fromDisplayName?: string;
     to: string;
     content: string;
     replyTo?: string;
@@ -687,6 +696,9 @@ export class AgentRegistry {
     return {
       messageId: String(this.nextMessageId++),
       from: params.from,
+      ...(params.fromDisplayName !== undefined
+        ? { fromDisplayName: params.fromDisplayName }
+        : {}),
       to: params.to,
       type: params.replyTo !== undefined ? "reply" : "message",
       content: params.content,
@@ -716,9 +728,21 @@ export class AgentRegistry {
     }
   }
 
+  private displayName(
+    entry: Pick<AgentEntry, "label" | "hostId" | "instanceId">,
+  ): string {
+    return `${entry.label}:${entry.hostId} (${entry.instanceId})`;
+  }
+
+  private displayNameForId(id: string): string | undefined {
+    const entry = this.agents.get(id);
+    return entry ? this.displayName(entry) : undefined;
+  }
+
   private toSummary(entry: AgentEntry): AgentSummary {
     return {
       id: entry.id,
+      displayName: this.displayName(entry),
       hostId: entry.hostId,
       instanceId: entry.instanceId,
       label: entry.label,

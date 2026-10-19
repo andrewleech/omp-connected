@@ -8,6 +8,7 @@ export const MAX_INBOUND_BYTES = 16_000;
 export interface AgentMessage {
 	messageId: string;
 	from: string;
+	fromDisplayName?: string;
 	to: string;
 	type: "message" | "reply";
 	content: string;
@@ -43,10 +44,13 @@ export function formatInboundMessage(message: AgentMessage): ProvenancedMessage 
 			? message.content
 			: `${new TextDecoder().decode(bytes.slice(0, MAX_INBOUND_BYTES))}\n[omp-hub message truncated at ${MAX_INBOUND_BYTES} bytes]`;
 	const { content: _content, ...details } = message;
+	const sender = message.fromDisplayName
+		? `${message.fromDisplayName} <${message.from}>`
+		: message.from;
 	return {
 		customType: AGENT_MESSAGE_TYPE,
 		attribution: "agent",
-		content: `[from ${message.from} via omp-hub, untrusted agent message]\n${content}`,
+		content: `[from ${sender} via omp-hub, untrusted agent message]\n${content}`,
 		details,
 	};
 }

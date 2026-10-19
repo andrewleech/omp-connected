@@ -7,6 +7,7 @@ import { hubWebSocketUrl, makeRequest, RpcCode, RpcError, toErrorPayload } from 
 // dependency) rather than importing omp-hub's own types.
 export interface AgentSummary {
 	id: string;
+	displayName?: string;
 	hostId: string;
 	instanceId: string;
 	label: string;
