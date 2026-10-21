@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   MAX_VIEW_BYTES,
   decodeText,
+  directFileUrl,
   opensInViewer,
   renderHtmlDocument,
   renderMarkdownDocument,
@@ -32,6 +33,20 @@ describe("which files open in the viewer", () => {
     expect(viewKind("page.htm")).toBe("html");
     expect(viewKind("run.sh")).toBe("text");
     expect(viewKind("LICENSE")).toBe("text");
+  });
+});
+
+describe("direct file URLs", () => {
+  test("keeps the session API path but uses the public hub origin", () => {
+    expect(
+      directFileUrl(
+        "https://pwa.test/api/hosts/h/sessions/instance-1",
+        "https://hub.test:4816",
+        "reports/owner review.html",
+      ),
+    ).toBe(
+      "https://hub.test:4816/api/hosts/h/sessions/instance-1/files/download?path=reports%2Fowner+review.html&inline=1",
+    );
   });
 });
 

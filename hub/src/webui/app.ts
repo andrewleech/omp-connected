@@ -155,6 +155,23 @@ function attachLongPress(
   target.addEventListener("pointercancel", cancel);
 }
 
+async function loadPublicOrigin(): Promise<string | null> {
+  try {
+    const response = await fetch("/api/config", { cache: "no-store" });
+    if (!response.ok) return null;
+    const config: { publicOrigin?: unknown } = await response.json();
+    if (typeof config.publicOrigin !== "string") return null;
+    const url = new URL(config.publicOrigin);
+    return url.protocol === "http:" || url.protocol === "https:"
+      ? url.origin
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+const publicOrigin = loadPublicOrigin();
+
 function createDashboard(root: HTMLElement): void {
   const state = {
     ...readWorkspace(localStorage),
@@ -177,8 +194,10 @@ function createDashboard(root: HTMLElement): void {
     );
   });
   const sessionPane = new SessionPane({ showStatus });
-  const filesPane = new FilesPane({ showStatus }, (session) =>
-    sessionPane.cwdFor(session),
+  const filesPane = new FilesPane(
+    { showStatus },
+    (session) => sessionPane.cwdFor(session),
+    publicOrigin,
   );
   const modelRolesPane = new ModelRolesPane({ showStatus }, (pane) => {
     state.inspector = pane;

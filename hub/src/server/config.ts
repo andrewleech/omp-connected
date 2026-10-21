@@ -7,6 +7,7 @@ export interface HubConfig {
    *  this to a specific Tailnet IP in any deployment reachable beyond
    *  localhost, so the process is never wildcard-bound by accident. */
   host: string | undefined;
+  publicOrigin: string | null;
   hostToken: string;
   tlsCert: string | undefined;
   tlsKey: string | undefined;
@@ -19,12 +20,21 @@ export interface HubConfig {
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): HubConfig {
   const hostToken = env.OMP_HUB_HOST_TOKEN;
   if (!hostToken) throw new Error("OMP_HUB_HOST_TOKEN is required");
+  const port = Number(env.OMP_HUB_PORT) || 4816;
+  const hostname = env.OMP_HUB_HOSTNAME;
+  const tlsCert = env.OMP_HUB_TLS_CERT;
+  const tlsKey = env.OMP_HUB_TLS_KEY;
+  const publicOrigin =
+    hostname && tlsCert && tlsKey
+      ? new URL(`https://${hostname}:${port}`).origin
+      : null;
   return {
-    port: Number(env.OMP_HUB_PORT) || 4816,
+    port,
     host: env.OMP_HUB_HOST,
+    publicOrigin,
     hostToken,
-    tlsCert: env.OMP_HUB_TLS_CERT,
-    tlsKey: env.OMP_HUB_TLS_KEY,
+    tlsCert,
+    tlsKey,
     relayPort: Number(env.OMP_HUB_RELAY_PORT) || undefined,
     relayAllowedOrigins: (env.OMP_HUB_RELAY_ALLOWED_ORIGINS ?? "")
       .split(",")

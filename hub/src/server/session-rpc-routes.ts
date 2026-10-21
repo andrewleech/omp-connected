@@ -15,11 +15,11 @@ import { type Context, Elysia } from "elysia";
 import { AgentCallError, type AgentRegistry } from "./agent-registry";
 import { RateLimiter } from "./rate-limit";
 import {
+  AGENT_ROLES_FEATURE,
   EXIT_FEATURE,
   type FilesStatResult,
   MAX_SCHEDULED_TEXT,
   MAX_SCHEDULE_DELAY_MS,
-  AGENT_ROLES_FEATURE,
   MODEL_ROLES_FEATURE,
   SCHEDULE_FEATURE,
   SESSION_FEATURE,
@@ -590,8 +590,15 @@ export function sessionRpcRoutes(
         const name = posix.basename(stat.path) || "download";
         const contentType = Bun.file(name).type || "application/octet-stream";
         const mimeType = contentType.split(";")[0]?.trim() ?? "";
+        const inlineText = inline && mimeType.startsWith("text/");
         const disposition =
-          inline && INLINE_IMAGE_TYPES.has(mimeType) ? "inline" : "attachment";
+          inline && (INLINE_IMAGE_TYPES.has(mimeType) || inlineText)
+            ? "inline"
+            : "attachment";
+        const contentSecurityPolicy =
+          inline && mimeType === "text/html"
+            ? "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:"
+            : "sandbox";
         return new Response(
           downloadStream(agentId, path, stat, first, release),
           {
@@ -600,7 +607,7 @@ export function sessionRpcRoutes(
               "content-length": String(stat.size),
               "content-disposition": contentDisposition(disposition, name),
               "x-content-type-options": "nosniff",
-              "content-security-policy": "sandbox",
+              "content-security-policy": contentSecurityPolicy,
               "cache-control": "no-store",
             },
           },

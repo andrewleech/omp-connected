@@ -607,7 +607,8 @@ describe("session-rpc-routes: download", () => {
     ["a.gif", "&inline=1", "inline", "image/gif"],
     ["a.webp", "&inline=1", "inline", "image/webp"],
     ["a.svg", "&inline=1", "attachment", "image/svg+xml"],
-    ["a.html", "&inline=1", "attachment", "text/html;charset=utf-8"],
+    ["a.html", "&inline=1", "inline", "text/html;charset=utf-8"],
+    ["a.txt", "&inline=1", "inline", "text/plain;charset=utf-8"],
     ["a.png", "&inline=0", "attachment", "image/png"],
   ])(
     "%s with query '%s' is served %s as %s",
@@ -624,7 +625,11 @@ describe("session-rpc-routes: download", () => {
       expect(response.headers.get("content-disposition")).toStartWith(
         `${disposition}; `,
       );
-      expect(response.headers.get("content-security-policy")).toBe("sandbox");
+      expect(response.headers.get("content-security-policy")).toBe(
+        query === "&inline=1" && type === "text/html;charset=utf-8"
+          ? "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:"
+          : "sandbox",
+      );
       await response.arrayBuffer();
     },
   );

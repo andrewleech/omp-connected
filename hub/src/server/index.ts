@@ -42,6 +42,7 @@ export function createHub(options: CreateHubOptions = {}): Hub {
   const agentRegistry = new AgentRegistry();
 
   const app = new Elysia()
+    .get("/api/config", () => ({ publicOrigin: env.publicOrigin }))
     .get("/health", () => ({
       status: "ok",
       version: "0.1.0",

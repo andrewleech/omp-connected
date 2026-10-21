@@ -6,6 +6,7 @@ import { button, el } from "./dom";
 import {
   type ViewKind,
   decodeText,
+  directFileUrl,
   renderHtmlDocument,
   renderMarkdownDocument,
   viewKind,
@@ -18,6 +19,8 @@ export interface ViewTarget {
   path: string;
   /** Absolute URL prefix of the session's file API, with no trailing slash. */
   apiBase: string;
+  /** Public hub origin, outside the installed PWA origin. */
+  publicOrigin: Promise<string | null>;
 }
 
 type Mode = "rendered" | "raw";
@@ -56,13 +59,14 @@ export class FileViewer {
     this.#modes.setAttribute("aria-label", "View as");
     this.#modes.append(this.#renderedButton, this.#rawButton);
     this.#openInNewWindow = document.createElement("a");
+    this.#openInNewWindow.hidden = true;
     this.#openInNewWindow.className = "file-viewer-open";
-    this.#openInNewWindow.textContent = "Open in new window";
+    this.#openInNewWindow.textContent = "Open in browser";
     this.#openInNewWindow.target = "_blank";
     this.#openInNewWindow.rel = "noopener";
     this.#openInNewWindow.setAttribute(
       "aria-label",
-      "Open file in a new window",
+      "Open file in a browser tab",
     );
     this.#download = document.createElement("a");
     this.#download.className = "file-viewer-download";
@@ -98,8 +102,8 @@ export class FileViewer {
     this.#dialog.addEventListener("close", () => {
       this.#abort?.abort();
       this.#abort = null;
-      this.#releaseOpenUrl();
       this.#openInNewWindow.removeAttribute("href");
+      this.#openInNewWindow.hidden = true;
       this.#raw.textContent = "";
     });
     document.body.append(this.#dialog);
@@ -161,6 +165,15 @@ export class FileViewer {
       this.#frame.srcdoc = renderHtmlDocument(text);
     }
     this.#setMode(this.#kind === "text" ? "raw" : "rendered");
+    const origin = await target.publicOrigin;
+    if (abort.signal.aborted) return;
+    if (!origin) return;
+    this.#openInNewWindow.href = directFileUrl(
+      target.apiBase,
+      origin,
+      target.path,
+    );
+    this.#openInNewWindow.hidden = false;
   }
 
   close(): void {
@@ -178,33 +191,15 @@ export class FileViewer {
     this.#rawButton.setAttribute("aria-pressed", String(mode === "raw"));
     this.#renderedButton.classList.toggle("active", mode === "rendered");
     this.#rawButton.classList.toggle("active", mode === "raw");
-    this.#updateOpenLink();
   }
 
   #showStatus(message: string): void {
-    this.#releaseOpenUrl();
     this.#openInNewWindow.removeAttribute("href");
+    this.#openInNewWindow.hidden = true;
     this.#status.textContent = message;
     this.#status.hidden = false;
     this.#raw.hidden = true;
     this.#frame.hidden = true;
-  }
-
-  #updateOpenLink(): void {
-    this.#releaseOpenUrl();
-    const content =
-      this.#kind !== "text" && !this.#frame.hidden
-        ? this.#frame.srcdoc
-        : `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><title>${escapeHtml(this.#title.textContent ?? "")}</title><style>body{background:#0d1117;color:#e6edf3;font:14px/1.5 ui-monospace,monospace;margin:0;padding:1rem}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style><pre>${escapeHtml(this.#raw.textContent ?? "")}</pre>`;
-    const url = URL.createObjectURL(
-      new Blob([content], { type: "text/html;charset=utf-8" }),
-    );
-    this.#openInNewWindow.href = url;
-  }
-
-  #releaseOpenUrl(): void {
-    const url = this.#openInNewWindow.getAttribute("href");
-    if (url?.startsWith("blob:")) URL.revokeObjectURL(url);
   }
 
   #startDownload(url: string, name: string): void {
@@ -215,13 +210,4 @@ export class FileViewer {
     link.click();
     link.remove();
   }
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
 }
