@@ -33,6 +33,77 @@ html, body { overscroll-behavior-y: auto; touch-action: pan-x pan-y; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme]) { --fg-faint: #9a9aa4; } }
 `;
 
+/** Maps a same-origin relative guest link to a path in the session's file API. */
+export function collabFilePathFromHref(
+  href: string,
+  pageUrl: string,
+): string | null {
+  if (!href || href.startsWith("#") || href.startsWith("//")) return null;
+  let page: URL;
+  let target: URL;
+  try {
+    page = new URL(pageUrl);
+    target = new URL(href, page);
+  } catch {
+    return null;
+  }
+  const prefix = "/collab/";
+  if (
+    page.pathname !== prefix ||
+    target.origin !== page.origin ||
+    !target.pathname.startsWith(prefix)
+  )
+    return null;
+  let path: string;
+  try {
+    path = decodeURIComponent(target.pathname.slice(prefix.length));
+  } catch {
+    return null;
+  }
+  const segments = path.split("/");
+  if (
+    !path ||
+    path.startsWith("/") ||
+    path.includes("\0") ||
+    segments.some(
+      (segment) => segment === "" || segment === "." || segment === "..",
+    )
+  )
+    return null;
+  return path;
+}
+
+export function attachCollabFileLinks(
+  doc: Document,
+  openFile: (path: string) => void,
+): void {
+  doc.addEventListener(
+    "click",
+    (event) => {
+      const ElementType = doc.defaultView?.Element;
+      if (!ElementType || !(event.target instanceof ElementType)) return;
+      const anchor = event.target.closest<HTMLAnchorElement>("a[href]");
+      if (
+        !anchor ||
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey
+      )
+        return;
+      const path = collabFilePathFromHref(
+        anchor.getAttribute("href") ?? "",
+        doc.location.href,
+      );
+      if (path === null) return;
+      event.preventDefault();
+      openFile(path);
+    },
+    true,
+  );
+}
+
 export function clampTextScale(value: number): number {
   if (!Number.isFinite(value) || value <= 0) return 1;
   return Math.min(MAX_TEXT_SCALE, Math.max(MIN_TEXT_SCALE, value));

@@ -7,7 +7,10 @@
 // interval instead of being pushed, since this server only ever learns
 // it by RPC-polling a host itself.
 
-import { customizeCollabFrame } from "./lib/collab-frame";
+import {
+  attachCollabFileLinks,
+  customizeCollabFrame,
+} from "./lib/collab-frame";
 import { collabFrameUrl } from "./lib/collab-link";
 import { CollabTailViewer } from "./lib/collab-tail";
 import { copyText, el } from "./lib/dom";
@@ -889,6 +892,7 @@ function createDashboard(root: HTMLElement): void {
       const doc = frame.contentDocument;
       if (!doc?.head) return;
       customizeCollabFrame(doc, localStorage);
+      attachCollabFileLinks(doc, (path) => filesPane.openFilePath(path));
       attachEdgeSwipe(
         doc,
         edgeSwipeOptions(() => frame.getBoundingClientRect().left),
