@@ -22,7 +22,8 @@ wire protocol, and security model.
   `/api/hosts/:id/sessions/:instanceId/fork`)
   and serves a fleet dashboard at `/` for live session monitoring, session
   controls, model role assignments, scheduled prompts and working-directory file
-  access, plus the vendored OMP Collab guest client at `/collab/`.
+  access, including sandboxed previews of relative Collab transcript links, plus
+  the vendored OMP Collab guest client at `/collab/`.
 - A private relay (`src/relay/relay.ts`) carries the actual encrypted
   Collab terminal bytes between a host and its guests. It runs in the hub
   process on its own port when `OMP_HUB_RELAY_PORT` is set.

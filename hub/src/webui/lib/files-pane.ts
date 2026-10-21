@@ -235,6 +235,41 @@ export class FilesPane {
     if (active) void this.load(this.#path);
   }
 
+  /** Opens a session-relative file link from the embedded Collab transcript. */
+  openFilePath(path: string): void {
+    const session = this.#session;
+    if (!session || !supportsSessionV1(session)) {
+      this.#host.showStatus(
+        "File links are not available for this session.",
+        "warning",
+      );
+      return;
+    }
+    if (
+      path.startsWith("/") ||
+      path.includes("\0") ||
+      path.split("/").some((segment) => segment === "..")
+    ) {
+      this.#host.showStatus(
+        "File link is outside the session folder.",
+        "warning",
+      );
+      return;
+    }
+    const target = normalisePath(path);
+    const name = target.split("/").pop();
+    if (!target || !name) {
+      this.#host.showStatus("File link does not name a file.", "warning");
+      return;
+    }
+    this.#viewer ??= new FileViewer();
+    void this.#viewer.open({
+      name,
+      path: target,
+      apiBase: new URL(this.#apiBase(session), location.href).href,
+    });
+  }
+
   async load(path: string): Promise<void> {
     const session = this.#session;
     const key = this.#key;
@@ -401,12 +436,7 @@ export class FilesPane {
           )
             return;
           event.preventDefault();
-          this.#viewer ??= new FileViewer();
-          void this.#viewer.open({
-            name: entry.name,
-            path,
-            apiBase: new URL(this.#apiBase(session), location.href).href,
-          });
+          this.openFilePath(path);
         });
       }
       name = link;
