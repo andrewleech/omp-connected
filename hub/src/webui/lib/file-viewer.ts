@@ -28,6 +28,7 @@ export class FileViewer {
   readonly #modes: HTMLElement;
   readonly #renderedButton: HTMLButtonElement;
   readonly #rawButton: HTMLButtonElement;
+  readonly #openInNewWindow: HTMLAnchorElement;
   readonly #download: HTMLAnchorElement;
   readonly #body: HTMLElement;
   readonly #status: HTMLElement;
@@ -54,13 +55,28 @@ export class FileViewer {
     this.#modes.setAttribute("role", "group");
     this.#modes.setAttribute("aria-label", "View as");
     this.#modes.append(this.#renderedButton, this.#rawButton);
+    this.#openInNewWindow = document.createElement("a");
+    this.#openInNewWindow.className = "file-viewer-open";
+    this.#openInNewWindow.textContent = "Open in new window";
+    this.#openInNewWindow.target = "_blank";
+    this.#openInNewWindow.rel = "noopener";
+    this.#openInNewWindow.setAttribute(
+      "aria-label",
+      "Open file in a new window",
+    );
     this.#download = document.createElement("a");
     this.#download.className = "file-viewer-download";
     this.#download.textContent = "Download";
     const close = button("Close", "small");
     close.addEventListener("click", () => this.#dialog.close());
     const header = el("header", { className: "file-viewer-header" });
-    header.append(this.#title, this.#modes, this.#download, close);
+    header.append(
+      this.#title,
+      this.#modes,
+      this.#openInNewWindow,
+      this.#download,
+      close,
+    );
 
     this.#status = el("p", { className: "file-viewer-status" });
     this.#raw = el("pre", { className: "file-viewer-raw" });
@@ -82,7 +98,8 @@ export class FileViewer {
     this.#dialog.addEventListener("close", () => {
       this.#abort?.abort();
       this.#abort = null;
-      this.#frame.removeAttribute("srcdoc");
+      this.#releaseOpenUrl();
+      this.#openInNewWindow.removeAttribute("href");
       this.#raw.textContent = "";
     });
     document.body.append(this.#dialog);
@@ -161,13 +178,33 @@ export class FileViewer {
     this.#rawButton.setAttribute("aria-pressed", String(mode === "raw"));
     this.#renderedButton.classList.toggle("active", mode === "rendered");
     this.#rawButton.classList.toggle("active", mode === "raw");
+    this.#updateOpenLink();
   }
 
   #showStatus(message: string): void {
+    this.#releaseOpenUrl();
+    this.#openInNewWindow.removeAttribute("href");
     this.#status.textContent = message;
     this.#status.hidden = false;
     this.#raw.hidden = true;
     this.#frame.hidden = true;
+  }
+
+  #updateOpenLink(): void {
+    this.#releaseOpenUrl();
+    const content =
+      this.#kind !== "text" && !this.#frame.hidden
+        ? this.#frame.srcdoc
+        : `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><title>${escapeHtml(this.#title.textContent ?? "")}</title><style>body{background:#0d1117;color:#e6edf3;font:14px/1.5 ui-monospace,monospace;margin:0;padding:1rem}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style><pre>${escapeHtml(this.#raw.textContent ?? "")}</pre>`;
+    const url = URL.createObjectURL(
+      new Blob([content], { type: "text/html;charset=utf-8" }),
+    );
+    this.#openInNewWindow.href = url;
+  }
+
+  #releaseOpenUrl(): void {
+    const url = this.#openInNewWindow.getAttribute("href");
+    if (url?.startsWith("blob:")) URL.revokeObjectURL(url);
   }
 
   #startDownload(url: string, name: string): void {
@@ -178,4 +215,13 @@ export class FileViewer {
     link.click();
     link.remove();
   }
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
