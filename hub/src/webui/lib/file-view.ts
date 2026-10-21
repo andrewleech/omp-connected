@@ -47,6 +47,19 @@ export function opensInViewer(name: string, size: number): boolean {
   return !BINARY_EXTENSIONS.has(extension(name));
 }
 
+/** A bookmarkable direct-download URL on the hub's public origin. */
+export function directFileUrl(
+  apiBase: string,
+  publicOrigin: string,
+  path: string,
+): string {
+  const apiPath = new URL(apiBase).pathname;
+  const url = new URL(`${apiPath}/files/download`, publicOrigin);
+  url.searchParams.set("path", path);
+  url.searchParams.set("inline", "1");
+  return url.href;
+}
+
 /** The text of `bytes`, or null when it is not UTF-8 text (NUL bytes or invalid sequences). */
 export function decodeText(bytes: ArrayBuffer): string | null {
   const view = new Uint8Array(bytes);

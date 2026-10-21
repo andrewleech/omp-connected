@@ -67,6 +67,7 @@ export class FilesPane {
   readonly element: HTMLElement;
   readonly #host: PaneHost;
   readonly #cwdFor: (session: CollabSession) => string | undefined;
+  readonly #publicOrigin: Promise<string | null>;
   readonly #gate = new LatestResponseGate();
   #viewer: FileViewer | null = null;
   #session: CollabSession | null = null;
@@ -105,9 +106,11 @@ export class FilesPane {
   constructor(
     host: PaneHost,
     cwdFor: (session: CollabSession) => string | undefined,
+    publicOrigin: Promise<string | null>,
   ) {
     this.#host = host;
     this.#cwdFor = cwdFor;
+    this.#publicOrigin = publicOrigin;
     this.element = el("section", { className: "files-pane" });
     this.element.dataset.filesPane = "";
     this.#empty = el("p", { className: "empty", text: "Select a session." });
@@ -267,6 +270,7 @@ export class FilesPane {
       name,
       path: target,
       apiBase: new URL(this.#apiBase(session), location.href).href,
+      publicOrigin: this.#publicOrigin,
     });
   }
 
