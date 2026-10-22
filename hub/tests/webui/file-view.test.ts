@@ -16,15 +16,16 @@ const images = {
 };
 
 describe("which files open in the viewer", () => {
-  test("text, scripts and extensionless names do; binaries and big files do not", () => {
+  test("text and scripts open up to 10 MiB, while binaries and larger files do not", () => {
     expect(opensInViewer("README.md", 100)).toBe(true);
     expect(opensInViewer("run.sh", 100)).toBe(true);
     expect(opensInViewer("LICENSE", 100)).toBe(true);
     expect(opensInViewer(".gitignore", 100)).toBe(true);
     expect(opensInViewer("photo.PNG", 100)).toBe(false);
     expect(opensInViewer("firmware.uf2", 100)).toBe(false);
-    expect(opensInViewer("log.txt", MAX_VIEW_BYTES + 1)).toBe(false);
+    expect(opensInViewer("review.html", 2.8 * 1024 * 1024)).toBe(true);
     expect(opensInViewer("log.txt", MAX_VIEW_BYTES)).toBe(true);
+    expect(opensInViewer("log.txt", MAX_VIEW_BYTES + 1)).toBe(false);
   });
 
   test("only Markdown and HTML have a rendered form", () => {

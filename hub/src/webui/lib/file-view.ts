@@ -10,8 +10,8 @@
 import { marked } from "marked";
 import { joinPath, normalisePath } from "./file-paths";
 
-/** Larger files are offered as downloads only. */
-export const MAX_VIEW_BYTES = 1024 * 1024;
+/** Files larger than 10 MiB are offered as downloads only. */
+export const MAX_VIEW_BYTES = 10 * 1024 * 1024;
 
 export type ViewKind = "markdown" | "html" | "text";
 
