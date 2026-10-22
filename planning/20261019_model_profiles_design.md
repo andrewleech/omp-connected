@@ -2,7 +2,7 @@
 
 Date: 2026-10-19
 Source: `v18.10.4` (687892d104, 2026-10-13)
-Status: proposal for discussion; no code written
+Status: superseded by `20261020_capability_selector_design.md`; kept for the measurements. No code written
 
 All line anchors are at `v18.10.4` and relative to `packages/coding-agent/src` unless a path says otherwise. `upstream/main` (9d5d4ac5b5, 2026-10-18) still contains the symbols this document names (spot-checked: `syncAfterModelChange`, `reconcileModelDependentState`, `cfgSessionToolGates`, `cfgSystemPromptInputs`, `resolveBuiltinToolPlan`, `createSubagentSettings`, `reconcileThinkTool`), but `session/session-tools.ts`, `task/executor.ts`, `sdk.ts`, `config/settings.ts` and `session/model-controls.ts` have changed since the tag. Re-resolve the anchors before implementation.
 
