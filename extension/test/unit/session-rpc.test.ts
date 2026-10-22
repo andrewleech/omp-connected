@@ -109,6 +109,7 @@ function harness(
 	const scheduler = new PromptScheduler({
 		send: () => undefined,
 		onError: () => undefined,
+		isIdle: () => true,
 		now: () => 5_000,
 		setTimer: () => undefined,
 		clearTimer: () => undefined,

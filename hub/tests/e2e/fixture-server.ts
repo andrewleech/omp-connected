@@ -176,6 +176,7 @@ const scheduled: {
   text: string;
   fireAt: number;
   createdAt: number;
+  whenIdle?: true;
 }[] = [];
 
 const launched: (typeof sessions.writer & {
@@ -301,13 +302,18 @@ async function writerSessionApi(
   if (route === "/scheduled" && request.method === "GET")
     return json({ prompts: scheduled });
   if (route === "/scheduled" && request.method === "POST") {
-    const body = (await request.json()) as { text: string; delayMs: number };
+    const body = (await request.json()) as {
+      text: string;
+      delayMs: number;
+      whenIdle?: boolean;
+    };
     const now = Date.now();
     const prompt = {
       id: `p${now}${scheduled.length}`,
       text: body.text,
       fireAt: now + body.delayMs,
       createdAt: now,
+      ...(body.whenIdle ? { whenIdle: true as const } : {}),
     };
     scheduled.push(prompt);
     return json(prompt);

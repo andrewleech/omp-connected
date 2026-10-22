@@ -485,18 +485,26 @@ describe("session-rpc-routes: scheduled prompts", () => {
     const added = await app.handle(
       post("scheduled", { text: "run the tests", delayMs: 60_000 }),
     );
+    const idleAdded = await app.handle(
+      post("scheduled", { text: "when idle", delayMs: 0, whenIdle: true }),
+    );
     const listed = await app.handle(new Request(`${BASE}/inst-1/scheduled`));
     const cancelled = await app.handle(
       new Request(`${BASE}/inst-1/scheduled/p1`, { method: "DELETE" }),
     );
 
     expect(await added.json()).toEqual(queued);
+    expect(await idleAdded.json()).toEqual(queued);
     expect(await listed.json()).toEqual({ prompts: [queued] });
     expect(await cancelled.json()).toEqual({ ok: true });
     expect(calls).toEqual([
       {
         method: "session.schedule_prompt",
         params: { text: "run the tests", delayMs: 60_000 },
+      },
+      {
+        method: "session.schedule_prompt",
+        params: { text: "when idle", delayMs: 0, whenIdle: true },
       },
       { method: "session.scheduled", params: {} },
       { method: "session.cancel_scheduled", params: { id: "p1" } },
@@ -519,10 +527,12 @@ describe("session-rpc-routes: scheduled prompts", () => {
       app.handle(
         post("scheduled", { text: "x", delayMs: 7 * 24 * 3600 * 1000 + 1 }),
       ),
+      app.handle(post("scheduled", { text: "x", delayMs: 0, whenIdle: "yes" })),
+      app.handle(post("scheduled", { text: "x", delayMs: 1, whenIdle: true })),
     ]);
 
     expect(rejected.map((r) => r.status)).toEqual([
-      400, 400, 400, 400, 400, 400,
+      400, 400, 400, 400, 400, 400, 400, 400,
     ]);
     expect(calls).toEqual([]);
   });

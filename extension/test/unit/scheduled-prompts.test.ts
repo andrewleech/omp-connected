@@ -9,8 +9,12 @@ import {
 } from "../../src/scheduled-prompts.js";
 
 /** A scheduler on a hand-driven clock with one pending timer at a time. */
-function harness(send?: (text: string, afterPrevious: boolean) => void | Promise<void>) {
+function harness(
+	send?: (text: string, afterPrevious: boolean) => void | Promise<void>,
+	initiallyIdle = true,
+) {
 	const clock = { now: 1_000_000 };
+	let idle = initiallyIdle;
 	let timer: { fn: () => void; ms: number; dueAt: number } | undefined;
 	const sent: { text: string; afterPrevious: boolean }[] = [];
 	const errors: { prompt: ScheduledPrompt; error: unknown }[] = [];
@@ -21,6 +25,7 @@ function harness(send?: (text: string, afterPrevious: boolean) => void | Promise
 				sent.push({ text, afterPrevious });
 			}),
 		onError: (prompt, error) => errors.push({ prompt, error }),
+		isIdle: () => idle,
 		now: () => clock.now,
 		setTimer: (fn, ms) => {
 			timer = { fn, ms, dueAt: clock.now + ms };
@@ -35,6 +40,9 @@ function harness(send?: (text: string, afterPrevious: boolean) => void | Promise
 		sent,
 		errors,
 		clock,
+		setIdle(value: boolean) {
+			idle = value;
+		},
 		timerMs: () => timer?.ms,
 		/** Moves the clock forward, running every timer whose wait has passed. */
 		advance(ms: number) {
@@ -56,6 +64,29 @@ test("a prompt is sent once its delay has passed, and not before", () => {
 	h.advance(1);
 	expect(h.sent).toEqual([{ text: "later", afterPrevious: false }]);
 	expect(h.scheduler.list()).toEqual([]);
+});
+
+test("an idle prompt waits for the session idle transition and then sends", () => {
+	const h = harness(undefined, false);
+	const prompt = h.scheduler.add("when ready", 0, true);
+	expect(prompt).toMatchObject({ text: "when ready", whenIdle: true });
+	expect(h.scheduler.list()).toEqual([prompt]);
+	expect(h.timerMs()).toBeUndefined();
+	h.advance(60_000);
+	expect(h.sent).toEqual([]);
+
+	h.setIdle(true);
+	h.scheduler.onIdle();
+	expect(h.sent).toEqual([{ text: "when ready", afterPrevious: false }]);
+	expect(h.scheduler.list()).toEqual([]);
+});
+
+test("an idle prompt sends immediately when added to an idle session", () => {
+	const h = harness();
+	const prompt = h.scheduler.add("send now", 0, true);
+	expect(h.sent).toEqual([{ text: "send now", afterPrevious: false }]);
+	expect(h.scheduler.list()).toEqual([]);
+	expect(prompt.whenIdle).toBe(true);
 });
 
 test("a long wait re-reads the wall clock, so a host that slept sends on waking", () => {

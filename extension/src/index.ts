@@ -138,11 +138,14 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		const ctx = ownerContext;
 		if (!ctx?.hasUI) return;
 		const next = prompts[0];
+		const nextAt = next?.whenIdle
+			? "when idle"
+			: next
+				? `next at ${new Date(next.fireAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+				: "";
 		ctx.ui.setStatus(
 			SCHEDULED_STATUS_KEY,
-			next
-				? `${prompts.length} scheduled prompt${prompts.length === 1 ? "" : "s"}, next at ${new Date(next.fireAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-				: undefined,
+			next ? `${prompts.length} scheduled prompt${prompts.length === 1 ? "" : "s"}, ${nextAt}` : undefined,
 		);
 	}
 
@@ -283,8 +286,8 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		await files?.dispose();
 		files = undefined;
 		sessionRpc = undefined;
-		scheduler?.clear();
 		scheduler = new PromptScheduler({
+			isIdle: () => !busy,
 			send: async (text, afterPrevious) => {
 				// It was queued under a control share; a share since made view-only
 				// (or stopped) must not still run it.
@@ -346,6 +349,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		if (hub.owner !== pi) return;
 		busy = false;
 		reportActivity();
+		scheduler?.onIdle();
 	});
 
 	// Keep the owner's context current across in-process session changes.
