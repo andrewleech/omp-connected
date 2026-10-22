@@ -23,7 +23,8 @@ HEAD: ea1ccb0695
 
 8. Collab guest slash commands, archived in `archive/collab-guest-commands/` (fork branch `collab-guest-commands`, no upstream PR): [design, reviews and verification](archive/collab-guest-commands/20260930_guest_slash_commands.md), the only record of the track.
 
-9. Per-model profiles that reduce initial context, active design for an upstream proposal (no fork branch, no upstream issue yet): [design](20261019_model_profiles_design.md): `modelProfiles` in `models.yml`, one resolution function for subagent spawn and live model switch, phases 1 to 3, open questions 1 to 12.
+9. Per-model profiles that reduce initial context, superseded by item 10 (kept for its measurements; no fork branch, no upstream issue): [design](20261019_model_profiles_design.md): `modelProfiles` in `models.yml`, one resolution function for subagent spawn and live model switch, phases 1 to 3, open questions 1 to 12.
+10. Classifier-based capability selector, active design for an upstream proposal (no fork branch yet): [design](20261020_capability_selector_design.md): skills, MCP routes, agents and tools leave the system prompt; a Jev-style judge (hosted Jev or self-hosted jeff) on a new `selector` model role injects matches per prompt, plus a `capability` pull tool; phases 0 to 4, open questions 1 to 13.
 
 ## Operating conventions
 - Every document is stamped with its date and HEAD revision.
