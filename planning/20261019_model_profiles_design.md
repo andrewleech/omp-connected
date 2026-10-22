@@ -8,11 +8,20 @@ All line anchors are at `v18.10.4` and relative to `packages/coding-agent/src` u
 
 ## Summary
 
-- A fresh session sends a large fixed load before the user types anything: system prompt text, tool schemas, context files, skills, and MCP route guidance. On one measured configuration the load for a Haiku-class model is about 25k tokens. With every existing static knob turned off it is about 4.3k tokens.
+- A fresh session sends a large fixed load before the user types anything: system prompt text, tool schemas, context files, skills, and MCP route guidance. On one measured configuration a Haiku-class main session starts at about 25.6k tokens and a `task` subagent starts at about 14.2k tokens.
 - The existing knobs are global. None is keyed by model. A user who wants the reduced load on a small model must give it to every model, or edit settings by hand on each switch.
 - This document proposes a `modelProfiles` map in `models.yml`, next to `modelOverrides`, keyed by model id. A profile lists a subset of load reductions. omp applies the profile of the active model and removes it when the model changes.
 - One resolution function, `resolveModelProfile(model)`, serves both paths: a session that starts on the model (including a task subagent) and a live model switch. The result is a settings layer between project config and `--config` overlays. It is derived from the model and the config, never saved and restored.
 - v1 supports: `personality`, `skillful`, `includeWorkspaceTree`, `tools.xdevDocs`, and three disable-lists (built-in tools, task agents, context files). MCP and extension tool reduction is out of scope for v1.
+- Measured reduction with the v1 knobs on the same configuration (tokens, omp local estimator; the percentage is the cut from the baseline of the same session kind):
+
+  | Session | Baseline | v1 profile | v1 profile, no `task` | v1 profile, skillful off | v1 profile, skillful off, no `task` |
+  | --- | --- | --- | --- | --- | --- |
+  | Main | 25.6k | 10.0k (-61%) | 9.0k (-65%) | 8.2k (-68%) | 7.2k (-72%) |
+  | Subagent | 14.2k | 10.2k (-28%) | 9.4k (-34%) | 8.4k (-41%) | 7.6k (-46%) |
+
+  "v1 profile" means `personality: none`, context files dropped, tools cut to `read`, `write`, `edit`, `bash`, `grep`, `glob`, `task`, and task agents cut to `task`, `scout`, `reviewer`. The subagent cut is smaller because its baseline already has no personality block and only the user-level context file.
+- v1 does not reach the floor of about 4.3k tokens that an earlier estimate gave for "every static knob applied". That estimate was not reproduced. Three parts stay in the main session after every v1 knob: the MCP route catalog (about 6.6k characters), the skills listing (6.9k characters; only `skillful: false` removes it, and only as a whole), and the base prompt text that no knob reaches (about 11k characters). A phase 4 would need MCP gating, a skills listing trim, and a prompt template for small models to approach the floor. See "Rollout" and open questions 13 to 15.
 
 ## Motivation
 
@@ -20,22 +29,113 @@ A model with a small context window, a small request budget, or a low price per 
 
 ### Measured load
 
-Sizes are characters of the rendered system prompt and the tool JSON schemas for one Haiku-class model. They were taken on one workstation with one user configuration: 11 task agents, user-level and project-level context files, one skills set, MCP servers mounted through `xd://`. Token figures are estimates at roughly 3.5 to 4 characters per token. The numbers vary with the user's context files, skills, MCP servers, and agent list. Treat the table as an order of magnitude, not a benchmark. Subagent sessions were not measured.
+The figures come from one workstation, one user configuration, and one model: `anthropic/claude-haiku-4-5`. The configuration has 12 task agents, a project context file of 19.2k characters, a user context file of 7.0k characters, one skills set, and MCP servers mounted through `xd://`. The `lsp` and `ask` tools were already off.
+
+Sizes are characters of the rendered system prompt plus the tool JSON (`name`, `description`, `parameters`; `examples` excluded). Tokens are `contextUsage.tokens`, which is the local estimator of omp and not a provider count. Over all runs the ratio was 3.4 to 3.7 characters per token (3.57 at baseline). Use about 3.5.
+
+Components of the main-session baseline:
 
 | Component | Size (chars) | Knob today |
 | --- | --- | --- |
-| System prompt, total | 69.5k | |
-| Context files | 26.1k | `disabledExtensions` ids |
+| System prompt, total | 70.2k | |
+| Context files | 26.3k (project 19.2k, user 7.0k, small local file) | `disabledExtensions` ids |
 | Personality block | 18.3k | `personality` |
-| Skills listing | 6.8k | `skillful`, `skills.*` |
-| MCP route catalog | 6.5k | MCP config `disabledServers` |
-| Other prompt text | about 11.8k | none (`SYSTEM.md` replaces all of it) |
-| Tool schemas, total | 19.3k | per-tool enable settings, `--tools` |
-| of which `task` tool description (11 agents) | 6.6k | `task.disabledAgents` |
-| Estimated total | about 25k tokens | |
-| Same session with every static knob applied | about 4.3k tokens | |
+| Skills listing | 6.9k | `skillful`, `skills.*` |
+| MCP route catalog | 6.6k | MCP config `disabledServers` |
+| Other prompt text | about 12k; about 1k of it names the enabled tools, about 11k has no knob | none (`SYSTEM.md` replaces all of it) |
+| Tool schemas, total | 21.2k | per-tool enable settings, `--tools` |
+| of which the agent list in the `task` description (12 agents cut to 3) | 5.5k | `task.disabledAgents` |
+| of which `todo`, `web_search`, `eval`, `wait` | 5.4k | per-tool enable settings, `--tools` |
 
-The personality block is rendered for the top-level session only. A subagent always renders it as `none` (`sdk.ts:3971`). The savings a profile gives a subagent come from context files, skills, tool schemas, and the MCP route catalog.
+Scenarios. Each row of a group adds one knob to the row above. "Cumulative" is the change from the baseline of the group.
+
+| Scenario | System chars | Tool chars | Tokens | Step | Cumulative |
+| --- | --- | --- | --- | --- | --- |
+| **A** main baseline | 70,169 | 21,207 | 25,567 | | |
+| + `personality: none` | 51,883 | 21,207 | 20,821 | -4,746 | -4,746 (-19%) |
+| + context files dropped | 25,579 | 21,207 | 12,953 | -7,868 | -12,614 (-49%) |
+| + tools cut to 7 | 24,628 | 15,810 | 11,200 | -1,753 | -14,367 (-56%) |
+| + agents cut to 3 = **B** | 24,628 | 10,318 | 9,985 | -1,215 | -15,582 (-61%) |
+| **C** = B without `task` | 23,753 | 7,538 | 9,044 | -941 | -16,523 (-65%) |
+| **D** subagent baseline | 34,199 | 18,058 | 14,175 | | |
+| + context files dropped | 26,900 | 18,058 | 12,474 | -1,701 | -1,701 (-12%) |
+| + tools cut to 7 | 26,324 | 14,599 | 11,289 | -1,185 | -2,886 (-20%) |
+| + agents cut to 3 = **E** | 26,324 | 9,571 | 10,201 | -1,088 | -3,974 (-28%) |
+| **F** = E without `task` | 25,449 | 7,392 | 9,421 | -780 | -4,754 (-34%) |
+
+The kept tools in B and E are `read`, `write`, `edit`, `bash`, `grep`, `glob`, `task`. The kept agents are `task`, `scout`, `reviewer`. In the main rows the per-knob savings add up exactly: 4,746 + 7,868 + 1,753 + 1,215 = 15,582 tokens. Each knob measured alone gave the same figure as its step.
+
+With `skillful: false` added to any scenario the listing is removed: about -7.0k characters and -1.8k tokens. B becomes 8,172 tokens (-68%), C 7,231 (-72%), E 8,388 (-41%), F 7,608 (-46%).
+
+### Why the subagent saves less
+
+- The personality is already `none` for a subagent (`sdk.ts:3971`), so that knob saves nothing. In the main session it is the second largest cut (18.3k characters).
+- A subagent inherits the parent's context files without `AGENTS.md` (`task/structured-subagent.ts:598`). Only the user-level file (7.0k characters) reaches it. The 19.2k project file never does. Dropping context files saves 1,701 tokens in the subagent against 7,868 in the main session.
+- The subagent baseline is 14.2k tokens against 25.6k, so a similar absolute saving is a larger share. Tools and agents save 1,185 and 1,088 tokens in the subagent against 1,753 and 1,215 in the main session.
+
+### Knobs with no effect on this configuration
+
+- `tools.xdevDocs`: the default is already `catalog`. Measured against the default, `builtins` adds 3.4k characters and `inline` adds 19k. A profile can only raise the load with this key on a default configuration.
+- `includeWorkspaceTree`: the default is already off.
+- `tools.disabled` entries for `lsp` and `ask`: both tools were off already.
+
+### Dependence on the user configuration
+
+The main-session saving is mostly context files and personality. Here the context files are 26.3k characters (about 7.9k tokens of the 15.6k saved). A user with small context files gets a much smaller cut: the other four knobs (personality 4,746, tools 1,753, agents 1,215, skillful off about 1.8k) add up to about 9.5k of 25.6k tokens, 37%. For a subagent without the user-level file, tools, agents, and skillful off add up to about 4.1k of 14.2k tokens, 29%. [INFERENCE: these two sums add separately measured knobs and were not measured as combined runs.] The number of agents, the size of the skills set, and the number of MCP servers change the other terms the same way.
+
+### Method and limits
+
+- Main-session rows: `omp --mode rpc --no-session --model anthropic/claude-haiku-4-5`, `get_state` only, no prompt sent. Knobs are applied with `--config` overlays and `--tools`. "Measurement recipe" has the commands.
+- Subagent rows: a script against the SDK that mirrors the task executor. It uses `createSubagentSettings`, `taskDepth` 1, the parent context files without `AGENTS.md`, the parent skills and MCP proxy tools, and the subagent addendum prompt. The `todo` tool is removed after creation. No real subagent was spawned.
+- Fidelity: the SDK script reproduces the binary on the main baseline within 0.1% on system prompt chars (70,078 against 70,169) and 1.6% on tokens. On B it is within 0.1% on system prompt chars. Its tool JSON is 7 to 8% lower (B: 9,571 against 10,318 characters), so the subagent tool figures are slightly low.
+- The subagent roster line of the IRC peer list is one line in the script. A real spawn adds a few hundred characters of per-spawn text.
+- Tool removal was emulated with `--tools`. The v1 mechanism (`tools.disabled`) can behave a little differently, for example for `wait`.
+- The binary reports `v18.12.2` and the SDK package is `v18.10.3`. Neither is the `v18.10.4` tag of this document.
+- Token values are estimator values, not billed counts.
+
+## Expected reduction by profile
+
+Per-knob savings in tokens on the measured configuration. The share is of the baseline of the same session kind. Each knob measured alone matches its step in the scenario table.
+
+| Profile key | Main | Share | Subagent | Share |
+| --- | --- | --- | --- | --- |
+| `contextFiles` (drop all) | 7,868 | 31% | 1,701 | 12% |
+| `personality: none` | 4,746 | 19% | 0 (already `none`) | 0% |
+| `skillful: false` | about 1.8k | 7% | about 1.8k | 13% |
+| `disable.tools` (4 tools: `todo`, `web_search`, `eval`, `wait`) | 1,753 | 7% | 1,185 | 8% |
+| `disable.agents` (12 agents cut to 3) | 1,215 | 5% | 1,088 | 8% |
+| `disable.tools` adds `task` | 941 | 4% | 780 | 6% |
+| `tools.xdevDocs: catalog` | 0 (default) | 0% | 0 (default) | 0% |
+| `includeWorkspaceTree: false` | 0 (default) | 0% | 0 (default) | 0% |
+
+Which knobs matter most:
+
+- Main session: context files (7.9k tokens), then personality (4.7k), then `skillful` (1.8k). Tools (1.8k) and agents (1.2k) follow.
+- Subagent: `skillful`, context files (only the user-level file), tools, agents. All four are between 1.1k and 1.8k tokens.
+- Dropping `task` saves less than 1k tokens in either session and removes delegation. The starter profile keeps it.
+- The `xdevDocs` and `includeWorkspaceTree` keys matter only when the user raised them. They stay in the schema for profiles that undo a global raise.
+
+Starter profile for a small model, using the closed set of v1 keys. The result below is the scenario B and E measurement (`skillful` left on):
+
+```yaml
+providers:
+  anthropic:
+    modelProfiles:
+      "claude-haiku-*":
+        settings:
+          personality: none
+        disable:
+          tools: [todo, web_search, eval, wait]
+          agents: [security-reviewer, sonic, "<every other agent except task, scout, reviewer>"]
+          contextFiles: ["**/CLAUDE.md", "**/AGENTS.md", "**/CLAUDE.local.md"]
+```
+
+| Session | Baseline | With the starter profile | With `skillful: false` added |
+| --- | --- | --- | --- |
+| Main | 25.6k | 10.0k (-61%) | 8.2k (-68%) |
+| Subagent | 14.2k | 10.2k (-28%) | 8.4k (-41%) |
+
+The `contextFiles` globs match the three context file kinds of the measured configuration. A user with other context file names changes the globs. The `agents` list is written by name; v1 has no allow-list.
 
 ## Current behaviour
 
@@ -416,11 +516,11 @@ The listeners and the explicit reconcile can start up to three rebuilds for one 
 
 ## Interaction with MCP and the `xd://` catalog
 
-- `disable.tools` names built-in tools only. MCP tools and extension tools are untouched. The measured MCP route catalog (6.5k characters) is therefore not reduced by v1. The route guidance comes from the mounted MCP tools (`sdk.ts:3873-3890`) and the per-server instructions (`:3846`), neither of which a Settings value controls.
+- `disable.tools` names built-in tools only. MCP tools and extension tools are untouched. The measured MCP route catalog (about 6.6k characters, about 1.9k tokens at 3.5 characters per token) is therefore not reduced by v1. It is one of the parts that keep the v1 result above the earlier 4.3k floor estimate. The route guidance comes from the mounted MCP tools (`sdk.ts:3873-3890`) and the per-server instructions (`:3846`), neither of which a Settings value controls.
 - `tools.xdevDocs` is supported. It changes how much `xd://` device documentation is inlined. It does not remove device lines from the catalog.
 - With `tools.xdev` on, a built-in tool that is disabled is also absent from the mount set. `read` and `write` stay, so mounting keeps working.
 - A switch can add or remove mounts. The mount-delta machinery (`session/session-tools.ts:1391`) and the announced-mount set decide what the model is told. A round trip must not announce the same mount twice; this is a test case.
-- A later version can add `disable.mcpTools` as globs over `mcp__<server>__<tool>` names and a per-server instruction switch. That needs a filter in MCP tool registration, not only a gate in `isToolAllowed`.
+- A later version can add `disable.mcpTools` as globs over `mcp__<server>__<tool>` names and a per-server instruction switch. That needs a filter in MCP tool registration, not only a gate in `isToolAllowed`. This is phase 4 of the rollout and open question 13.
 
 ## Migration and compatibility
 
@@ -441,8 +541,94 @@ Existing templates: `test/settings-gated-tools-live.test.ts` (live reconcile), `
 5. **Rebuild count** (same file): one switch causes at most three prompt rebuilds and ends with a prompt whose model key includes the fingerprint; a switch between two profile-less models causes the same number of rebuilds as today.
 6. **Explicit tool lists** (`test/model-profile-tools.test.ts`): `--tools` on a top-level session is not narrowed by `tools.disabled`; a restricted session is not narrowed; an agent `tools` line is intersected; `yield` survives.
 7. **Executor child options** (`test/task-executor-model-profile.test.ts`): a subagent whose model has a profile starts with the reduced tools and prompt; a subagent whose model resolves late through a pattern gets the profile after resolution; the parent session's settings are unchanged; a nested grandchild on a profile-less model has the baseline; hot and cold revival keep the profile.
-8. **Prompt size assertions** (`test/model-profile-prompt-size.test.ts`): render the prompt with and without a fixture profile, with fixed fixture context files, skills, and agents, and assert the character count drops by at least the sizes of the removed blocks. Use fixtures, not the developer's own config, so the assertion is stable.
+8. **Prompt size assertions** (`test/model-profile-prompt-size.test.ts`): render the prompt with and without a fixture profile, with fixed fixture context files, skills, and agents, and assert the character count drops by at least the sizes of the removed blocks. Use fixtures, not the developer's own config, so the assertion is stable. "Measurement recipe" describes the fixture and the assertions.
 9. **Handoff and `/new`**: model unchanged, no re-application.
+
+## Measurement recipe
+
+The recipe reproduces the "Measured load" tables. Placeholders: `<omp>` is the omp binary, `<workspace>` is a project directory, `<model>` is `<provider>/<model-id>`, `<omp-src>` is the `packages/coding-agent/src` directory of the omp version under test.
+
+### Main session
+
+Start omp in RPC mode with one overlay per scenario and request `get_state`. No prompt is sent, so no provider call is made.
+
+```bash
+cd <workspace>
+<omp> --mode rpc --no-session --model <model> --config <overlay>.yml [--tools read,write,edit,bash,grep,glob,task]
+# stdin, after startup: {"id":"1","type":"get_state"}
+```
+
+The response with `id` `"1"` has `data.systemPrompt` (list of strings), `data.dumpTools` (list of tool objects), and `data.contextUsage.tokens`. The script outline:
+
+```python
+import json, subprocess, time
+
+def measure(overlay, extra_args=()):
+    cmd = ["<omp>", "--mode", "rpc", "--no-session", "--model", "<model>",
+           "--config", overlay, *extra_args]
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                         text=True, cwd="<workspace>")
+    time.sleep(6)  # startup wait; 6 s was enough
+    p.stdin.write(json.dumps({"id": "1", "type": "get_state"}) + "\n")
+    p.stdin.flush()
+    for line in p.stdout:
+        msg = json.loads(line)
+        if msg.get("id") == "1" and msg.get("type") == "response":
+            d = msg["data"]
+            break
+    p.kill()
+    sys_chars = sum(len(s) for s in d["systemPrompt"])
+    tool_chars = sum(len(json.dumps(t, separators=(",", ":"))) for t in d["dumpTools"])
+    return sys_chars, tool_chars, d["contextUsage"]["tokens"]
+```
+
+Overlays, one YAML file per knob; a scenario merges the files of its knobs:
+
+```yaml
+# personality
+personality: none
+# context files: one id per file in the baseline prompt
+disabledExtensions:
+  - context-file:user:<file name>
+  - context-file:project:<file name>
+# agents: every agent except the kept ones
+task:
+  disabledAgents: [<agent>, <agent>]
+# skills
+skillful: false
+```
+
+Tools are cut with the `--tools` flag in this recipe, because `tools.disabled` does not exist yet. The tool JSON counts `name`, `description`, and `parameters` only.
+
+Run order: the baseline, then each knob alone, then the cumulative scenarios of the table. Check that the cumulative step equals the sum of the single-knob runs.
+
+### Subagent
+
+No real subagent is spawned. A script uses the SDK from `<omp-src>` and follows the executor:
+
+1. `Settings.init({ cwd: "<workspace>" })`, then `.overlay(<overlay>)` for the scenario.
+2. A parent `createAgentSession` on `<model>` with an in-memory `SessionManager`. Take its skills and MCP manager.
+3. `discoverContextFiles("<workspace>", undefined, <disabledExtensions>)`, then drop the `AGENTS.md` entries. This is what the structured subagent path does.
+4. `createSubagentSettings(<overlay settings>)` for the child settings.
+5. Render `<omp-src>/prompts/system/subagent-system-prompt.md` with the `task` agent prompt, and append it to the default prompt through the `systemPrompt` callback.
+6. A child `createAgentSession` with `taskDepth: 1`, `parentTaskPrefix`, the context files, skills, and MCP proxy tools of the parent, the rendered addendum, and `toolNames` set to the scenario list.
+7. Remove `todo` through `setActiveToolsByName`, as the executor does.
+8. Report `session.systemPrompt.join("").length`, the tool JSON (`name`, `description`, and the wire schema from `toolWireSchema(tool)`), and `session.getContextUsage().tokens`.
+
+`createSubagentSettings` and `createMCPProxyTools` are not public API. Pin the omp version and expect to adjust the script when the executor changes. Run the same script in main mode against the binary baseline to check fidelity (see "Method and limits").
+
+### Regression test
+
+`test/model-profile-prompt-size.test.ts` should not use the developer's own configuration. It builds a fixture instead:
+
+- A temporary agent directory with a `models.yml` that has one profile, fixture context files of fixed sizes (for example 4,000 and 2,000 characters), a fixture skills set, a fixed list of agents, and no MCP servers.
+- A helper `measure(session)` that returns system prompt characters and tool JSON characters with the same counting rule as the recipe.
+- Assertions for a session on the profiled model against the same session on a model with no profile:
+  - The system prompt drops by at least the fixture context file sizes plus the personality block size.
+  - The tool JSON drops by at least the schemas of the disabled tools plus the description text of the disabled agents.
+  - The `task` description lists only the kept agents.
+  - For a subagent session: no personality saving, and the context file saving equals the user-level fixture only.
+- A budget assertion: the profiled prompt plus tool JSON stays below a constant that the test file names. A change that grows the base prompt raises the constant on purpose, in a visible diff.
 
 ## Rollout
 
@@ -458,6 +644,11 @@ Existing templates: `test/settings-gated-tools-live.test.ts` (live reconcile), `
   - A `/modelprofile` command (name open, see question 1) that prints the profile in force, the matching key, and per-knob provenance.
   - A profile marker in the model hub and a field in `omp models --json`.
   - Final docs and changelog.
+- **Phase 4 (optional): lower floor.**
+  - MCP gating: `disable.mcpTools` globs over `mcp__<server>__<tool>` and a per-server instruction switch, with a filter in MCP tool registration. This removes the route catalog (about 6.6k characters).
+  - Skills listing trim: a setting between `skillful` on and off, for example a listing of names only or a count limit.
+  - Prompt template: a per-profile prompt template for the roughly 11k characters of base text that no knob reaches.
+  - Re-run the measurement recipe after each step. [INFERENCE: on the measured configuration, MCP gating on top of scenario C with `skillful: false` would give about 5.3k tokens (7.2k minus 1.9k). Reaching 4.3k would then need about 1k tokens from the prompt template or the tool schemas.]
 
 ## Open questions
 
@@ -472,7 +663,10 @@ Existing templates: `test/settings-gated-tools-live.test.ts` (live reconcile), `
 9. **Signed-thinking models.** Confirm that a forced rebuild on a switch between two `prefixBinding` models does not invalidate earlier thinking blocks beyond what the model switch already does.
 10. **Undeclared provider key on older omp.** Confirm how the pinned arktype version treats an undeclared key in a provider object, so a new `models.yml` does not break an older omp.
 11. **Notice persistence.** The notice is not persisted. A session entry carrying the fingerprint would let collab guests and session replay show the active profile.
-12. **Allow-lists and MCP.** Decide the rules for `only:` lists and for MCP tool and server reduction before a v2.
+12. **Allow-lists.** Decide the rules for `only:` lists before a v2.
+13. **MCP gating.** Does omp want a settings key for MCP reduction? `disabledServers` lives in the MCP config file, so a profile cannot reach it today. A settings-level key (server list, or `mcp__<server>__<tool>` globs, plus a per-server instruction switch) would let a profile cut the route catalog (about 6.6k characters, about 1.9k tokens on the measured configuration). It also changes MCP registration, not only tool gates.
+14. **Skills listing trim.** Does omp want a settings key for a shorter skills listing (names only, or a maximum count)? `skillful: false` removes the whole listing (about 1.8k tokens measured), including the descriptions the model uses to choose a skill. A trim would keep part of the saving without that loss.
+15. **Inherited user context file in profiled subagents.** A subagent inherits the user-level context file (7.0k characters, 1,701 tokens measured, 12% of the subagent baseline) from its parent, and the project `AGENTS.md` is already excluded. v1 can drop the file only if the profile lists it in `disable.contextFiles`. Should profiled subagents drop the inherited user file by default, or only when the profile says so? That file can hold rules that a subagent must follow.
 
 ## Docs to update
 
