@@ -143,15 +143,15 @@ Advertised together with `session.model_roles.v1`. `"session.agent_roles" {} -> 
 
 ### Scheduled prompts (`session.schedule.v1`)
 
-An extension that also advertises `session.schedule.v1` holds prompts queued from the dashboard and sends them to its own session when they fall due, through the same path as any other prompt (queued as a follow-up while the session is busy). They live in the omp process's memory: they survive the dashboard closing and the hub restarting, and are dropped (with a notice in the TUI) when the session switches to another conversation or shuts down. The TUI's status line shows how many are waiting and when the next is due.
+An extension that also advertises `session.schedule.v1` holds prompts queued from the dashboard and sends them to its own session through the same prompt path (queued as a follow-up while the session is busy). A prompt can wait for a time delay or for the session to become idle. An idle-triggered prompt sends on the next idle transition, or immediately if the session is already idle. The session keeps the queue in memory: prompts survive the dashboard closing and the hub restarting, and are dropped (with a notice in the TUI) when the session switches to another conversation or shuts down. The TUI status line shows how many prompts are waiting and the next time or idle trigger.
 
 ```ts
-"session.schedule_prompt" { text: string; delayMs: number } -> { id; text; fireAt; createdAt }  // fireAt by the session host's clock
-"session.scheduled" {} -> { prompts: { id; text; fireAt; createdAt }[] }  // soonest first
+"session.schedule_prompt" { text: string; delayMs: number; whenIdle?: true } -> { id; text; fireAt; createdAt; whenIdle?: true }  // whenIdle requires delayMs 0
+"session.scheduled" {} -> { prompts: { id; text; fireAt; createdAt; whenIdle?: true }[] }  // soonest first
 "session.cancel_scheduled" { id } -> { ok: true }  // -32001 once it has been sent
 ```
 
-`delayMs` is a whole number of milliseconds up to 7 days, `text` at most 100,000 characters, and at most 20 prompts wait per session. All three need `control` access, like the other methods. The session re-reads the wall clock at least once a minute, so a host that sleeps through a due time sends the prompt when it wakes.
+Without `whenIdle`, `delayMs` is a whole number of milliseconds up to 7 days. The session re-reads the wall clock at least once a minute, so a host that sleeps through a due time sends the prompt when it wakes. `text` is at most 100,000 characters, and at most 20 prompts can wait per session. All three methods need `control` access, like the other methods.
 
 ### Host session history and launching (`host.sessions.v1`)
 

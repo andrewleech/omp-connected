@@ -354,13 +354,17 @@ export function createSessionRpc(deps: SessionRpcDeps): SessionRequestHandler {
 			return { ok: true };
 		},
 		"session.schedule_prompt"(params): ScheduledPrompt {
-			const { text, delayMs } = paramsRecord(params);
-			if (typeof text !== "string" || typeof delayMs !== "number") {
-				throw new RpcError(RpcCode.Invalid, "text must be a string and delayMs a number");
+			const { text, delayMs, whenIdle } = paramsRecord(params);
+			if (
+				typeof text !== "string" ||
+				typeof delayMs !== "number" ||
+				(whenIdle !== undefined && typeof whenIdle !== "boolean")
+			) {
+				throw new RpcError(RpcCode.Invalid, "text and delayMs are required; whenIdle must be a boolean");
 			}
 			requireContext();
 			try {
-				return deps.scheduler.add(text, delayMs);
+				return deps.scheduler.add(text, delayMs, whenIdle === true);
 			} catch (error) {
 				if (error instanceof ScheduleError) throw new RpcError(RpcCode.Invalid, error.message);
 				throw error;

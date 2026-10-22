@@ -487,6 +487,7 @@ export function sessionRpcRoutes(
       const payload = bodyObject(body);
       const text = payload?.text;
       const delayMs = payload?.delayMs;
+      const whenIdle = payload?.whenIdle;
       if (
         typeof text !== "string" ||
         text.trim() === "" ||
@@ -501,18 +502,21 @@ export function sessionRpcRoutes(
         typeof delayMs !== "number" ||
         !Number.isInteger(delayMs) ||
         delayMs < 0 ||
-        delayMs > MAX_SCHEDULE_DELAY_MS
+        delayMs > MAX_SCHEDULE_DELAY_MS ||
+        (whenIdle !== undefined && typeof whenIdle !== "boolean") ||
+        (whenIdle === true && delayMs !== 0)
       ) {
         return fail(set, {
           status: 400,
-          error: `delayMs must be a whole number from 0 to ${MAX_SCHEDULE_DELAY_MS}`,
+          error:
+            "delayMs must be a valid schedule delay; whenIdle requires delayMs 0",
         });
       }
       return control(
         set,
         params,
         "session.schedule_prompt",
-        { text, delayMs },
+        { text, delayMs, ...(whenIdle === true ? { whenIdle: true } : {}) },
         SCHEDULE_FEATURE,
       );
     })

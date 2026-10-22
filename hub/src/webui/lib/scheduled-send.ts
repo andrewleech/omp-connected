@@ -84,11 +84,16 @@ export interface ScheduledPrompt {
   /** Epoch ms by the session host's clock. */
   fireAt: number;
   createdAt: number;
+  whenIdle?: true;
 }
 
 export interface ScheduleApi {
   list(): Promise<ScheduledPrompt[]>;
-  add(text: string, delayMs: number): Promise<ScheduledPrompt>;
+  add(
+    text: string,
+    delayMs: number,
+    whenIdle?: boolean,
+  ): Promise<ScheduledPrompt>;
   cancel(id: string): Promise<void>;
 }
 
@@ -100,8 +105,12 @@ export function scheduleApi(base: string): ScheduleApi {
         await requestJson<{ prompts: ScheduledPrompt[] }>(`${base}/scheduled`)
       ).prompts;
     },
-    add(text, delayMs) {
-      return postJson<ScheduledPrompt>(`${base}/scheduled`, { text, delayMs });
+    add(text, delayMs, whenIdle = false) {
+      return postJson<ScheduledPrompt>(`${base}/scheduled`, {
+        text,
+        delayMs,
+        ...(whenIdle ? { whenIdle: true } : {}),
+      });
     },
     async cancel(id) {
       await requestJson(`${base}/scheduled/${encodeURIComponent(id)}`, {
@@ -280,7 +289,7 @@ export function attachScheduledSend(doc: Document, api: ScheduleApi): void {
   function openPopover(anchor: Element): void {
     closePopover();
     const now = new Date();
-    let mode: "in" | "at" = "in";
+    let mode: "in" | "at" | "idle" = "in";
 
     const pop = Object.assign(doc.createElement("div"), {
       className: "omp-sched-pop",
@@ -305,7 +314,12 @@ export function attachScheduledSend(doc: Document, api: ScheduleApi): void {
       className: "sh-btn",
       textContent: "At",
     });
-    modes.append(inMode, atMode);
+    const idleMode = Object.assign(doc.createElement("button"), {
+      type: "button",
+      className: "sh-btn",
+      textContent: "When idle",
+    });
+    modes.append(inMode, atMode, idleMode);
 
     const numberInput = (label: string, value: number) => {
       const input = Object.assign(doc.createElement("input"), {
@@ -370,27 +384,33 @@ export function attachScheduledSend(doc: Document, api: ScheduleApi): void {
     pop.append(title, modes, inFields, atFields, preview, note, error, actions);
 
     const delay = (): number | null =>
-      mode === "in"
-        ? delayFromDuration(
-            Number(hoursInput.value || 0),
-            Number(minutesInput.value || 0),
-          )
-        : delayUntilClock(clockInput.value, new Date());
+      mode === "idle"
+        ? 0
+        : mode === "in"
+          ? delayFromDuration(
+              Number(hoursInput.value || 0),
+              Number(minutesInput.value || 0),
+            )
+          : delayUntilClock(clockInput.value, new Date());
 
     function update(): void {
       inMode.setAttribute("aria-pressed", String(mode === "in"));
       atMode.setAttribute("aria-pressed", String(mode === "at"));
+      idleMode.setAttribute("aria-pressed", String(mode === "idle"));
       inFields.hidden = mode !== "in";
       atFields.hidden = mode !== "at";
       const hasImages = doc.querySelector(ATTACHMENT) !== null;
       note.hidden = !hasImages;
       const ms = delay();
       preview.textContent =
-        ms === null
-          ? mode === "in"
-            ? "Pick a delay from 1 minute to 7 days."
-            : "Pick a time."
-          : `Sends ${formatFireTime(Date.now() + ms, new Date())} (in ${formatCountdown(ms)})`;
+        mode === "idle"
+          ? "Sends when the agent becomes idle, or now if already idle."
+          : ms === null
+            ? mode === "in"
+              ? "Pick a delay from 1 minute to 7 days."
+              : "Pick a time."
+            : `Sends ${formatFireTime(Date.now() + ms, new Date())} (in ${formatCountdown(ms)})`;
+      confirm.textContent = mode === "idle" ? "Queue" : "Schedule";
       confirm.disabled = ms === null || hasImages || promptText().trim() === "";
     }
 
@@ -401,7 +421,7 @@ export function attachScheduledSend(doc: Document, api: ScheduleApi): void {
       confirm.disabled = true;
       error.textContent = "";
       try {
-        const added = await api.add(text, ms);
+        const added = await api.add(text, ms, mode === "idle");
         if (!win || doc.defaultView === null) return;
         clearPrompt(text);
         closePopover();
@@ -424,6 +444,10 @@ export function attachScheduledSend(doc: Document, api: ScheduleApi): void {
       mode = "at";
       update();
       clockInput.focus();
+    });
+    idleMode.addEventListener("click", () => {
+      mode = "idle";
+      update();
     });
     for (const input of [hoursInput, minutesInput, clockInput])
       input.addEventListener("input", update);
@@ -547,8 +571,9 @@ export function attachScheduledSend(doc: Document, api: ScheduleApi): void {
         rows.set(prompt.id, row);
       }
       const left = prompt.fireAt - now;
-      row.when.textContent =
-        left > 0
+      row.when.textContent = prompt.whenIdle
+        ? "when idle"
+        : left > 0
           ? `${formatFireTime(prompt.fireAt, new Date(now))} · in ${formatCountdown(left)}`
           : "sending…";
       return row.item;

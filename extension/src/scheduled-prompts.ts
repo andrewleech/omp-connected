@@ -25,6 +25,8 @@ export interface ScheduledPrompt {
 	/** Epoch ms, by this host's clock. */
 	fireAt: number;
 	createdAt: number;
+	/** Wait for the owning session to become idle instead of a clock time. */
+	whenIdle?: true;
 }
 
 export interface PromptSchedulerOptions {
@@ -35,6 +37,8 @@ export interface PromptSchedulerOptions {
 	onError: (prompt: ScheduledPrompt, error: unknown) => void;
 	/** Called after every change to the waiting list, with the new list. */
 	onChange?: (prompts: readonly ScheduledPrompt[]) => void;
+	/** Reports whether the owning session can start a new turn now. */
+	isIdle: () => boolean;
 	now?: () => number;
 	setTimer?: (fn: () => void, ms: number) => unknown;
 	clearTimer?: (handle: unknown) => void;
@@ -62,8 +66,8 @@ export class PromptScheduler {
 		return this.#prompts.map((prompt) => ({ ...prompt }));
 	}
 
-	/** Queues `text` to be sent `delayMs` from now; throws ScheduleError on invalid input. */
-	add(text: string, delayMs: number): ScheduledPrompt {
+	/** Queues `text` to be sent `delayMs` from now, or when idle; throws ScheduleError on invalid input. */
+	add(text: string, delayMs: number, whenIdle = false): ScheduledPrompt {
 		if (text.trim() === "") throw new ScheduleError("text must not be empty");
 		if (text.length > MAX_SCHEDULED_TEXT) {
 			throw new ScheduleError(`text must be at most ${MAX_SCHEDULED_TEXT} characters`);
@@ -71,15 +75,34 @@ export class PromptScheduler {
 		if (!Number.isInteger(delayMs) || delayMs < 0 || delayMs > MAX_SCHEDULE_DELAY_MS) {
 			throw new ScheduleError(`delayMs must be a whole number from 0 to ${MAX_SCHEDULE_DELAY_MS}`);
 		}
+		if (whenIdle && delayMs !== 0) throw new ScheduleError("delayMs must be 0 when waiting for idle");
 		if (this.#prompts.length >= MAX_SCHEDULED_PROMPTS) {
 			throw new ScheduleError(`at most ${MAX_SCHEDULED_PROMPTS} prompts can wait at once`);
 		}
 		const now = this.#now();
-		const prompt: ScheduledPrompt = { id: crypto.randomUUID(), text, fireAt: now + delayMs, createdAt: now };
+		const prompt: ScheduledPrompt = {
+			id: crypto.randomUUID(),
+			text,
+			fireAt: now + delayMs,
+			createdAt: now,
+			...(whenIdle ? { whenIdle: true as const } : {}),
+		};
 		const at = this.#prompts.findIndex((other) => other.fireAt > prompt.fireAt);
 		this.#prompts.splice(at === -1 ? this.#prompts.length : at, 0, prompt);
 		this.#changed();
+		if (whenIdle && this.#options.isIdle()) this.onIdle();
 		return { ...prompt };
+	}
+
+	/** Sends idle-triggered prompts when the owning session is ready for a turn. */
+	onIdle(): void {
+		if (!this.#options.isIdle()) return;
+		const due = this.#prompts.filter((prompt) => prompt.whenIdle);
+		if (due.length === 0) return;
+		const dueIds = new Set(due.map((prompt) => prompt.id));
+		this.#prompts = this.#prompts.filter((prompt) => !dueIds.has(prompt.id));
+		this.#changed();
+		this.#send(due);
 	}
 
 	/** Removes a waiting prompt; false when there is no such prompt. */
@@ -107,7 +130,7 @@ export class PromptScheduler {
 	#arm(): void {
 		if (this.#timer !== undefined) this.#clearTimer(this.#timer);
 		this.#timer = undefined;
-		const next = this.#prompts[0];
+		const next = this.#prompts.find((prompt) => !prompt.whenIdle);
 		if (!next) return;
 		const wait = Math.min(Math.max(0, next.fireAt - this.#now()), CHECK_INTERVAL_MS);
 		this.#timer = this.#setTimer(() => {
@@ -118,18 +141,21 @@ export class PromptScheduler {
 
 	#fireDue(): void {
 		const now = this.#now();
-		const first = this.#prompts[0];
+		const first = this.#prompts.find((prompt) => !prompt.whenIdle);
 		if (!first || first.fireAt > now) {
 			this.#arm();
 			return;
 		}
 		const until = first.fireAt + DUE_TOGETHER_MS;
-		const due: ScheduledPrompt[] = [];
-		while (this.#prompts[0] && this.#prompts[0].fireAt <= Math.max(now, until)) {
-			due.push(this.#prompts.shift() as ScheduledPrompt);
-		}
+		const due = this.#prompts.filter((prompt) => !prompt.whenIdle && prompt.fireAt <= Math.max(now, until));
+		const dueIds = new Set(due.map((prompt) => prompt.id));
+		this.#prompts = this.#prompts.filter((prompt) => !dueIds.has(prompt.id));
 		this.#changed();
-		due.forEach((prompt, index) => {
+		this.#send(due);
+	}
+
+	#send(prompts: ScheduledPrompt[]): void {
+		prompts.forEach((prompt, index) => {
 			try {
 				void Promise.resolve(this.#options.send(prompt.text, index > 0)).catch((error: unknown) =>
 					this.#options.onError(prompt, error),
@@ -140,3 +166,4 @@ export class PromptScheduler {
 		});
 	}
 }
+

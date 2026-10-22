@@ -65,6 +65,33 @@ test("holding Send queues the prompt for later instead of sending it", async ({
   ).toEqual({ prompts: [] });
 });
 
+test("Send later can queue the prompt until the session becomes idle", async ({
+  page,
+}) => {
+  const collab = await openWriter(page);
+  await collab.locator(".sh-composer-input").fill("review the result");
+  await holdSend(page, collab, 900);
+  const dialog = collab.getByRole("dialog", { name: "Send later" });
+  await dialog.getByRole("button", { name: "When idle" }).click();
+  await expect(dialog).toContainText(
+    "Sends when the agent becomes idle, or now if already idle.",
+  );
+
+  const posted = page.waitForRequest(
+    (request) =>
+      request.url().endsWith("/sessions/writer-room/scheduled") &&
+      request.method() === "POST",
+  );
+  await dialog.getByRole("button", { name: "Queue" }).click();
+  expect((await posted).postDataJSON()).toEqual({
+    text: "review the result",
+    delayMs: 0,
+    whenIdle: true,
+  });
+  await expect(collab.locator(".omp-sched-item")).toContainText("when idle");
+  await expect(collab.locator(".sh-composer-input")).toHaveValue("");
+});
+
 test("a short press still sends at once", async ({ page }) => {
   const collab = await openWriter(page);
   await collab.locator(".sh-composer-input").fill("go now");

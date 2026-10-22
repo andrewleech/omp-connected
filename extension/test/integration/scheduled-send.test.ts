@@ -66,6 +66,7 @@ async function ownerSession(options: { idle: boolean }) {
 	const handlers = new Map<string, Handler>();
 	const sent: { text: string; options: unknown }[] = [];
 	const notices: { message: string; type: string }[] = [];
+	let idle = options.idle;
 	let onSent: () => void = () => undefined;
 	let onNotice: () => void = () => undefined;
 	const anyType = new Proxy({}, { get: () => () => ({}) });
@@ -82,8 +83,8 @@ async function ownerSession(options: { idle: boolean }) {
 		typebox: { Type: anyType },
 	};
 	const ctx = {
-		hasUI: true,
-		isIdle: () => options.idle,
+		sessionManager: { getSessionId: () => "session-1" },
+		isIdle: () => idle,
 		ui: {
 			setStatus: () => undefined,
 			notify: (message: string, type: string) => {
@@ -101,6 +102,9 @@ async function ownerSession(options: { idle: boolean }) {
 	return {
 		sent,
 		notices,
+		setIdle: (value: boolean) => {
+			idle = value;
+		},
 		emit: async (event: string) => handlers.get(event)?.({}, ctx),
 		push(method: string, params: unknown): Promise<Reply> {
 			const id = `hub-${++nextId}`;
@@ -128,6 +132,27 @@ test("a due prompt on a busy session queues behind the current turn", async () =
 	await session.push("session.schedule_prompt", { text: "then this", delayMs: 0 });
 	await delivered;
 	expect(session.sent).toEqual([{ text: "then this", options: { deliverAs: "followUp" } }]);
+});
+
+test("a when-idle prompt waits for agent_end and starts a plain turn", async () => {
+	const session = await ownerSession({ idle: false });
+	await session.emit("agent_start");
+	const reply = await session.push("session.schedule_prompt", {
+		text: "continue when ready",
+		delayMs: 0,
+		whenIdle: true,
+	});
+	expect(reply.result).toMatchObject({ text: "continue when ready", whenIdle: true });
+	expect(session.sent).toEqual([]);
+	expect((await session.push("session.scheduled", {})).result).toMatchObject({
+		prompts: [{ text: "continue when ready", whenIdle: true }],
+	});
+
+	const delivered = session.nextSend();
+	session.setIdle(true);
+	await session.emit("agent_end");
+	await delivered;
+	expect(session.sent).toEqual([{ text: "continue when ready", options: undefined }]);
 });
 
 test("a prompt whose session is no longer shared with control is dropped, not sent", async () => {
