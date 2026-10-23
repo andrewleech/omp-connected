@@ -7,6 +7,7 @@
 // interval instead of being pushed, since this server only ever learns
 // it by RPC-polling a host itself.
 
+import { AuthPane } from "./lib/auth-pane";
 import {
   attachCollabFileLinks,
   customizeCollabFrame,
@@ -26,6 +27,7 @@ import {
   EXIT_FEATURE,
   SESSION_FORK_FEATURE,
   sessionApiBase,
+  supportsAuth,
 } from "./lib/session-api";
 import { SessionLauncher } from "./lib/session-launcher";
 import { SessionPane } from "./lib/session-pane";
@@ -204,6 +206,7 @@ function createDashboard(root: HTMLElement): void {
     persist();
     render();
   });
+  const authPane = new AuthPane({ showStatus });
   let inspectorShell:
     | { tabs: Map<InspectorPane, HTMLButtonElement>; body: HTMLElement }
     | undefined;
@@ -830,6 +833,7 @@ function createDashboard(root: HTMLElement): void {
     files: "Files",
     agents: "Agents",
     models: "Roles",
+    auth: "Login",
   };
 
   /** Persistent pane trees stay attached across renders to preserve focus and edit state. */
@@ -862,25 +866,37 @@ function createDashboard(root: HTMLElement): void {
       inspectorShell = { tabs, body };
     }
     const { tabs, body } = inspectorShell;
+    const session = state.selectedSession;
+    const authAvailable =
+      !!session && supportsAuth(session) && session.access === "control";
+    // A persisted Login selection falls back to Session when this session
+    // cannot log in, without overwriting the stored choice.
+    const inspector =
+      state.inspector === "auth" && !authAvailable
+        ? "session"
+        : state.inspector;
     for (const [pane, tab] of tabs) {
-      tab.classList.toggle("active", pane === state.inspector);
-      tab.setAttribute("aria-pressed", String(pane === state.inspector));
+      tab.hidden = pane === "auth" && !authAvailable;
+      tab.classList.toggle("active", pane === inspector);
+      tab.setAttribute("aria-pressed", String(pane === inspector));
     }
     sessionPane.setSession(state.selectedSession);
     filesPane.setSession(state.selectedSession);
-    sessionPane.setActive(state.inspector === "session");
+    sessionPane.setActive(inspector === "session");
     modelRolesPane.setSession(state.selectedSession);
-    modelRolesPane.setView(state.inspector === "agents" ? "agents" : "roles");
-    modelRolesPane.setActive(
-      state.inspector === "models" || state.inspector === "agents",
-    );
-    filesPane.setActive(state.inspector === "files");
+    modelRolesPane.setView(inspector === "agents" ? "agents" : "roles");
+    modelRolesPane.setActive(inspector === "models" || inspector === "agents");
+    filesPane.setActive(inspector === "files");
+    authPane.setSession(state.selectedSession);
+    authPane.setActive(inspector === "auth");
     const pane =
-      state.inspector === "session"
+      inspector === "session"
         ? sessionPane.element
-        : state.inspector === "files"
+        : inspector === "files"
           ? filesPane.element
-          : modelRolesPane.element;
+          : inspector === "auth"
+            ? authPane.element
+            : modelRolesPane.element;
     if (body.firstElementChild !== pane || body.childElementCount !== 1)
       body.replaceChildren(pane);
   }

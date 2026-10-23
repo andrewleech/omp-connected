@@ -25,6 +25,7 @@ const sessions = {
       "session.model_roles.v1",
       "session.agent_roles.v1",
       "session.usage.v1",
+      "session.auth.v1",
     ],
   },
   viewer: {
@@ -183,6 +184,39 @@ const launched: (typeof sessions.writer & {
   label: string;
   sessionId: string;
 })[] = [];
+
+interface FakeAccount {
+  credentialId: number;
+  label: string;
+  detail: string;
+  type: "api_key" | "oauth";
+  active: boolean;
+}
+interface FakeLogin {
+  loginId: string;
+  providerId: string;
+  state: string;
+  url?: string;
+  instructions?: string;
+  progress: string[];
+  prompt?: { message: string; placeholder?: string; secret: boolean };
+  identity?: string;
+  error?: string;
+  polls: number;
+}
+// Provider credentials and the single login in flight for the Login tab.
+const authAccounts = new Map<string, FakeAccount[]>();
+const authLogins = new Map<string, FakeLogin>();
+let authSeq = 0;
+const authProviders = [
+  { id: "anthropic", name: "Anthropic" },
+  { id: "openrouter", name: "OpenRouter" },
+];
+
+function authPublic(login: FakeLogin) {
+  const { polls: _polls, ...status } = login;
+  return status;
+}
 const history = [
   {
     sessionId: "past-new",
@@ -208,6 +242,17 @@ function resetWriter(): void {
   writerInfo.thinkingLevel = "medium";
   files.clear();
   scheduled.length = 0;
+  authLogins.clear();
+  authAccounts.clear();
+  authAccounts.set("anthropic", [
+    {
+      credentialId: 1,
+      label: "work@example.com",
+      detail: "OAuth",
+      type: "oauth",
+      active: true,
+    },
+  ]);
   files.set("docs", "dir");
   files.set("docs/notes.md", new TextEncoder().encode("# notes\n"));
   files.set(
@@ -255,6 +300,103 @@ async function writerSessionApi(
     return json({ ok: true });
   }
   if (route === "/info") return json(writerInfo);
+  if (route === "/auth" && request.method === "GET") {
+    return json({
+      providers: authProviders.map((provider) => {
+        const accounts = authAccounts.get(provider.id) ?? [];
+        return {
+          ...provider,
+          available: true,
+          authenticated: accounts.length > 0,
+          accounts,
+        };
+      }),
+    });
+  }
+  if (route === "/auth/logins" && request.method === "POST") {
+    const body = (await request.json()) as { providerId?: string };
+    if (!authProviders.some((provider) => provider.id === body.providerId))
+      return Response.json({ error: "unknown provider" }, { status: 400 });
+    if (
+      [...authLogins.values()].some(
+        (l) => l.state === "awaiting_auth" || l.state === "awaiting_input",
+      )
+    )
+      return Response.json({ error: "login in flight" }, { status: 409 });
+    authSeq += 1;
+    const login: FakeLogin = {
+      loginId: `login-${authSeq}`,
+      providerId: body.providerId as string,
+      state: "awaiting_auth",
+      url: "https://auth.example.com/authorize?state=fixture",
+      instructions: "Sign in, then copy the redirect URL.",
+      progress: ["Waiting for sign-in"],
+      polls: 0,
+    };
+    authLogins.set(login.loginId, login);
+    return json(authPublic(login));
+  }
+  const authLogin = route.match(/^\/auth\/logins\/([^/]+)(\/input)?$/);
+  if (authLogin) {
+    const login = authLogins.get(authLogin[1] as string);
+    if (!login) return Response.json({ error: "not found" }, { status: 404 });
+    if (!authLogin[2] && request.method === "GET") {
+      login.polls += 1;
+      if (login.state === "awaiting_auth" && login.polls >= 1) {
+        login.state = "awaiting_input";
+        login.prompt = {
+          message: "Paste the redirect URL or API key",
+          placeholder: "http://localhost:1455/callback?code=...",
+          secret: true,
+        };
+      }
+      return json(authPublic(login));
+    }
+    if (authLogin[2] && request.method === "POST") {
+      if (login.state !== "awaiting_input")
+        return Response.json({ error: "no pending prompt" }, { status: 400 });
+      const body = (await request.json()) as { value: string };
+      if (body.value === "") {
+        login.state = "failed";
+        login.error = "Empty input";
+      } else {
+        login.state = "done";
+        login.identity = "fixture identity";
+        login.progress.push("Login complete");
+        const accounts = authAccounts.get(login.providerId) ?? [];
+        accounts.push({
+          credentialId: accounts.length + 10,
+          label: "fixture identity",
+          detail: "OAuth",
+          type: "oauth",
+          active: accounts.length === 0,
+        });
+        authAccounts.set(login.providerId, accounts);
+      }
+      login.prompt = undefined;
+      return json({ ok: true });
+    }
+    if (!authLogin[2] && request.method === "DELETE") {
+      if (login.state !== "done" && login.state !== "failed") {
+        login.state = "cancelled";
+        login.prompt = undefined;
+      }
+      return json({ ok: true });
+    }
+  }
+  const authAccount = route.match(/^\/auth\/accounts\/([^/]+)\/(\d+)$/);
+  if (authAccount && request.method === "DELETE") {
+    const providerId = authAccount[1] as string;
+    const accounts = authAccounts.get(providerId) ?? [];
+    const at = accounts.findIndex(
+      (account) => account.credentialId === Number(authAccount[2]),
+    );
+    if (at === -1)
+      return Response.json({ error: "not found" }, { status: 404 });
+    accounts.splice(at, 1);
+    authAccounts.set(providerId, accounts);
+    return json({ ok: true, remainingSource: null });
+  }
   if (route === "/usage") {
     const generatedAt = Date.now();
     return json({

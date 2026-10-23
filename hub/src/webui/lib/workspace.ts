@@ -8,6 +8,7 @@ export const INSPECTOR_PANES = [
   "files",
   "agents",
   "models",
+  "auth",
 ] as const;
 export type InspectorPane = (typeof INSPECTOR_PANES)[number];
 const DEFAULT_INSPECTOR_PANE: InspectorPane = "session";
