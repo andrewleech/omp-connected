@@ -132,6 +132,19 @@ The extension advertises `session.model_roles.v1` only when its running OMP cont
 ```
 
 `session.usage.v1` adds a read-only `GET /api/hosts/:id/sessions/:instanceId/usage` endpoint. The inspector opens it from the Usage button beside Compact and shows the provider windows in a dialog.
+`session.auth.v1` adds provider login and logout for the session's credential store. Every route needs `control` access (account labels are exposed) and answers `cache-control: no-store`; request bodies and pasted codes or API keys are never logged or echoed.
+
+```ts
+"session.auth_providers" {} -> { providers: { id; name; available; authenticated; accounts: { credentialId; label; detail; type: "api_key" | "oauth"; active }[] }[] }
+"session.auth_login_start" { providerId } -> AuthLoginStatus  // one login in flight per session (-32006); unknown provider -32004
+"session.auth_login_status" { loginId } -> AuthLoginStatus  // -32001 when unknown; finished logins stay queryable for 5 minutes
+"session.auth_login_input" { loginId; value } -> { ok: true }  // answers the pending prompt; -32004 when none is pending
+"session.auth_login_cancel" { loginId } -> { ok: true }  // idempotent
+"session.auth_logout" { providerId; credentialId } -> { ok: true; remainingSource: string | null }  // -32001 when missing
+// AuthLoginStatus = { loginId; providerId; state: "starting" | "awaiting_auth" | "awaiting_input" | "done" | "failed" | "cancelled"; url?; launchUrl?; instructions?; progress: string[]; prompt?: { message; placeholder?; secret }; identity?; error? }
+```
+
+Anthropic and Codex redirect to a localhost callback on the session's host; the user copies the failed page's URL and submits it as the prompt answer.
 `ModelRoleInfo` contains the role id/name, effective selector and provenance, global/project selectors, resolved model, and eligible models with their thinking levels. A null selector resets the assignment. Reads are allowed with view access; writes require control access and are limited to 20 per 10 seconds per session. OMP owns selector validation, role resolution, fallback behavior, and persistence.
 
 ### Agent roles (`session.agent_roles.v1`)
@@ -190,15 +203,16 @@ REST routes built on top of the same live registry:
 - `POST /api/hosts/:id/collab/:instanceId/link` `{ generation, access }` →
   `{ access, url, expiresAt }` — forwards a `collab.link` call the same
   way.
-- `/api/hosts/:id/sessions/:instanceId/...`: the `session.v1` calls for the agent `${id}:${instanceId}`: 404 when it isn't connected, 501 when it didn't advertise the required feature (`session.schedule.v1` for scheduling, `session.exit.v1` for exit, `session.fork.v1` for forking, `session.model_roles.v1` for role editing, `session.usage.v1` for provider usage, otherwise `session.v1`).
+- `/api/hosts/:id/sessions/:instanceId/...`: the `session.v1` calls for the agent `${id}:${instanceId}`: 404 when it isn't connected, 501 when it didn't advertise the required feature (`session.schedule.v1` for scheduling, `session.exit.v1` for exit, `session.fork.v1` for forking, `session.model_roles.v1` for role editing, `session.usage.v1` for provider usage, `session.auth.v1` for provider login, otherwise `session.v1`).
   - `GET info`, `POST abort`, `POST exit`, `POST fork` `{ name }`, `POST compact` `{ instructions? }`, `POST model` `{ provider, id }`, `POST thinking` `{ level }`, `GET usage`.
   - `GET model-roles` returns ModelRolesInfo; `POST model-roles` `{ role, selector, scope? }` returns fresh ModelRolesInfo. GET permits view shares; POST requires control.
   - `GET agent-roles` returns AgentRolesInfo (`session.agent_roles.v1`); like `model-roles` GET it permits view shares.
+  - `session.auth.v1`: `GET auth` returns `{ providers }`; `POST auth/logins` `{ providerId }` starts a login; `GET auth/logins/:loginId` returns its status; `POST auth/logins/:loginId/input` `{ value }` (string, at most 100,000 characters) answers the pending prompt; `DELETE auth/logins/:loginId` cancels; `DELETE auth/accounts/:providerId/:credentialId` logs out one credential. Login starts, input, cancel and logout share the control rate limit.
   - `GET usage` returns quota windows for configured providers and requires control access.
   - `GET files?path=` lists a directory, `POST files/mkdir` `{ path }` creates one.
   - `GET files/download?path=[&inline=1]` streams a file as `files.read` chunks of 256 KiB, each checked against the size and mtime of the initial `files.stat`, so a file that changes mid-download errors the stream instead of mixing versions. The response is always `attachment` with `content-security-policy: sandbox` and `nosniff`; `inline=1` only applies to PNG, JPEG, GIF and WebP.
   - `PUT files/upload?path=&overwrite=0|1` streams the raw body into `files.write` chunks of 256 KiB, awaiting each before reading on; over 256 MiB answers 413 and aborts the upload.
-- Control actions (abort, exit, fork, compact, model, thinking, role writes, mkdir, and queueing or cancelling a scheduled prompt) are limited to 20 requests per 10 s per session, and each session has at most 4 transfers in flight; both answer 429.
+- Control actions (abort, exit, fork, compact, model, thinking, role writes, mkdir, queueing or cancelling a scheduled prompt, and login start, input, cancel and logout) are limited to 20 requests per 10 s per session, and each session has at most 4 transfers in flight; both answer 429.
 - `GET /api/agents` → `{ agents: AgentSummary[] }`.
 - `POST /api/agents/:id/send` `{ content, replyTo?, idempotencyKey }` →
   sends as `operator@<hub-host>` (dashboard-only; the dashboard is never
