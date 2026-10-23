@@ -3,6 +3,15 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import {
+	type AuthAccount,
+	type AuthLoginStatus,
+	type AuthPlatform,
+	type AuthProvider,
+	type LoginCallbacks,
+	type LoginIdentity,
+	LoginManager,
+} from "../../src/auth-login.js";
 import { FileService } from "../../src/files-rpc.js";
 import { RpcCode } from "../../src/protocol.js";
 import { PromptScheduler } from "../../src/scheduled-prompts.js";
@@ -11,6 +20,7 @@ import {
 	type CollabAccess,
 	createAccessCache,
 	createSessionRpc,
+	type SessionRequestHandler,
 	type SessionRpcDeps,
 	thinkingLevelsFor,
 } from "../../src/session-rpc.js";
@@ -46,6 +56,8 @@ function harness(
 		pending?: boolean;
 		setModelResult?: boolean;
 		usageReports?: unknown[];
+		/** Behaviour of the fake `authStorage.oauth.login`. */
+		login?: (providerId: string, callbacks: LoginCallbacks) => Promise<LoginIdentity | undefined>;
 	} = {},
 ) {
 	const level = typeof options.access === "string" ? options.access : "control";
@@ -59,8 +71,13 @@ function harness(
 		setModel: [] as Model[],
 		thinking: [] as string[],
 		forks: [] as { cwd: string; name: string; sessionFile: string }[],
+		refreshed: [] as string[],
+		loginCalls: [] as { providerId: string; manualCodeInput: boolean }[],
 	};
 	const warnings: string[] = [];
+	const stored: Record<string, AuthAccount[]> = {
+		anthropic: [{ credentialId: 7, label: "me@example.test", detail: "oauth #7", type: "oauth", active: true }],
+	};
 	let onWarn: () => void = () => undefined;
 	const compaction = Promise.withResolvers<void>();
 	const state = { model: sonnet as Model | undefined, idle: options.idle ?? true, pending: options.pending ?? false };
@@ -73,6 +90,16 @@ function harness(
 			getProviderBaseUrl: () => undefined,
 			authStorage: {
 				usage: { reports: async () => options.usageReports ?? [] },
+				keys: { source: (provider: string) => (provider === "envkey" ? { kind: "env" } : undefined) },
+				oauth: {
+					login: (providerId: string, callbacks: LoginCallbacks) => {
+						calls.loginCalls.push({ providerId, manualCodeInput: callbacks.onManualCodeInput !== undefined });
+						return (options.login ?? (async () => undefined))(providerId, callbacks);
+					},
+				},
+			},
+			refreshProvider: async (provider: string) => {
+				calls.refreshed.push(provider);
 			},
 		},
 		isIdle: () => state.idle,
@@ -114,12 +141,33 @@ function harness(
 		setTimer: () => undefined,
 		clearTimer: () => undefined,
 	});
+	const platform: AuthPlatform = {
+		providers: () => [
+			{ id: "anthropic", name: "Anthropic", available: true },
+			{ id: "openai-codex-device", name: "Codex (device)", available: true, storeCredentialsAs: "openai-codex" },
+			{ id: "envkey", name: "Env Key", available: true },
+			{ id: "soon", name: "Soon", available: false },
+		],
+		credentialProvider: (providerId) => (providerId === "openai-codex-device" ? "openai-codex" : providerId),
+		pasteCodeProviders: new Set(["anthropic"]),
+		listAccounts: async (_ctx, providerId) => stored[providerId] ?? [],
+		logout: async (_ctx, providerId, credentialId) => {
+			const accounts = stored[providerId] ?? [];
+			const at = accounts.findIndex((account) => account.credentialId === credentialId);
+			if (at === -1) return { removed: false };
+			accounts.splice(at, 1);
+			return { removed: true, remainingSource: "ANTHROPIC_API_KEY" };
+		},
+	};
+	const logins = new LoginManager();
 	const handle = createSessionRpc({
 		pi,
 		context: () => ctx,
 		access,
 		files,
 		scheduler,
+		logins,
+		authPlatform: async () => platform,
 		forkCurrentSession: async (params) => {
 			calls.forks.push(params);
 			return { ok: true, label: "project.fork" };
@@ -127,6 +175,8 @@ function harness(
 	});
 	return {
 		handle,
+		logins,
+		stored,
 		calls,
 		warnings,
 		state,
@@ -241,6 +291,12 @@ test("a view-only session answers session.info but refuses every other method as
 		["session.schedule_prompt", { text: "later", delayMs: 60_000 }],
 		["session.scheduled", {}],
 		["session.cancel_scheduled", { id: "x" }],
+		["session.auth_providers", {}],
+		["session.auth_login_start", { providerId: "anthropic" }],
+		["session.auth_login_status", { loginId: "x" }],
+		["session.auth_login_input", { loginId: "x", value: "v" }],
+		["session.auth_login_cancel", { loginId: "x" }],
+		["session.auth_logout", { providerId: "anthropic", credentialId: 7 }],
 	];
 	for (const [method, params] of gated) {
 		expect({ method, code: await rpcCode(handle(method, params)) }).toEqual({
@@ -452,4 +508,180 @@ test("scheduled prompts can be queued, listed and cancelled; bad requests are in
 	expect(await handle("session.cancel_scheduled", { id: queued.id })).toEqual({ ok: true });
 	expect(await rpcCode(handle("session.cancel_scheduled", { id: queued.id }))).toBe(RpcCode.NotFound);
 	expect(await handle("session.scheduled", {})).toEqual({ prompts: [] });
+});
+
+/** Lets the login flow the fake provider runs reach its next await. */
+async function flush(): Promise<void> {
+	for (let i = 0; i < 10; i += 1) await Promise.resolve();
+}
+
+/** A provider flow that stays pending until aborted, then rejects. */
+function abortable(signal: AbortSignal, onAbort: () => void): Promise<LoginIdentity | undefined> {
+	const { promise, reject } = Promise.withResolvers<LoginIdentity | undefined>();
+	signal.addEventListener("abort", () => {
+		onAbort();
+		reject(new Error("aborted"));
+	});
+	return promise;
+}
+
+async function loginStatus(handle: SessionRequestHandler, loginId: string): Promise<AuthLoginStatus> {
+	return (await handle("session.auth_login_status", { loginId })) as AuthLoginStatus;
+}
+
+test("session.auth_providers lists providers with their stored accounts and credential sources", async () => {
+	const { handle } = harness();
+	const { providers } = (await handle("session.auth_providers", {})) as { providers: AuthProvider[] };
+	expect(providers.map(({ id, authenticated, available }) => ({ id, authenticated, available }))).toEqual([
+		{ id: "anthropic", authenticated: true, available: true },
+		{ id: "openai-codex-device", authenticated: false, available: true },
+		{ id: "envkey", authenticated: true, available: true },
+		{ id: "soon", authenticated: false, available: false },
+	]);
+	expect(providers[0]?.accounts).toEqual([
+		{ credentialId: 7, label: "me@example.test", detail: "oauth #7", type: "oauth", active: true },
+	]);
+});
+
+test("a paste-code login shows the auth link, takes the pasted redirect URL and refreshes the provider", async () => {
+	const pasted = "http://localhost:1455/auth/callback?code=abc123456789&state=s1";
+	let received = "";
+	const { handle, calls } = harness({
+		login: async (_providerId, callbacks) => {
+			callbacks.onProgress("Waiting for the browser");
+			callbacks.onAuth({
+				url: "https://auth.example.test/authorize?x=1",
+				launchUrl: "http://127.0.0.1:1455/launch",
+				instructions: "Sign in",
+			});
+			received = (await callbacks.onManualCodeInput?.(callbacks.signal)) ?? "";
+			return { type: "oauth", email: "me@example.test", orgName: "Acme" };
+		},
+	});
+	const started = (await handle("session.auth_login_start", { providerId: "anthropic" })) as AuthLoginStatus;
+	expect(started.providerId).toBe("anthropic");
+	await flush();
+	expect(await loginStatus(handle, started.loginId)).toEqual({
+		loginId: started.loginId,
+		providerId: "anthropic",
+		state: "awaiting_input",
+		url: "https://auth.example.test/authorize?x=1",
+		launchUrl: "http://127.0.0.1:1455/launch",
+		instructions: "Sign in",
+		progress: ["Waiting for the browser"],
+		prompt: { message: "Paste the authorization code (or full redirect URL):", secret: false },
+	});
+
+	expect(await handle("session.auth_login_input", { loginId: started.loginId, value: pasted })).toEqual({ ok: true });
+	await flush();
+	const done = await loginStatus(handle, started.loginId);
+	expect(done).toMatchObject({ state: "done", identity: "me@example.test (Acme)" });
+	expect(done.prompt).toBeUndefined();
+	expect(received).toBe(pasted);
+	expect(calls.loginCalls).toEqual([{ providerId: "anthropic", manualCodeInput: true }]);
+	expect(calls.refreshed).toEqual(["anthropic"]);
+	expect(JSON.stringify(done)).not.toContain("abc123456789");
+});
+
+test("a secret prompt before any auth link is forwarded, and a failure never echoes the submitted key", async () => {
+	const { handle, calls } = harness({
+		login: async (_providerId, callbacks) => {
+			const key = await callbacks.onPrompt({ message: "Enter API key", placeholder: "sk-...", secret: true });
+			throw new Error(`the provider rejected ${key}`);
+		},
+	});
+	const started = (await handle("session.auth_login_start", { providerId: "envkey" })) as AuthLoginStatus;
+	await flush();
+	const waiting = await loginStatus(handle, started.loginId);
+	expect(waiting).toMatchObject({
+		state: "awaiting_input",
+		prompt: { message: "Enter API key", placeholder: "sk-...", secret: true },
+	});
+	expect(waiting.url).toBeUndefined();
+
+	await handle("session.auth_login_input", { loginId: started.loginId, value: "sk-secret-value-123" });
+	await flush();
+	const failed = await loginStatus(handle, started.loginId);
+	expect(failed).toMatchObject({ state: "failed", error: "the provider rejected [redacted]" });
+	expect(JSON.stringify(failed)).not.toContain("sk-secret-value-123");
+	expect(calls.loginCalls).toEqual([{ providerId: "envkey", manualCodeInput: false }]);
+	expect(calls.refreshed).toEqual([]);
+});
+
+test("cancelling aborts the provider flow, frees the session for a new login and is idempotent", async () => {
+	let aborted = false;
+	const { handle } = harness({
+		login: (_providerId, callbacks) =>
+			abortable(callbacks.signal, () => {
+				aborted = true;
+			}),
+	});
+	const first = (await handle("session.auth_login_start", { providerId: "anthropic" })) as AuthLoginStatus;
+	expect(await handle("session.auth_login_cancel", { loginId: first.loginId })).toEqual({ ok: true });
+	expect(aborted).toBe(true);
+	expect(await loginStatus(handle, first.loginId)).toMatchObject({ state: "cancelled" });
+	expect(await handle("session.auth_login_cancel", { loginId: first.loginId })).toEqual({ ok: true });
+
+	const second = (await handle("session.auth_login_start", { providerId: "anthropic" })) as AuthLoginStatus;
+	expect(second.loginId).not.toBe(first.loginId);
+});
+
+test("auth login requests are validated: busy, unknown provider, no pending prompt, unknown login, bad values", async () => {
+	const { handle, logins } = harness({ login: () => Promise.withResolvers<undefined>().promise });
+	const first = (await handle("session.auth_login_start", { providerId: "anthropic" })) as AuthLoginStatus;
+
+	expect(await rpcCode(handle("session.auth_login_start", { providerId: "envkey" }))).toBe(RpcCode.Busy);
+	expect(await rpcCode(handle("session.auth_login_start", { providerId: "nope" }))).toBe(RpcCode.Invalid);
+	expect(await rpcCode(handle("session.auth_login_start", { providerId: "soon" }))).toBe(RpcCode.Invalid);
+	expect(await rpcCode(handle("session.auth_login_start", { providerId: "" }))).toBe(RpcCode.Invalid);
+	expect(await rpcCode(handle("session.auth_login_start", {}))).toBe(RpcCode.Invalid);
+
+	expect(await rpcCode(handle("session.auth_login_input", { loginId: first.loginId, value: "x" }))).toBe(
+		RpcCode.Invalid,
+	);
+	expect(await rpcCode(handle("session.auth_login_input", { loginId: first.loginId, value: 5 }))).toBe(
+		RpcCode.Invalid,
+	);
+	expect(
+		await rpcCode(handle("session.auth_login_input", { loginId: first.loginId, value: "x".repeat(100_001) })),
+	).toBe(RpcCode.Invalid);
+	for (const method of ["session.auth_login_status", "session.auth_login_input", "session.auth_login_cancel"]) {
+		expect(await rpcCode(handle(method, { loginId: "missing", value: "x" }))).toBe(RpcCode.NotFound);
+		expect(await rpcCode(handle(method, { value: "x" }))).toBe(RpcCode.Invalid);
+	}
+	logins.clear();
+});
+
+test("ending the session aborts the running login and forgets it", async () => {
+	let aborted = false;
+	const { handle, logins } = harness({
+		login: (_providerId, callbacks) =>
+			abortable(callbacks.signal, () => {
+				aborted = true;
+			}),
+	});
+	const started = (await handle("session.auth_login_start", { providerId: "anthropic" })) as AuthLoginStatus;
+	logins.clear();
+	expect(aborted).toBe(true);
+	expect(await rpcCode(handle("session.auth_login_status", { loginId: started.loginId }))).toBe(RpcCode.NotFound);
+});
+
+test("session.auth_logout removes a stored account and reports what still authenticates the provider", async () => {
+	const { handle, stored } = harness();
+	expect(await handle("session.auth_logout", { providerId: "anthropic", credentialId: 7 })).toEqual({
+		ok: true,
+		remainingSource: "ANTHROPIC_API_KEY",
+	});
+	expect(stored.anthropic).toEqual([]);
+	expect(await rpcCode(handle("session.auth_logout", { providerId: "anthropic", credentialId: 7 }))).toBe(
+		RpcCode.NotFound,
+	);
+	for (const params of [
+		{ providerId: "anthropic", credentialId: "7" },
+		{ providerId: "anthropic", credentialId: 1.5 },
+		{ providerId: "", credentialId: 7 },
+		{ credentialId: 7 },
+	]) {
+		expect(await rpcCode(handle("session.auth_logout", params))).toBe(RpcCode.Invalid);
+	}
 });
