@@ -3,6 +3,14 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { type AgentRolesInfo, loadAgentRoles } from "./agent-roles.js";
+import {
+	type AuthAccount,
+	type AuthLoginStatus,
+	type AuthPlatform,
+	type AuthProvider,
+	type LoginManager,
+	loadAuthPlatform,
+} from "./auth-login.js";
 import type { FileService } from "./files-rpc.js";
 import { RpcCode, RpcError, paramsRecord } from "./protocol.js";
 import { type PromptScheduler, ScheduleError, type ScheduledPrompt } from "./scheduled-prompts.js";
@@ -22,6 +30,10 @@ export const AGENT_ROLES_FEATURE = "session.agent_roles.v1";
 export const USAGE_FEATURE = "session.usage.v1";
 /** Advertised by sessions that can fork their current transcript into a new ompc session. */
 export const SESSION_FORK_FEATURE = "session.fork.v1";
+/** Advertised by sessions that can log providers in and out for the dashboard. */
+export const AUTH_FEATURE = "session.auth.v1";
+/** Longest accepted answer to a login prompt, in UTF-16 code units. */
+export const MAX_LOGIN_INPUT = 100_000;
 
 export type CollabAccess = "view" | "control";
 
@@ -139,6 +151,10 @@ export interface SessionRpcDeps {
 	files: FileService;
 	/** The owner session's queue of prompts to send later. */
 	scheduler: PromptScheduler;
+	/** The owner session's provider login in flight, plus recently finished ones. */
+	logins: LoginManager;
+	/** OMP's provider registry and logout helpers; loaded on first use when absent. */
+	authPlatform?: () => Promise<AuthPlatform>;
 	forkCurrentSession: (params: { cwd: string; name: string; sessionFile: string }) => Promise<unknown>;
 }
 
@@ -201,6 +217,15 @@ export function createSessionRpc(deps: SessionRpcDeps): SessionRequestHandler {
 	const { pi, files } = deps;
 	/** Set while a compaction this handler started is running. */
 	let compacting = false;
+	const authPlatform = deps.authPlatform ?? loadAuthPlatform;
+
+	function loginIdParam(params: unknown): string {
+		const { loginId } = paramsRecord(params);
+		if (typeof loginId !== "string" || loginId === "") {
+			throw new RpcError(RpcCode.Invalid, "loginId must be a non-empty string");
+		}
+		return loginId;
+	}
 
 	function requireContext(): ExtensionContext {
 		const ctx = deps.context();
@@ -276,6 +301,89 @@ export function createSessionRpc(deps: SessionRpcDeps): SessionRequestHandler {
 					}),
 				})),
 			};
+		},
+		async "session.auth_providers"(): Promise<{ providers: AuthProvider[] }> {
+			const ctx = requireContext();
+			const platform = await authPlatform();
+			const { keys } = ctx.modelRegistry.authStorage;
+			// Login aliases share one credential store; list its accounts once.
+			const accountsByStore = new Map<string, AuthAccount[]>();
+			const providers: AuthProvider[] = [];
+			for (const info of platform.providers()) {
+				const store = info.storeCredentialsAs ?? info.id;
+				let accounts = accountsByStore.get(store);
+				if (!accounts) {
+					accounts = await platform.listAccounts(ctx, store).catch((error: unknown) => {
+						pi.logger.warn("omp-connected: could not list stored accounts for a provider", {
+							provider: store,
+							err: error instanceof Error ? error.message : String(error),
+						});
+						return [];
+					});
+					accountsByStore.set(store, accounts);
+				}
+				providers.push({
+					id: info.id,
+					name: info.name,
+					available: info.available,
+					authenticated: accounts.length > 0 || keys.source(store) !== undefined,
+					accounts,
+				});
+			}
+			return { providers };
+		},
+		async "session.auth_login_start"(params): Promise<AuthLoginStatus> {
+			const { providerId } = paramsRecord(params);
+			if (typeof providerId !== "string" || providerId === "") {
+				throw new RpcError(RpcCode.Invalid, "providerId must be a non-empty string");
+			}
+			const ctx = requireContext();
+			const platform = await authPlatform();
+			const info = platform.providers().find((provider) => provider.id === providerId);
+			if (!info) throw new RpcError(RpcCode.Invalid, `unknown provider '${providerId}'`);
+			if (!info.available) throw new RpcError(RpcCode.Invalid, `login for '${providerId}' is not available`);
+			const { authStorage } = ctx.modelRegistry;
+			return deps.logins.start({
+				providerId,
+				manualCodeInput: platform.pasteCodeProviders.has(providerId),
+				run: (callbacks) => authStorage.oauth.login(providerId, callbacks),
+				// A provider-scoped online refresh makes the new credential re-run model discovery.
+				afterSuccess: () =>
+					ctx.modelRegistry.refreshProvider(platform.credentialProvider(providerId), "online"),
+			});
+		},
+		"session.auth_login_status"(params): AuthLoginStatus {
+			return deps.logins.status(loginIdParam(params));
+		},
+		"session.auth_login_input"(params) {
+			const { value } = paramsRecord(params);
+			if (typeof value !== "string" || value.length > MAX_LOGIN_INPUT) {
+				throw new RpcError(RpcCode.Invalid, `value must be a string of at most ${MAX_LOGIN_INPUT} characters`);
+			}
+			deps.logins.input(loginIdParam(params), value);
+			return { ok: true };
+		},
+		"session.auth_login_cancel"(params) {
+			deps.logins.cancel(loginIdParam(params));
+			return { ok: true };
+		},
+		async "session.auth_logout"(params) {
+			const { providerId, credentialId } = paramsRecord(params);
+			if (
+				typeof providerId !== "string" ||
+				providerId === "" ||
+				typeof credentialId !== "number" ||
+				!Number.isInteger(credentialId)
+			) {
+				throw new RpcError(RpcCode.Invalid, "providerId must be a non-empty string and credentialId an integer");
+			}
+			const { removed, remainingSource } = await (await authPlatform()).logout(
+				requireContext(),
+				providerId,
+				credentialId,
+			);
+			if (!removed) throw new RpcError(RpcCode.NotFound, "that credential is no longer stored");
+			return { ok: true, remainingSource: remainingSource ?? null };
 		},
 		"session.abort"() {
 			requireContext().abort();

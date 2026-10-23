@@ -1,6 +1,7 @@
 import * as os from "node:os";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import type { Component } from "@oh-my-pi/pi-tui";
+import { LoginManager } from "./auth-login.js";
 import { getCollabRegistry } from "./collab-registry.js";
 import { FileService } from "./files-rpc.js";
 import { HOST_SESSIONS_FEATURE, HostSessions } from "./host-sessions.js";
@@ -12,6 +13,7 @@ import {
 	createAccessCache,
 	createSessionRpc,
 	EXIT_FEATURE,
+	AUTH_FEATURE,
 	AGENT_ROLES_FEATURE,
 	MODEL_ROLES_FEATURE,
 	SCHEDULE_FEATURE,
@@ -89,6 +91,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 	let files: FileService | undefined;
 	let sessionRpc: SessionRequestHandler | undefined;
 	let scheduler: PromptScheduler | undefined;
+	let logins: LoginManager | undefined;
 	const hostSessions = new HostSessions({
 		listHistory: async () => {
 			const { SessionManager } = await import("@oh-my-pi/pi-coding-agent");
@@ -234,6 +237,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 							SESSION_FORK_FEATURE,
 							HOST_SESSIONS_FEATURE,
 							USAGE_FEATURE,
+							AUTH_FEATURE,
 							...(supportsModelRoles(ownerContext) ? [MODEL_ROLES_FEATURE, AGENT_ROLES_FEATURE] : []),
 						],
 					});
@@ -286,6 +290,14 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		await files?.dispose();
 		files = undefined;
 		sessionRpc = undefined;
+		logins?.clear();
+		logins = new LoginManager({
+			onAfterSuccessError: (error) => {
+				pi.logger.warn("omp-connected: refreshing models after a dashboard login failed", {
+					err: error instanceof Error ? error.message : String(error),
+				});
+			},
+		});
 		scheduler = new PromptScheduler({
 			isIdle: () => !busy,
 			send: async (text, afterPrevious) => {
@@ -317,6 +329,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 				access: ownAccess,
 				files: service,
 				scheduler,
+				logins,
 				forkCurrentSession: (params) => hostSessions.forkCurrent(params),
 			});
 		} catch (error) {
@@ -363,6 +376,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		if (hub.owner !== pi) return;
 		// A prompt queued for one conversation must not land in another.
 		dropScheduled("the session was switched");
+		logins?.clear();
 		trackContext(event, ctx);
 	});
 	pi.on("session_branch", trackContext);
@@ -377,6 +391,8 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		hub.transport = undefined;
 		const pending = files;
 		dropScheduled("the session is shutting down");
+		logins?.clear();
+		logins = undefined;
 		scheduler = undefined;
 		ownerContext = undefined;
 		sessionRpc = undefined;
