@@ -16,8 +16,10 @@ import { AgentCallError, type AgentRegistry } from "./agent-registry";
 import { RateLimiter } from "./rate-limit";
 import {
   AGENT_ROLES_FEATURE,
+  AUTH_FEATURE,
   EXIT_FEATURE,
   type FilesStatResult,
+  MAX_AUTH_INPUT,
   MAX_SCHEDULED_TEXT,
   MAX_SCHEDULE_DELAY_MS,
   MODEL_ROLES_FEATURE,
@@ -531,6 +533,90 @@ export function sessionRpcRoutes(
           { id: params.scheduleId },
           SCHEDULE_FEATURE,
         ),
+    )
+
+    .get("/:id/sessions/:instanceId/auth", ({ params, set }) => {
+      set.headers["cache-control"] = "no-store";
+      const resolved = target(params.id, params.instanceId, AUTH_FEATURE);
+      if (!("agentId" in resolved)) return fail(set, resolved);
+      return forward(set, resolved.agentId, "session.auth_providers", {});
+    })
+    .post("/:id/sessions/:instanceId/auth/logins", ({ params, body, set }) => {
+      set.headers["cache-control"] = "no-store";
+      const providerId = bodyObject(body)?.providerId;
+      if (!isNonEmptyString(providerId))
+        return fail(set, { status: 400, error: "providerId is required" });
+      return control(
+        set,
+        params,
+        "session.auth_login_start",
+        { providerId },
+        AUTH_FEATURE,
+      );
+    })
+    .get(
+      "/:id/sessions/:instanceId/auth/logins/:loginId",
+      ({ params, set }) => {
+        set.headers["cache-control"] = "no-store";
+        const resolved = target(params.id, params.instanceId, AUTH_FEATURE);
+        if (!("agentId" in resolved)) return fail(set, resolved);
+        return forward(set, resolved.agentId, "session.auth_login_status", {
+          loginId: params.loginId,
+        });
+      },
+    )
+    .post(
+      "/:id/sessions/:instanceId/auth/logins/:loginId/input",
+      ({ params, body, set }) => {
+        set.headers["cache-control"] = "no-store";
+        const value = bodyObject(body)?.value;
+        if (typeof value !== "string" || value.length > MAX_AUTH_INPUT)
+          return fail(set, {
+            status: 400,
+            error: `value must be a string of at most ${MAX_AUTH_INPUT} characters`,
+          });
+        return control(
+          set,
+          params,
+          "session.auth_login_input",
+          { loginId: params.loginId, value },
+          AUTH_FEATURE,
+        );
+      },
+    )
+    .delete(
+      "/:id/sessions/:instanceId/auth/logins/:loginId",
+      ({ params, set }) => {
+        set.headers["cache-control"] = "no-store";
+        return control(
+          set,
+          params,
+          "session.auth_login_cancel",
+          { loginId: params.loginId },
+          AUTH_FEATURE,
+        );
+      },
+    )
+    .delete(
+      "/:id/sessions/:instanceId/auth/accounts/:providerId/:credentialId",
+      ({ params, set }) => {
+        set.headers["cache-control"] = "no-store";
+        const credentialId = /^-?\d+$/.test(params.credentialId)
+          ? Number(params.credentialId)
+          : Number.NaN;
+        if (!Number.isSafeInteger(credentialId))
+          return fail(set, {
+            status: 400,
+            error: "credentialId must be an integer",
+          });
+        return control(
+          set,
+          params,
+          "session.auth_logout",
+          { providerId: params.providerId, credentialId },
+          AUTH_FEATURE,
+        );
+      },
     )
 
     .get("/:id/sessions/:instanceId/files", ({ params, query, set }) => {

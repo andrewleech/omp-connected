@@ -6,6 +6,7 @@ import {
 } from "@/server/session-rpc-routes";
 import {
   AGENT_ROLES_FEATURE,
+  AUTH_FEATURE,
   MODEL_ROLES_FEATURE,
   SESSION_FORK_FEATURE,
   USAGE_FEATURE,
@@ -1216,5 +1217,158 @@ describe("session-rpc-routes: agent roles", () => {
     registerSessionAgent(registry, () => info, { features: ["session.v1"] });
     const response = await sessionRpcRoutes(registry).handle(new Request(url));
     expect(response.status).toBeGreaterThanOrEqual(400);
+  });
+});
+
+describe("session-rpc-routes: provider login", () => {
+  const FEATURES = ["session.v1", AUTH_FEATURE];
+  const status = {
+    loginId: "l1",
+    providerId: "anthropic",
+    state: "awaiting_auth",
+    url: "https://auth.example.com",
+    progress: [],
+  };
+  const json = (route: string, method: string, body?: unknown) =>
+    new Request(`${BASE}/inst-1/${route}`, {
+      method,
+      headers: { "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+
+  test("forwards each route to its method with no-store responses", async () => {
+    const registry = new AgentRegistry();
+    const calls = registerSessionAgent(
+      registry,
+      (method) => {
+        if (method === "session.auth_providers") return { providers: [] };
+        if (method === "session.auth_logout")
+          return { ok: true, remainingSource: null };
+        if (method.startsWith("session.auth_login_input")) return { ok: true };
+        if (method === "session.auth_login_cancel") return { ok: true };
+        return status;
+      },
+      { features: FEATURES },
+    );
+    const app = sessionRpcRoutes(registry);
+    const responses = [
+      await app.handle(json("auth", "GET")),
+      await app.handle(
+        json("auth/logins", "POST", { providerId: "anthropic" }),
+      ),
+      await app.handle(json("auth/logins/l1", "GET")),
+      await app.handle(json("auth/logins/l1/input", "POST", { value: "code" })),
+      await app.handle(json("auth/logins/l1", "DELETE")),
+      await app.handle(json("auth/accounts/anthropic/7", "DELETE")),
+    ];
+
+    expect(responses.map((r) => r.status)).toEqual([
+      200, 200, 200, 200, 200, 200,
+    ]);
+    expect(responses.map((r) => r.headers.get("cache-control"))).toEqual(
+      Array(6).fill("no-store"),
+    );
+    expect(await responses[5]?.json()).toEqual({
+      ok: true,
+      remainingSource: null,
+    });
+    expect(calls).toEqual([
+      { method: "session.auth_providers", params: {} },
+      {
+        method: "session.auth_login_start",
+        params: { providerId: "anthropic" },
+      },
+      { method: "session.auth_login_status", params: { loginId: "l1" } },
+      {
+        method: "session.auth_login_input",
+        params: { loginId: "l1", value: "code" },
+      },
+      { method: "session.auth_login_cancel", params: { loginId: "l1" } },
+      {
+        method: "session.auth_logout",
+        params: { providerId: "anthropic", credentialId: 7 },
+      },
+    ]);
+  });
+
+  test("answers 501 without the capability", async () => {
+    const registry = new AgentRegistry();
+    const calls = registerSessionAgent(registry, () => status, {
+      features: ["session.v1"],
+    });
+    const app = sessionRpcRoutes(registry);
+    const responses = await Promise.all([
+      app.handle(json("auth", "GET")),
+      app.handle(json("auth/logins", "POST", { providerId: "anthropic" })),
+      app.handle(json("auth/logins/l1", "GET")),
+      app.handle(json("auth/logins/l1/input", "POST", { value: "x" })),
+      app.handle(json("auth/logins/l1", "DELETE")),
+      app.handle(json("auth/accounts/anthropic/1", "DELETE")),
+    ]);
+
+    expect(responses.map((r) => r.status)).toEqual(Array(6).fill(501));
+    expect(calls).toEqual([]);
+  });
+
+  test("rejects malformed bodies and ids before calling the extension", async () => {
+    const registry = new AgentRegistry();
+    const calls = registerSessionAgent(registry, () => status, {
+      features: FEATURES,
+    });
+    const app = sessionRpcRoutes(registry);
+    const responses = await Promise.all([
+      app.handle(json("auth/logins", "POST", { providerId: "" })),
+      app.handle(json("auth/logins", "POST", { providerId: 5 })),
+      app.handle(json("auth/logins/l1/input", "POST", { value: 5 })),
+      app.handle(json("auth/logins/l1/input", "POST", {})),
+      app.handle(
+        json("auth/logins/l1/input", "POST", { value: "x".repeat(100_001) }),
+      ),
+      app.handle(json("auth/accounts/anthropic/1.5", "DELETE")),
+      app.handle(json("auth/accounts/anthropic/abc", "DELETE")),
+    ]);
+
+    expect(responses.map((r) => r.status)).toEqual(Array(7).fill(400));
+    expect(calls).toEqual([]);
+  });
+
+  test("maps view-only and missing-credential errors without echoing the secret", async () => {
+    const secret = "sk-secret-value";
+    const forbidden = new AgentRegistry();
+    registerSessionAgent(
+      forbidden,
+      () => {
+        throw new RpcFault(-32003, "this session is shared view-only");
+      },
+      { features: FEATURES },
+    );
+    const denied = await sessionRpcRoutes(forbidden).handle(
+      json("auth/logins/l1/input", "POST", { value: secret }),
+    );
+    expect(denied.status).toBe(403);
+    expect(await denied.text()).not.toContain(secret);
+
+    const missing = new AgentRegistry();
+    const calls = registerSessionAgent(
+      missing,
+      () => {
+        throw new RpcFault(-32001, "credential not found");
+      },
+      { features: FEATURES },
+    );
+    const app = sessionRpcRoutes(missing);
+    const logout = await app.handle(
+      json("auth/accounts/anthropic/9", "DELETE"),
+    );
+    expect(logout.status).toBe(404);
+    const input = await app.handle(
+      json("auth/logins/l1/input", "POST", { value: secret }),
+    );
+    expect(input.status).toBe(404);
+    expect(await input.text()).not.toContain(secret);
+    expect(calls[1]).toEqual({
+      method: "session.auth_login_input",
+      params: { loginId: "l1", value: secret },
+    });
   });
 });

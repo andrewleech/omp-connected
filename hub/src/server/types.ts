@@ -347,6 +347,46 @@ export const EXIT_FEATURE = "session.exit.v1";
 export const SESSION_FORK_FEATURE = "session.fork.v1";
 /** Advertised by sessions that expose provider quota reports to control guests. */
 export const USAGE_FEATURE = "session.usage.v1";
+/** Advertised by sessions that serve the session.auth_* provider login and
+ *  logout methods. */
+export const AUTH_FEATURE = "session.auth.v1";
+/** Largest value accepted for a login prompt answer. */
+export const MAX_AUTH_INPUT = 100_000;
+
+export interface AuthAccount {
+  credentialId: number;
+  label: string;
+  detail: string;
+  type: "api_key" | "oauth";
+  active: boolean;
+}
+
+export interface AuthProvider {
+  id: string;
+  name: string;
+  available: boolean;
+  authenticated: boolean;
+  accounts: AuthAccount[];
+}
+
+export interface AuthLoginStatus {
+  loginId: string;
+  providerId: string;
+  state:
+    | "starting"
+    | "awaiting_auth"
+    | "awaiting_input"
+    | "done"
+    | "failed"
+    | "cancelled";
+  url?: string;
+  launchUrl?: string;
+  instructions?: string;
+  progress: string[];
+  prompt?: { message: string; placeholder?: string; secret: boolean };
+  identity?: string;
+  error?: string;
+}
 /** The extension's limits for a scheduled prompt. */
 export const MAX_SCHEDULED_TEXT = 100_000;
 export const MAX_SCHEDULE_DELAY_MS = 7 * 24 * 60 * 60 * 1000;
@@ -488,6 +528,12 @@ export interface SessionMethodParams {
   "session.schedule_prompt": { text: string; delayMs: number };
   "session.scheduled": Record<string, never>;
   "session.cancel_scheduled": { id: string };
+  "session.auth_providers": Record<string, never>;
+  "session.auth_login_start": { providerId: string };
+  "session.auth_login_status": { loginId: string };
+  "session.auth_login_input": { loginId: string; value: string };
+  "session.auth_login_cancel": { loginId: string };
+  "session.auth_logout": { providerId: string; credentialId: number };
   "session.model_roles": Record<string, never>;
   "session.agent_roles": Record<string, never>;
   "session.set_model_role": SetModelRoleParams;
@@ -511,6 +557,12 @@ export interface SessionMethodResult {
   "session.schedule_prompt": ScheduledPromptResult;
   "session.scheduled": { prompts: ScheduledPromptResult[] };
   "session.cancel_scheduled": OkResult;
+  "session.auth_providers": { providers: AuthProvider[] };
+  "session.auth_login_start": AuthLoginStatus;
+  "session.auth_login_status": AuthLoginStatus;
+  "session.auth_login_input": OkResult;
+  "session.auth_login_cancel": OkResult;
+  "session.auth_logout": { ok: true; remainingSource: string | null };
   "session.model_roles": ModelRolesInfo;
   "session.agent_roles": AgentRolesInfo;
   "session.usage": SessionUsageResult;
