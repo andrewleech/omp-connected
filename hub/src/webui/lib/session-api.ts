@@ -194,6 +194,112 @@ export function supportsSessionUsage(session: {
   return session.features?.includes(USAGE_FEATURE) ?? false;
 }
 
+export const AUTH_FEATURE = "session.auth.v1";
+
+export interface AuthAccount {
+  credentialId: number;
+  label: string;
+  detail: string;
+  type: "api_key" | "oauth";
+  active: boolean;
+}
+
+export interface AuthProvider {
+  id: string;
+  name: string;
+  available: boolean;
+  authenticated: boolean;
+  accounts: AuthAccount[];
+}
+
+export type AuthLoginState =
+  | "starting"
+  | "awaiting_auth"
+  | "awaiting_input"
+  | "done"
+  | "failed"
+  | "cancelled";
+
+export interface AuthLoginStatus {
+  loginId: string;
+  providerId: string;
+  state: AuthLoginState;
+  url?: string;
+  launchUrl?: string;
+  instructions?: string;
+  progress: string[];
+  prompt?: { message: string; placeholder?: string; secret: boolean };
+  identity?: string;
+  error?: string;
+}
+
+export function supportsAuth(session: { features?: string[] }): boolean {
+  return session.features?.includes(AUTH_FEATURE) ?? false;
+}
+
+/** A login that still needs polling until it reaches a final state. */
+export function isLoginActive(status: Pick<AuthLoginStatus, "state">): boolean {
+  return (
+    status.state === "starting" ||
+    status.state === "awaiting_auth" ||
+    status.state === "awaiting_input"
+  );
+}
+
+/** Only http(s) links are rendered as anchors; a provider cannot inject other schemes. */
+export function isSafeLoginLink(link: string): boolean {
+  try {
+    const protocol = new URL(link).protocol;
+    return protocol === "https:" || protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+export interface AuthApi {
+  list(): Promise<{ providers: AuthProvider[] }>;
+  startLogin(providerId: string): Promise<AuthLoginStatus>;
+  loginStatus(loginId: string): Promise<AuthLoginStatus>;
+  submitInput(loginId: string, value: string): Promise<{ ok: true }>;
+  cancelLogin(loginId: string): Promise<{ ok: true }>;
+  logout(
+    providerId: string,
+    credentialId: number,
+  ): Promise<{ ok: true; remainingSource: string | null }>;
+}
+
+/** REST helpers for the `/auth` routes under one session's API base. */
+export function authApi(base: string): AuthApi {
+  const noStore = { cache: "no-store" } as const;
+  const login = (loginId: string) =>
+    `${base}/auth/logins/${encodeURIComponent(loginId)}`;
+  return {
+    list: () => requestJson(`${base}/auth`, noStore),
+    startLogin: (providerId) =>
+      requestJson(`${base}/auth/logins`, {
+        ...noStore,
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ providerId }),
+      }),
+    loginStatus: (loginId) => requestJson(login(loginId), noStore),
+    submitInput: (loginId, value) =>
+      requestJson(`${login(loginId)}/input`, {
+        ...noStore,
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ value }),
+      }),
+    cancelLogin: (loginId) =>
+      requestJson(login(loginId), { ...noStore, method: "DELETE" }),
+    logout: (providerId, credentialId) =>
+      requestJson(
+        `${base}/auth/accounts/${encodeURIComponent(providerId)}/${credentialId}`,
+        { ...noStore, method: "DELETE" },
+      ),
+  };
+}
+
 export interface RequestTicket {
   readonly seq: number;
   readonly key: string;
