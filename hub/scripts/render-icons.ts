@@ -4,29 +4,45 @@
 //
 //   bun run scripts/render-icons.ts
 //
-// The SVG has no background, so the PNGs are transparent; the manifest
-// background_color shows behind them on the splash screen.
+// The SVG has no background, so icon-192/512 are transparent. The maskable
+// icon is filled with the manifest background_color (so the launcher icon
+// and the splash screen match) with the artwork scaled into the central
+// 80% safe-zone circle, so Android launcher masks never crop it.
 import { chromium } from "playwright-core";
 
 const webui = new URL("../src/webui/", import.meta.url).pathname;
 const svg = await Bun.file(`${webui}icon.svg`).text();
+// Must match background_color in manifest.webmanifest.
+const background = "#101317";
+// Artwork reaches ~91% of the half-width (outer nodes plus glow); 0.86
+// scale keeps it inside the 40%-radius safe zone with a little margin.
+const maskableScale = 0.86;
 
 const targets = [
-  { file: "icon-192.png", size: 192 },
-  { file: "icon-512.png", size: 512 },
+  { file: "icon-192.png", size: 192, maskable: false },
+  { file: "icon-512.png", size: 512, maskable: false },
+  { file: "icon-maskable-512.png", size: 512, maskable: true },
 ];
 
 const browser = await chromium.launch();
 try {
-  for (const { file, size } of targets) {
+  for (const { file, size, maskable } of targets) {
     const page = await browser.newPage({
       viewport: { width: size, height: size },
     });
+    const inner = maskable ? Math.round(size * maskableScale) : size;
+    const offset = (size - inner) / 2;
+    const pageBackground = maskable ? background : "transparent";
     const sizedSvg = svg.replace("<svg ", '<svg width="100%" height="100%" ');
     await page.setContent(
-      `<!doctype html><body style="margin:0;background:transparent">${sizedSvg}</body>`,
+      `<!doctype html><body style="margin:0;background:${pageBackground}">` +
+        `<div style="position:absolute;left:${offset}px;top:${offset}px;width:${inner}px;height:${inner}px">` +
+        `${sizedSvg}</div></body>`,
     );
-    await page.screenshot({ path: `${webui}${file}`, omitBackground: true });
+    await page.screenshot({
+      path: `${webui}${file}`,
+      omitBackground: !maskable,
+    });
     await page.close();
     console.log(`rendered ${file}`);
   }
