@@ -15,7 +15,6 @@
       <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
   </defs>
-  <rect width="180" height="180" rx="32" fill="#0e0913"/>
   <g filter="url(#glow)">
     <g stroke="url(#g)" stroke-width="3.2" fill="none">
       <circle cx="90" cy="90" r="36"/>
