@@ -50,7 +50,7 @@ export function formatInboundMessage(message: AgentMessage): ProvenancedMessage 
 	return {
 		customType: AGENT_MESSAGE_TYPE,
 		attribution: "agent",
-		content: `[from ${sender} via omp-hub, untrusted agent message]\n${content}`,
+		content: `[from ${sender} via omp-hub, ompc agent message]\n${content}`,
 		details,
 	};
 }
