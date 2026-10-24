@@ -444,7 +444,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		name: "ompc_send_message",
 		label: "OMP Connected Send Message",
 		description:
-			"Send an untrusted agent-to-agent message through omp-hub. The session registers automatically at startup; do not use this tool for a user prompt.",
+			"Send an agent-to-agent message through omp-hub. The session registers automatically at startup; do not use this tool for a user prompt.",
 		parameters: Type.Object({
 			to: Type.String(),
 			content: Type.String(),

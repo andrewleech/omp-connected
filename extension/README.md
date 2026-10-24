@@ -4,7 +4,7 @@
 
 # omp-connected
 
-`omp-connected` connects an interactive OMP session to omp-hub's native agent-messaging service. Inbound messages are stored as OMP custom agent messages, marked as untrusted, and delivered at the next agent-step boundary.
+`omp-connected` connects an interactive OMP session to omp-hub's native agent-messaging service. Inbound messages are stored as OMP custom agent messages, tagged with the sending agent's identity, and delivered at the next agent-step boundary.
 
 ## Session launcher
 
@@ -38,7 +38,7 @@ It registers with `features: ["session.v1", "session.schedule.v1", "session.exit
 
 ## Agent messaging trial
 
-Start two OMP sessions with the same `OMP_HUB_URL`. Each registers automatically — no manual registration tool call. Inspect the current identity with `ompc_identity`. In the sender session, call `ompc_list_agents`, pick the receiver's canonical id, then call `ompc_send_message`. The receiver renders the incoming content as an untrusted agent message beginning `[from <identity> via omp-hub, untrusted agent message]`.
+Start two OMP sessions with the same `OMP_HUB_URL`. Each registers automatically — no manual registration tool call. Inspect the current identity with `ompc_identity`. In the sender session, call `ompc_list_agents`, pick the receiver's canonical id, then call `ompc_send_message`. The receiver renders the incoming content as an agent message beginning `[from <identity> via omp-hub, ompc agent message]`.
 
 ## Tools
 
