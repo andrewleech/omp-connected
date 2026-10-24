@@ -258,7 +258,7 @@ function createDashboard(root: HTMLElement): void {
               ? "[data-session-drawer-close]"
               : "[data-inspector-drawer-close]",
           )
-          ?.focus();
+          ?.focus({ preventScroll: true });
       });
     }
   }
