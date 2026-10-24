@@ -47,7 +47,7 @@ await Bun.write(`${dist}/share.html`, shareHtml);
 // Copy static assets
 await $`cp ${root}src/webui/favicon.ico ${root}src/webui/favicon-32x32.png ${root}src/webui/favicon-180x180.png ${dist}/`;
 // PWA: manifest, icons (see render-icons.ts), offline page, service worker
-await $`cp ${root}src/webui/manifest.webmanifest ${root}src/webui/icon.svg ${root}src/webui/icon-192.png ${root}src/webui/icon-512.png ${root}src/webui/icon-maskable-512.png ${root}src/webui/offline.html ${dist}/`;
+await $`cp ${root}src/webui/manifest.webmanifest ${root}src/webui/icon.svg ${root}src/webui/icon-192.png ${root}src/webui/icon-512.png ${root}src/webui/offline.html ${dist}/`;
 // The worker must change whenever offline.html does, or installed clients
 // keep serving the old cached copy.
 const offlineHash = new Bun.CryptoHasher("sha256")
