@@ -675,7 +675,7 @@ describe("wsAgentPlugin — dashboard events", () => {
         jsonrpc: "2.0",
         id: "a1",
         method: "agent.activity",
-        params: { busy: true },
+        params: { busy: true, waiting: true },
       }),
     );
     const reply = await waitForMessage(socket);
@@ -685,6 +685,7 @@ describe("wsAgentPlugin — dashboard events", () => {
       event: "agent.activity",
       agentId: "user@hub-host:inst-1",
       busy: true,
+      waiting: true,
     });
     socket.send(
       JSON.stringify({

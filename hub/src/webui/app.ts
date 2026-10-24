@@ -58,6 +58,7 @@ interface HostSummary {
 interface AgentSummary {
   id: string;
   busy?: boolean;
+  waiting?: boolean;
 }
 
 function displayName(session: CollabSession): string {
@@ -695,18 +696,25 @@ function createDashboard(root: HTMLElement): void {
           title: displayName(session),
         }) as HTMLButtonElement;
         card.dataset.sessionKey = sessionKey(session);
-        const busy = state.agents.find(
-          (agent) => agent.id === `${session.host_id}:${session.instanceId}`,
-        )?.busy;
+        const agent = state.agents.find(
+          (a) => a.id === `${session.host_id}:${session.instanceId}`,
+        );
+        const busy = agent?.busy;
         if (busy !== undefined) {
+          const [stateClass, label] =
+            agent?.waiting === true
+              ? ["waiting", "Waiting for your answer"]
+              : busy
+                ? ["working", "Working"]
+                : ["idle", "Idle"];
           const dot = el("span", {
-            className: `activity-dot ${busy ? "working" : "idle"}`,
-            title: busy ? "Working" : "Idle, waiting for input",
+            className: `activity-dot ${stateClass}`,
+            title: label,
           });
           // Described rather than named, so the card's accessible name stays
           // the session label.
           dot.setAttribute("aria-hidden", "true");
-          card.setAttribute("aria-description", busy ? "Working" : "Idle");
+          card.setAttribute("aria-description", label);
           card.append(dot);
         }
         card.append(
@@ -1068,6 +1076,7 @@ function createDashboard(root: HTMLElement): void {
         event?: string;
         agentId?: string;
         busy?: boolean;
+        waiting?: boolean;
       };
       if (data.event === "agent.activity") {
         // Only the dots change, so redraw the rail and leave the workspace
@@ -1075,6 +1084,7 @@ function createDashboard(root: HTMLElement): void {
         const agent = state.agents.find((a) => a.id === data.agentId);
         if (agent && typeof data.busy === "boolean") {
           agent.busy = data.busy;
+          agent.waiting = data.waiting === true;
           const rail = root.querySelector("[data-session-rail]");
           if (rail) renderRail(rail);
         }

@@ -119,7 +119,12 @@ export type HostMethod = keyof HostMethodParams;
 export type DashboardEvent =
   | { event: "agent.registered"; agent: AgentSummary }
   | { event: "agent.disconnected"; agentId: string }
-  | { event: "agent.activity"; agentId: string; busy: boolean };
+  | {
+      event: "agent.activity";
+      agentId: string;
+      busy: boolean;
+      waiting: boolean;
+    };
 
 // ---------------------------------------------------------------------------
 // Agent-to-agent messaging.
@@ -143,6 +148,9 @@ export interface AgentSummary {
   /** Whether the session is mid-turn; omitted until the extension reports it
    *  (older extensions never do). */
   busy?: boolean;
+  /** Whether a turn is blocked on a question to the user (the ask tool);
+   *  omitted until the extension reports it. */
+  waiting?: boolean;
 }
 
 export type AgentMessageType = "message" | "reply";

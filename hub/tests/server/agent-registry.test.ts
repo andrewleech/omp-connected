@@ -645,21 +645,39 @@ describe("AgentRegistry — activity", () => {
     registry.onChange((event) => events.push(event));
     expect(registry.listAgents()[0]?.busy).toBeUndefined();
 
-    registry.setActivity("user@hub-host:inst-1", true);
-    registry.setActivity("user@hub-host:inst-1", true);
+    registry.setActivity("user@hub-host:inst-1", true, false);
+    registry.setActivity("user@hub-host:inst-1", true, false);
     expect(registry.listAgents()[0]?.busy).toBe(true);
-    registry.setActivity("user@hub-host:inst-1", false);
+    registry.setActivity("user@hub-host:inst-1", true, true);
+    expect(registry.listAgents()[0]?.waiting).toBe(true);
+    registry.setActivity("user@hub-host:inst-1", false, false);
 
     expect(events).toEqual([
-      { event: "agent.activity", agentId: "user@hub-host:inst-1", busy: true },
-      { event: "agent.activity", agentId: "user@hub-host:inst-1", busy: false },
+      {
+        event: "agent.activity",
+        agentId: "user@hub-host:inst-1",
+        busy: true,
+        waiting: false,
+      },
+      {
+        event: "agent.activity",
+        agentId: "user@hub-host:inst-1",
+        busy: true,
+        waiting: true,
+      },
+      {
+        event: "agent.activity",
+        agentId: "user@hub-host:inst-1",
+        busy: false,
+        waiting: false,
+      },
     ]);
   });
 
   test("a re-registered agent starts with unknown activity", () => {
     const registry = new AgentRegistry();
     registerAgent(registry);
-    registry.setActivity("user@hub-host:inst-1", true);
+    registry.setActivity("user@hub-host:inst-1", true, false);
 
     registerAgent(registry);
 
@@ -674,8 +692,8 @@ describe("AgentRegistry — activity", () => {
     const events: DashboardEvent[] = [];
     registry.onChange((event) => events.push(event));
 
-    registry.setActivity("user@hub-host:inst-1", true);
-    registry.setActivity("nobody:none", true);
+    registry.setActivity("user@hub-host:inst-1", true, false);
+    registry.setActivity("nobody:none", true, false);
 
     expect(events).toEqual([]);
   });

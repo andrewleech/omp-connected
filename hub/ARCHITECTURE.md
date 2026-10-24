@@ -52,10 +52,12 @@ interface AgentLeaveTeamParams { team: string; }
 // agent.list_agents, agent.list_teams take no params
 interface AgentGetMailboxParams { agent?: string; } // defaults to caller
 interface AgentQueryEventsParams { event?: string; since?: number; limit?: number; agent?: string; }
-// Sent when a turn starts or ends (and once after registering). The hub keeps the
-// last value as AgentSummary.busy (absent until reported, so older extensions have none)
-// and pushes {event: "agent.activity", agentId, busy} to /ws/dashboard on a change.
-interface AgentActivityParams { busy: boolean; }
+// Sent when a turn starts or ends, or an ask question is raised or answered (and once
+// after registering). waiting is true while an ask call is blocked on the user. The hub
+// keeps the last values as AgentSummary.busy / .waiting (absent until reported, so older
+// extensions have none) and pushes {event: "agent.activity", agentId, busy, waiting} to
+// /ws/dashboard on a change. waiting is optional on the wire and defaults to false.
+interface AgentActivityParams { busy: boolean; waiting?: boolean; }
 
 // Server -> Extension (server-initiated push; the extension's {result: ...}
 // reply is its delivery receipt, matched on the message's own id)
@@ -74,6 +76,7 @@ interface AgentSummary {
   hostId: string; instanceId: string; label: string; // registered label, else basename(cwd); not unique
   features: string[]; // advertised at registration
   busy?: boolean; // mid-turn, once the extension has reported it
+  waiting?: boolean; // blocked on an ask question to the user
   status: "online" | "offline";
 }
 

@@ -129,12 +129,15 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 	}
 	/** True between the owner's agent_start and agent_end. */
 	let busy = false;
+	/** Tool call ids of `ask` calls still waiting for the user's answer. */
+	const asking = new Set<string>();
 
-	/** Tells the hub whether a turn is running. Best effort: the hub keeps the
-	 *  last value, and registration re-sends it after a reconnect. */
+	/** Tells the hub whether a turn is running and whether it is blocked on a
+	 *  question to the user. Best effort: the hub keeps the last value, and
+	 *  registration re-sends it after a reconnect. */
 	function reportActivity(): void {
 		if (!hub.transport || !hub.identity) return;
-		hub.transport.request("agent.activity", { busy }).catch(() => {});
+		hub.transport.request("agent.activity", { busy, waiting: asking.size > 0 }).catch(() => {});
 	}
 
 	function showScheduled(prompts: readonly ScheduledPrompt[]): void {
@@ -361,8 +364,18 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 	pi.on("agent_end", () => {
 		if (hub.owner !== pi) return;
 		busy = false;
+		asking.clear();
 		reportActivity();
 		scheduler?.onIdle();
+	});
+	pi.on("tool_execution_start", (event) => {
+		if (hub.owner !== pi || event.toolName !== "ask") return;
+		asking.add(event.toolCallId);
+		reportActivity();
+	});
+	pi.on("tool_execution_end", (event) => {
+		if (hub.owner !== pi || !asking.delete(event.toolCallId)) return;
+		reportActivity();
 	});
 
 	// Keep the owner's context current across in-process session changes.
@@ -386,6 +399,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		if (hub.owner !== pi) return;
 		hub.owner = undefined;
 		busy = false;
+		asking.clear();
 		hub.shuttingDown = true;
 		hub.transport?.close();
 		hub.transport = undefined;

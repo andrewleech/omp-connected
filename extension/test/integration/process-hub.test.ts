@@ -29,7 +29,7 @@ function fakeSession() {
 	};
 	registerOmpConnected(pi as unknown as ExtensionAPI);
 	return {
-		emit: async (event: string, context?: unknown) => handlers.get(event)?.({}, {
+		emit: async (event: string, context?: unknown, payload?: unknown) => handlers.get(event)?.(payload ?? {}, {
 			sessionManager: { getSessionId: () => "test-session" },
 			...(context as Record<string, unknown> | undefined),
 		}),
@@ -145,14 +145,52 @@ test("the owning session reports turn start/end to the hub and a subagent's turn
 	await parent.emit("session_start");
 	await subagent.emit("session_start");
 	await settled();
-	expect(activity).toEqual([{ busy: false }]);
+	expect(activity).toEqual([{ busy: false, waiting: false }]);
 
 	await parent.emit("agent_start");
 	await subagent.emit("agent_start");
 	await subagent.emit("agent_end");
 	await parent.emit("agent_end");
 	await settled();
-	expect(activity).toEqual([{ busy: false }, { busy: true }, { busy: false }]);
+	expect(activity).toEqual([{ busy: false, waiting: false }, { busy: true, waiting: false }, { busy: false, waiting: false }]);
 
 	await parent.emit("session_shutdown");
+});
+
+test("an ask tool call reports waiting until it ends", async () => {
+	const activity: unknown[] = [];
+	const server = Bun.serve({
+		port: 0,
+		fetch(request, srv) {
+			return srv.upgrade(request) ? undefined : new Response("no");
+		},
+		websocket: {
+			message(socket, message) {
+				const request = JSON.parse(String(message)) as { id: string; method: string; params: unknown };
+				if (request.method === "agent.activity") activity.push(request.params);
+				const result = request.method === "agent.register" ? { ok: true, agent: { id: "host:inst-1" } } : { ok: true };
+				socket.send(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }));
+			},
+		},
+	});
+	servers.push(server);
+	process.env.OMP_HUB_URL = `http://localhost:${server.port}`;
+	process.env.OMP_HUB_HOST_TOKEN = "secret-token";
+	const settled = () => Bun.sleep(100);
+
+	const session = fakeSession();
+	await session.emit("session_start");
+	await settled();
+	await session.emit("agent_start");
+	await session.emit("tool_execution_start", undefined, { toolName: "bash", toolCallId: "t0" });
+	await session.emit("tool_execution_start", undefined, { toolName: "ask", toolCallId: "t1" });
+	await session.emit("tool_execution_end", undefined, { toolName: "ask", toolCallId: "t1" });
+	await settled();
+
+	expect(activity.slice(-3)).toEqual([
+		{ busy: true, waiting: false },
+		{ busy: true, waiting: true },
+		{ busy: true, waiting: false },
+	]);
+	await session.emit("session_shutdown");
 });
