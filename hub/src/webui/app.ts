@@ -321,14 +321,17 @@ function createDashboard(root: HTMLElement): void {
   }
 
   // Each host's list is applied as soon as it arrives, so one slow host
-  // never holds back the sessions of the others. Keep its previous list while
-  // a refresh is pending; a failed listing removes that host's sessions.
+  // never holds back the sessions of the others. A host whose listing is
+  // pending or fails keeps its previous list, and a selection on that host is
+  // never swapped for another session: only a host that answers without the
+  // session can retire it.
   async function loadSessions(): Promise<void> {
     const byHost = new Map<string, CollabSession[]>();
     for (const host of state.hosts) byHost.set(host.hostId, []);
     for (const session of state.sessions)
       byHost.get(session.host_id)?.push(session);
     const settledHosts = new Set<string>();
+    const failedHosts = new Set<string>();
     const apply = (settled: boolean): void => {
       state.sessions = state.hosts.flatMap(
         (host) => byHost.get(host.hostId) ?? [],
@@ -336,7 +339,7 @@ function createDashboard(root: HTMLElement): void {
       // The fallback pick waits for every host so a late host holding the
       // remembered session does not cause a switch away and back.
       if (settled || resolveRememberedSession(state.sessions, state.selected))
-        reconcileSelection();
+        reconcileSelection(failedHosts);
       render();
     };
     await Promise.all(
@@ -354,7 +357,7 @@ function createDashboard(root: HTMLElement): void {
           );
         } catch (error) {
           showStatus(`${host.hostId}: ${(error as Error).message}`, "warning");
-          byHost.set(host.hostId, []);
+          failedHosts.add(host.hostId);
         }
         settledHosts.add(host.hostId);
         if (settledHosts.size < state.hosts.length) apply(false);
@@ -363,11 +366,16 @@ function createDashboard(root: HTMLElement): void {
     apply(true);
   }
 
-  function reconcileSelection(): void {
+  function reconcileSelection(unavailableHosts: ReadonlySet<string>): void {
+    const remembered = resolveRememberedSession(state.sessions, state.selected);
+    if (
+      !remembered &&
+      state.selected &&
+      [...unavailableHosts].some((id) => state.selected?.startsWith(`${id}:`))
+    )
+      return;
     const resolved =
-      resolveRememberedSession(state.sessions, state.selected) ??
-      (state.sessions[0] as CollabSession | undefined) ??
-      null;
+      remembered ?? (state.sessions[0] as CollabSession | undefined) ?? null;
     if (!resolved) {
       state.selectedSession = null;
       return;
