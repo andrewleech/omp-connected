@@ -113,6 +113,21 @@ export interface HostMethodResult extends CollabMethodResult {
 
 export type HostMethod = keyof HostMethodParams;
 
+/** A dashboard session group. `sessions` holds stable member keys:
+ *  `${hostId}:label:${label}` or `${hostId}:instance:${instanceId}`. */
+export interface SessionGroup {
+  id: string;
+  name: string;
+  sessions: string[];
+}
+
+/** All session groups; `revision` increments with every change, so a
+ *  client can ignore a list older than one it already has. */
+export interface SessionGroupList {
+  revision: number;
+  groups: SessionGroup[];
+}
+
 /** Server -> dashboard push. Narrow and server-known-true only — no generic
  *  event bus. Collab *session* state is never pushed (the server only ever
  *  learns it by RPC-polling a host); the webui polls for that instead. */
@@ -124,7 +139,8 @@ export type DashboardEvent =
       agentId: string;
       busy: boolean;
       waiting: boolean;
-    };
+    }
+  | ({ event: "groups.changed" } & SessionGroupList);
 
 // ---------------------------------------------------------------------------
 // Agent-to-agent messaging.

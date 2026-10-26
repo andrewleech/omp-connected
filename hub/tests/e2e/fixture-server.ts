@@ -1,3 +1,11 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  SessionGroupStore,
+  sessionGroupRoutes,
+} from "../../src/server/session-groups";
+
 const root = new URL("../..", import.meta.url).pathname;
 const webui = `${root}dist/webui`;
 const indexPath = `${webui}/index.html`;
@@ -235,6 +243,7 @@ const history = [
 let writerExited = false;
 function resetWriter(): void {
   writerExited = false;
+  sessions.writer.generation = 1;
   launched.length = 0;
   writerInfo.model = models[0];
   roleAssignments.set("default", "anthropic/claude-a:high");
@@ -504,6 +513,21 @@ function json(value: unknown): Response {
 let writerBusy = true;
 const dashboardSockets = new Set<{ send(data: string): void; close(): void }>();
 
+// Session groups use the hub's own store and routes. Loading the dashboard
+// page starts them over with an empty state dir.
+let groupsDir = "";
+function freshGroups() {
+  if (groupsDir) rmSync(groupsDir, { recursive: true, force: true });
+  groupsDir = mkdtempSync(join(tmpdir(), "omp-hub-e2e-groups-"));
+  const store = new SessionGroupStore(groupsDir);
+  store.onChange((list) => {
+    const event = JSON.stringify({ event: "groups.changed", ...list });
+    for (const socket of dashboardSockets) socket.send(event);
+  });
+  return sessionGroupRoutes(store);
+}
+let groupRoutes = freshGroups();
+
 Bun.serve({
   hostname: "127.0.0.1",
   port: 4173,
@@ -519,6 +543,18 @@ Bun.serve({
   async fetch(request, server) {
     const url = new URL(request.url);
     if (url.pathname === "/ws/dashboard" && server.upgrade(request)) return;
+    if (
+      url.pathname === "/api/groups" ||
+      url.pathname.startsWith("/api/groups/")
+    )
+      return groupRoutes.handle(request);
+    // Hosts the writer's room again under a new generation, then drops the
+    // dashboard sockets so the dashboard reconnects and reloads the listing.
+    if (url.pathname === "/__relaunch" && request.method === "POST") {
+      sessions.writer.generation++;
+      for (const socket of dashboardSockets) socket.close();
+      return json({ ok: true });
+    }
     if (url.pathname === "/api/agents")
       return json({
         agents: [
@@ -681,6 +717,7 @@ Bun.serve({
       return new Response(guest, { headers: { "content-type": "text/html" } });
     if (url.pathname === "/" || url.pathname === "/index.html") {
       resetWriter();
+      groupRoutes = freshGroups();
       writerBusy = true;
       return new Response(Bun.file(indexPath), {
         headers: { "content-type": "text/html" },

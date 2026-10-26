@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { loadConfig } from "@/server/config";
 
 describe("hub public origin", () => {
@@ -21,5 +23,24 @@ describe("hub public origin", () => {
     });
 
     expect(config.publicOrigin).toBeNull();
+  });
+});
+
+describe("hub state dir", () => {
+  const token = { OMP_HUB_HOST_TOKEN: "test-token" };
+  test("uses OMP_HUB_STATE_DIR, else the XDG state home", () => {
+    expect(
+      loadConfig({
+        ...token,
+        OMP_HUB_STATE_DIR: "/srv/hub",
+        XDG_STATE_HOME: "/x",
+      }).stateDir,
+    ).toBe("/srv/hub");
+    expect(loadConfig({ ...token, XDG_STATE_HOME: "/x" }).stateDir).toBe(
+      "/x/omp-hub",
+    );
+    expect(loadConfig(token).stateDir).toBe(
+      join(homedir(), ".local/state/omp-hub"),
+    );
   });
 });

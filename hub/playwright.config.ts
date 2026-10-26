@@ -22,7 +22,6 @@ export default defineConfig({
               name: "omp-hub-dashboard/v1",
               value: JSON.stringify({
                 version: 1,
-                groups: [],
                 selected: "writer:writer-room:1",
               }),
             },

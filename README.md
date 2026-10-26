@@ -115,6 +115,9 @@ OMP_HUB_HOST_TOKEN=<paste-your-secret-here>
 # TLS (required for non-localhost access)
 # OMP_HUB_TLS_CERT=/path/to/cert.pem
 # OMP_HUB_TLS_KEY=/path/to/key.pem
+
+# Dashboard session groups are saved here (default: ~/.local/state/omp-hub)
+# OMP_HUB_STATE_DIR=/path/to/state
 EOF
 ```
 

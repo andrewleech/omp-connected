@@ -1,7 +1,7 @@
 // The OMP fleet dashboard shell.
 //
-// The dashboard socket only ever receives `agent.registered` /
-// `agent.disconnected` (see dashboard-events.ts) — never a generic
+// The dashboard socket only ever receives agent registration, activity and
+// session group changes (see dashboard-events.ts) — never a generic
 // heartbeat — so there is no broadcast-storm to defend against here.
 // Collab session state (what's running on a host) is polled on a fixed
 // interval instead of being pushed, since this server only ever learns
@@ -36,9 +36,14 @@ import {
   type CollabSession,
   INSPECTOR_PANES,
   type InspectorPane,
+  type WorkspaceGroup,
   canRequestAccess,
   defaultRequestedAccess,
+  dropLegacyGroups,
+  groupMemberKey,
   groupSessions,
+  legacyGroupsForImport,
+  readLegacyGroups,
   readWorkspace,
   resolveRememberedSession,
   sessionKey,
@@ -52,6 +57,12 @@ const AGENT_EVENT_REFRESH_MS = 1_000;
 
 interface HostSummary {
   hostId: string;
+}
+
+/** GET /api/groups, POST /api/groups* answers and `groups.changed` events. */
+interface GroupList {
+  revision: number;
+  groups: WorkspaceGroup[];
 }
 
 // Only identity and activity are consumed by the session rail.
@@ -178,12 +189,15 @@ const publicOrigin = loadPublicOrigin();
 function createDashboard(root: HTMLElement): void {
   const state = {
     ...readWorkspace(localStorage),
+    groups: [] as WorkspaceGroup[],
     hosts: [] as HostSummary[],
     sessions: [] as CollabSession[],
     selectedSession: null as CollabSession | null,
     selectedAccess: null as "view" | "control" | null,
     agents: [] as AgentSummary[],
   };
+  // Revision of state.groups; -1 accepts the next list whatever its revision.
+  let groupsRevision = -1;
   let lastWorkspaceSignature: string | null | undefined;
   let tailViewer: CollabTailViewer | null = null;
   let collabRequest = 0;
@@ -295,7 +309,6 @@ function createDashboard(root: HTMLElement): void {
   function persist(): void {
     writeWorkspace(localStorage, {
       version: 1,
-      groups: state.groups,
       selected: state.selected,
       inspector: state.inspector,
     });
@@ -415,14 +428,54 @@ function createDashboard(root: HTMLElement): void {
     void openCollab(defaultRequestedAccess(session), request);
   }
 
+  function applyGroups(list: GroupList): void {
+    if (list.revision <= groupsRevision) return;
+    groupsRevision = list.revision;
+    state.groups = list.groups;
+    const rail = root.querySelector("[data-session-rail]");
+    if (rail) renderRail(rail);
+  }
+
+  async function loadGroups(): Promise<void> {
+    applyGroups(await json<GroupList>("/api/groups"));
+  }
+
+  async function changeGroups(path: string, body: unknown): Promise<void> {
+    try {
+      applyGroups(
+        await json<GroupList>(`/api/groups${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+      );
+    } catch (error) {
+      showStatus((error as Error).message, "warning");
+    }
+  }
+
   function setGroup(session: CollabSession, groupId: string | null): void {
-    const key = sessionKey(session);
-    for (const group of state.groups)
-      group.sessions = group.sessions.filter((entry) => entry !== key);
-    if (groupId)
-      state.groups.find((group) => group.id === groupId)?.sessions.push(key);
-    persist();
-    render();
+    void changeGroups("/assign", { session: groupMemberKey(session), groupId });
+  }
+
+  // Uploads groups this browser kept before the hub stored them, once: only
+  // into a hub with no groups, and the local copy goes once the hub has any.
+  async function importLegacyGroups(): Promise<void> {
+    const legacy = readLegacyGroups(localStorage);
+    if (legacy.length === 0) return;
+    if (state.groups.length === 0) {
+      const response = await fetch("/api/groups/import", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          groups: legacyGroupsForImport(legacy, state.sessions),
+        }),
+      });
+      // Kept for the next load unless the hub took them or has its own.
+      if (!response.ok && response.status !== 409) return;
+      if (response.ok) applyGroups((await response.json()) as GroupList);
+    }
+    dropLegacyGroups(localStorage);
   }
 
   async function openCollab(
@@ -576,7 +629,7 @@ function createDashboard(root: HTMLElement): void {
       },
     ];
     const current = state.groups.find((group) =>
-      group.sessions.includes(sessionKey(session)),
+      group.sessions.includes(groupMemberKey(session)),
     );
     const agent = state.agents.find(
       (candidate) =>
@@ -606,10 +659,8 @@ function createDashboard(root: HTMLElement): void {
       label: "New group…",
       onSelect: () => {
         const name = prompt("Group name?");
-        if (!name) return;
-        const group = { id: crypto.randomUUID(), name, sessions: [] };
-        state.groups.push(group);
-        setGroup(session, group.id);
+        if (!name?.trim()) return;
+        void changeGroups("", { name, session: groupMemberKey(session) });
       },
     });
     items.push({
@@ -646,10 +697,8 @@ function createDashboard(root: HTMLElement): void {
     });
     (addGroup as HTMLButtonElement).onclick = () => {
       const name = prompt("Group name?");
-      if (!name) return;
-      state.groups.push({ id: crypto.randomUUID(), name, sessions: [] });
-      persist();
-      render();
+      if (!name?.trim()) return;
+      void changeGroups("", { name });
     };
     container.append(addGroup);
     const groups = groupSessions(state.sessions, state.groups);
@@ -1055,7 +1104,13 @@ function createDashboard(root: HTMLElement): void {
     );
     socket.onopen = () => {
       reconnectDelay = 1000;
-      if (hadSocket) refreshForAgentEvent();
+      if (hadSocket) {
+        // Group changes in the gap were missed too, and a restarted hub may
+        // number its revisions from a lower value.
+        groupsRevision = -1;
+        void loadGroups().catch(() => {});
+        refreshForAgentEvent();
+      }
       hadSocket = true;
     };
     socket.onmessage = handleSocketMessage;
@@ -1071,7 +1126,14 @@ function createDashboard(root: HTMLElement): void {
         agentId?: string;
         busy?: boolean;
         waiting?: boolean;
+        revision?: number;
+        groups?: WorkspaceGroup[];
       };
+      if (data.event === "groups.changed") {
+        if (typeof data.revision === "number" && Array.isArray(data.groups))
+          applyGroups({ revision: data.revision, groups: data.groups });
+        return;
+      }
       if (data.event === "agent.activity") {
         // Only the dots change, so redraw the rail and leave the workspace
         // (and its live Collab iframe) alone.
@@ -1098,7 +1160,8 @@ function createDashboard(root: HTMLElement): void {
   connectSocket();
 
   setInterval(() => void pollSessions().catch(() => {}), SESSION_POLL_MS);
-  void refresh()
+  void Promise.all([refresh(), loadGroups()])
+    .then(() => importLegacyGroups())
     .then(() => loadAgents())
     .then(() => render())
     .catch((error) => showStatus(error.message, "warning"));

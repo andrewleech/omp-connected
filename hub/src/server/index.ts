@@ -9,6 +9,7 @@ import { collabRpcRoutes } from "./collab-rpc-routes";
 import { loadConfig } from "./config";
 import { dashboardEventsPlugin } from "./dashboard-events";
 import { hostSessionRoutes } from "./host-session-routes";
+import { SessionGroupStore, sessionGroupRoutes } from "./session-groups";
 import { MAX_UPLOAD_BYTES, sessionRpcRoutes } from "./session-rpc-routes";
 import { wsAgentPlugin } from "./ws-agent";
 
@@ -25,6 +26,9 @@ export interface CreateHubOptions {
   /** Collab relay listener. Defaults to `OMP_HUB_RELAY_PORT`; `false`
    *  disables it. Shares the hub's bind host and TLS. */
   relay?: { port: number; allowedOrigins?: readonly string[] } | false;
+  /** Directory for persistent hub state. Defaults to `OMP_HUB_STATE_DIR`,
+   *  else `$XDG_STATE_HOME/omp-hub` (`~/.local/state/omp-hub`). */
+  stateDir?: string;
 }
 
 export interface Hub {
@@ -40,6 +44,7 @@ export function createHub(options: CreateHubOptions = {}): Hub {
   const webuiRoot = options.webuiRoot ?? `${import.meta.dir}/../../dist/webui`;
 
   const agentRegistry = new AgentRegistry();
+  const groups = new SessionGroupStore(options.stateDir ?? env.stateDir);
 
   const app = new Elysia()
     .get("/api/config", () => ({ publicOrigin: env.publicOrigin }))
@@ -69,8 +74,9 @@ export function createHub(options: CreateHubOptions = {}): Hub {
     .use(hostSessionRoutes(agentRegistry))
     .use(sessionRpcRoutes(agentRegistry))
     .use(agentRpcRoutes(agentRegistry, osHostname()))
+    .use(sessionGroupRoutes(groups))
     .use(wsAgentPlugin(agentRegistry, hostToken))
-    .use(dashboardEventsPlugin(agentRegistry))
+    .use(dashboardEventsPlugin(agentRegistry, groups))
     .onBeforeHandle(({ request, set }) => {
       // index.html must always revalidate so the browser picks up
       // new hashed JS filenames on deploy.

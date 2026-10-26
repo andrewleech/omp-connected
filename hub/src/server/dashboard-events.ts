@@ -2,7 +2,8 @@
 // true the instant they happen: an agent registering/disconnecting (which
 // is also the only signal a host connecting/disconnecting has now that
 // host-level Collab discovery is served through the same /ws/agent
-// connection), and an agent reporting that it started or finished a turn.
+// connection), an agent reporting that it started or finished a turn, and
+// the full session group list after a group change.
 // Deliberately NOT a generic event bus: there is no
 // ping/heartbeat tick, and Collab *session* state is never pushed here
 // (the server only ever learns it by RPC-polling a host) — the webui
@@ -12,6 +13,7 @@
 
 import { Elysia } from "elysia";
 import type { AgentRegistry } from "./agent-registry";
+import type { SessionGroupStore } from "./session-groups";
 import type { DashboardEvent } from "./types";
 
 interface DashboardWs {
@@ -19,13 +21,17 @@ interface DashboardWs {
   raw: object;
 }
 
-export function dashboardEventsPlugin(agentRegistry: AgentRegistry) {
+export function dashboardEventsPlugin(
+  agentRegistry: AgentRegistry,
+  groups: SessionGroupStore,
+) {
   const clients = new Set<DashboardWs>();
   const broadcast = (event: DashboardEvent) => {
     const payload = JSON.stringify(event);
     for (const client of clients) client.send(payload);
   };
   agentRegistry.onChange(broadcast);
+  groups.onChange((list) => broadcast({ event: "groups.changed", ...list }));
 
   return new Elysia().ws("/ws/dashboard", {
     open(ws: DashboardWs) {

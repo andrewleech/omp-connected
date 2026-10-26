@@ -101,21 +101,16 @@ test("deselects history to start a new conversation and keeps launch collisions 
 
 test("keeps the host launch button when its sessions belong to custom groups", async ({
   page,
+  request,
 }) => {
-  await page.addInitScript(() =>
-    localStorage.setItem(
-      "omp-hub-dashboard/v1",
-      JSON.stringify({
-        version: 1,
-        groups: [
-          { id: "custom", name: "Project", sessions: ["writer:writer-room:1"] },
-        ],
-        selected: null,
-        inspector: "session",
-      }),
-    ),
-  );
   await page.goto("/");
+  // Agent activity loads after the groups, once the dashboard socket is up.
+  await expect(
+    page.locator('.session-card[title="Writable room"]'),
+  ).toHaveAttribute("aria-description", "Working");
+  await request.post("/api/groups", {
+    data: { name: "Project", session: "writer:instance:writer-room" },
+  });
   await expect(
     page.getByRole("heading", { name: "Project", exact: true }),
   ).toBeVisible();

@@ -1,4 +1,6 @@
 // Pure, unit-testable helpers for the fleet dashboard's client-side state.
+// Session groups live on the hub (/api/groups); this browser's storage keeps
+// only the selected session and the inspector pane.
 
 export const WORKSPACE_STORAGE_KEY = "omp-hub-dashboard/v1";
 
@@ -37,6 +39,7 @@ export interface CollabSession {
   features?: string[];
 }
 
+/** A session group as the hub stores it; `sessions` holds `groupMemberKey`s. */
 export interface WorkspaceGroup {
   id: string;
   name: string;
@@ -45,7 +48,6 @@ export interface WorkspaceGroup {
 
 export interface Workspace {
   version: number;
-  groups: WorkspaceGroup[];
   selected: string | null;
   inspector: InspectorPane;
 }
@@ -67,6 +69,17 @@ export function sessionKey(session: CollabSession): string {
 }
 
 /**
+ * A session's group member key. Unlike `sessionKey` it has no generation, so
+ * a session keeps its group when its room is hosted again; a named ompc
+ * session keys on its label, which also survives an omp restart.
+ */
+export function groupMemberKey(session: CollabSession): string {
+  return session.label
+    ? `${session.host_id}:label:${session.label}`
+    : `${session.host_id}:instance:${session.instanceId}`;
+}
+
+/**
  * Compact rail label: the hub-registered agent label (bin/ompc's session
  * name, `<dir>` or `<dir>.<suffix>`), else the project directory's basename,
  * falling back to the session's own verbose name only when no cwd was
@@ -79,75 +92,121 @@ export function sessionLabel(session: CollabSession): string {
   return base || session.sessionName || session.sessionId || session.instanceId;
 }
 
-export function readWorkspace(storage: StorageLike): Workspace {
+function parseStored(storage: StorageLike): unknown {
   try {
     const raw = storage.getItem(WORKSPACE_STORAGE_KEY);
-    const value = raw
-      ? (JSON.parse(raw) as Partial<Workspace> & { groups?: unknown })
-      : null;
-    if (
-      !value ||
-      value.version !== WORKSPACE_VERSION ||
-      !Array.isArray(value.groups)
-    ) {
-      return {
-        version: WORKSPACE_VERSION,
-        groups: [],
-        selected: null,
-        inspector: DEFAULT_INSPECTOR_PANE,
-      };
-    }
-    const groups = value.groups
-      .filter((group): group is WorkspaceGroup => {
-        return (
-          !!group &&
-          typeof group === "object" &&
-          typeof (group as WorkspaceGroup).id === "string" &&
-          typeof (group as WorkspaceGroup).name === "string"
-        );
-      })
-      .map((group) => ({
-        id: group.id,
-        name: group.name,
-        sessions: Array.isArray(group.sessions)
-          ? group.sessions.filter(
-              (key): key is string => typeof key === "string",
-            )
-          : [],
-      }));
-    return {
-      version: WORKSPACE_VERSION,
-      groups,
-      selected: typeof value.selected === "string" ? value.selected : null,
-      inspector: inspectorPaneFromStorage(value.inspector),
-    };
+    return raw ? JSON.parse(raw) : null;
   } catch {
-    return {
-      version: WORKSPACE_VERSION,
-      groups: [],
-      selected: null,
-      inspector: DEFAULT_INSPECTOR_PANE,
-    };
+    return null;
   }
 }
 
+export function readWorkspace(storage: StorageLike): Workspace {
+  const value = parseStored(storage);
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("version" in value) ||
+    value.version !== WORKSPACE_VERSION
+  )
+    return {
+      version: WORKSPACE_VERSION,
+      selected: null,
+      inspector: DEFAULT_INSPECTOR_PANE,
+    };
+  return {
+    version: WORKSPACE_VERSION,
+    selected:
+      "selected" in value && typeof value.selected === "string"
+        ? value.selected
+        : null,
+    inspector: inspectorPaneFromStorage(
+      "inspector" in value ? value.inspector : undefined,
+    ),
+  };
+}
+
+/** Saves the workspace, keeping any legacy groups until `dropLegacyGroups`. */
 export function writeWorkspace(
   storage: StorageLike,
   workspace: Workspace,
+): void {
+  storeWorkspace(storage, workspace, readLegacyGroups(storage));
+}
+
+function storeWorkspace(
+  storage: StorageLike,
+  workspace: Workspace,
+  legacyGroups: WorkspaceGroup[],
 ): void {
   storage.setItem(
     WORKSPACE_STORAGE_KEY,
     JSON.stringify({
       version: WORKSPACE_VERSION,
-      groups: workspace.groups.map(({ id, name, sessions }) => ({
-        id,
-        name,
-        sessions,
-      })),
+      ...(legacyGroups.length > 0 ? { groups: legacyGroups } : {}),
       selected: workspace.selected,
       inspector: workspace.inspector,
     }),
   );
+}
+
+/** Groups this browser stored itself before the hub kept them. */
+export function readLegacyGroups(storage: StorageLike): WorkspaceGroup[] {
+  const value = parseStored(storage);
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("groups" in value) ||
+    !Array.isArray(value.groups)
+  )
+    return [];
+  return value.groups.flatMap((group: unknown) =>
+    typeof group === "object" &&
+    group !== null &&
+    "id" in group &&
+    typeof group.id === "string" &&
+    "name" in group &&
+    typeof group.name === "string"
+      ? [
+          {
+            id: group.id,
+            name: group.name,
+            sessions:
+              "sessions" in group && Array.isArray(group.sessions)
+                ? group.sessions.filter(
+                    (key: unknown): key is string => typeof key === "string",
+                  )
+                : [],
+          },
+        ]
+      : [],
+  );
+}
+
+export function dropLegacyGroups(storage: StorageLike): void {
+  storeWorkspace(storage, readWorkspace(storage), []);
+}
+
+/**
+ * Legacy groups as a `POST /api/groups/import` body. Their members are
+ * `sessionKey`s; each becomes the `groupMemberKey` of the listed session it
+ * names (any generation), and a member no listed session matches is dropped.
+ */
+export function legacyGroupsForImport(
+  groups: WorkspaceGroup[],
+  sessions: CollabSession[],
+): { name: string; sessions: string[] }[] {
+  return groups.map((group) => ({
+    name: group.name.trim().slice(0, 64) || "Group",
+    sessions: [
+      ...new Set(
+        group.sessions.flatMap((key) => {
+          const session = resolveRememberedSession(sessions, key);
+          return session ? [groupMemberKey(session)] : [];
+        }),
+      ),
+    ],
+  }));
 }
 
 export function groupSessions(
@@ -163,12 +222,12 @@ export function groupSessions(
     name: group.name,
     custom: true,
     sessions: sessions
-      .filter((session) => group.sessions.includes(sessionKey(session)))
+      .filter((session) => group.sessions.includes(groupMemberKey(session)))
       .sort(byRecency),
   }));
   const hosts = new Map<string, CollabSession[]>();
   for (const session of sessions.filter(
-    (session) => !grouped.has(sessionKey(session)),
+    (session) => !grouped.has(groupMemberKey(session)),
   )) {
     const host = hosts.get(session.host_id) ?? [];
     host.push(session);

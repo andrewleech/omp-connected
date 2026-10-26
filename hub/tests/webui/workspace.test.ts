@@ -5,7 +5,11 @@ import {
   WORKSPACE_STORAGE_KEY,
   canRequestAccess,
   defaultRequestedAccess,
+  dropLegacyGroups,
+  groupMemberKey,
   groupSessions,
+  legacyGroupsForImport,
+  readLegacyGroups,
   readWorkspace,
   resolveRememberedSession,
   sessionKey,
@@ -42,13 +46,41 @@ const beta = {
 describe("fleet dashboard workspace", () => {
   test("keeps project assignment while falling back to host and recency", () => {
     const groups = [
-      { id: "g1", name: "Project", sessions: [sessionKey(beta)] },
+      { id: "g1", name: "Project", sessions: [groupMemberKey(beta)] },
     ];
     const grouped = groupSessions([alpha, beta], groups);
     expect(grouped[0]).toMatchObject({ id: "g1", sessions: [beta] });
     expect(grouped[1]).toMatchObject({
       id: "host:andrew@alpha",
       sessions: [alpha],
+    });
+  });
+
+  test("keys group members by label, else by instance, never by generation", () => {
+    expect(groupMemberKey({ ...alpha, label: "mesh.install" })).toBe(
+      "andrew@alpha:label:mesh.install",
+    );
+    expect(groupMemberKey(alpha)).toBe("andrew@alpha:instance:alpha-room");
+    expect(groupMemberKey({ ...alpha, label: "" })).toBe(
+      "andrew@alpha:instance:alpha-room",
+    );
+    expect(groupMemberKey({ ...alpha, generation: 9 })).toBe(
+      groupMemberKey(alpha),
+    );
+    // A restarted omp has a new instance but keeps its ompc label.
+    expect(
+      groupMemberKey({ ...alpha, instanceId: "new-room", label: "mesh" }),
+    ).toBe(groupMemberKey({ ...alpha, label: "mesh" }));
+  });
+
+  test("a grouped session stays in its group after its room is hosted again", () => {
+    const groups = [
+      { id: "g1", name: "Project", sessions: [groupMemberKey(alpha)] },
+    ];
+    const rehosted = { ...alpha, generation: alpha.generation + 1 };
+    expect(groupSessions([rehosted], groups)[0]).toMatchObject({
+      id: "g1",
+      sessions: [rehosted],
     });
   });
 
@@ -102,16 +134,70 @@ describe("fleet dashboard workspace", () => {
     const storage = new MemoryStorage();
     writeWorkspace(storage, {
       version: 1,
-      groups: [{ id: "g1", name: "Project", sessions: [sessionKey(alpha)] }],
       selected: sessionKey(alpha),
       inspector: "files",
     });
-    const restored = readWorkspace(storage);
-    expect(restored.groups).toEqual([
+    expect(readWorkspace(storage)).toEqual({
+      version: 1,
+      selected: sessionKey(alpha),
+      inspector: "files",
+    });
+    expect(JSON.parse(storage.value ?? "")).not.toHaveProperty("groups");
+  });
+
+  test("keeps legacy groups in storage until they are dropped", () => {
+    const storage = new MemoryStorage();
+    const legacy = [
       { id: "g1", name: "Project", sessions: [sessionKey(alpha)] },
+    ];
+    storage.value = JSON.stringify({
+      version: 1,
+      groups: [...legacy, { id: 3 }],
+      selected: null,
+      inspector: "session",
+    });
+    expect(readLegacyGroups(storage)).toEqual(legacy);
+    writeWorkspace(storage, {
+      version: 1,
+      selected: sessionKey(beta),
+      inspector: "files",
+    });
+    expect(readLegacyGroups(storage)).toEqual(legacy);
+    dropLegacyGroups(storage);
+    expect(readLegacyGroups(storage)).toEqual([]);
+    expect(readWorkspace(storage)).toEqual({
+      version: 1,
+      selected: sessionKey(beta),
+      inspector: "files",
+    });
+  });
+
+  test("translates legacy room keys to member keys and drops unknown ones", () => {
+    const named = { ...alpha, label: "mesh", generation: 5 };
+    expect(
+      legacyGroupsForImport(
+        [
+          {
+            id: "g1",
+            name: "  Project  ",
+            sessions: [
+              sessionKey(alpha),
+              sessionKey({ ...alpha, generation: 4 }),
+              sessionKey(beta),
+              "andrew@gone:room:1",
+            ],
+          },
+          { id: "g2", name: " ", sessions: [] },
+        ],
+        [named, beta],
+      ),
+    ).toEqual([
+      {
+        name: "Project",
+        sessions: ["andrew@alpha:label:mesh", "andrew@beta:instance:beta-room"],
+      },
+      { name: "Group", sessions: [] },
     ]);
-    expect(restored.selected).toBe(sessionKey(alpha));
-    expect(restored.inspector).toBe("files");
   });
 
   test("INSPECTOR_PANES lists agents before model roles", () => {
@@ -125,7 +211,6 @@ describe("fleet dashboard workspace", () => {
     const storage = new MemoryStorage();
     writeWorkspace(storage, {
       version: 1,
-      groups: [],
       selected: null,
       inspector: "models",
     });
@@ -136,7 +221,6 @@ describe("fleet dashboard workspace", () => {
     const storage = new MemoryStorage();
     writeWorkspace(storage, {
       version: 1,
-      groups: [],
       selected: null,
       inspector: "agents",
     });
@@ -172,7 +256,6 @@ describe("fleet dashboard workspace", () => {
     storage.value = "not json";
     expect(readWorkspace(storage)).toEqual({
       version: 1,
-      groups: [],
       selected: null,
       inspector: "session",
     });

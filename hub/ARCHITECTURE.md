@@ -217,6 +217,7 @@ REST routes built on top of the same live registry:
   - `PUT files/upload?path=&overwrite=0|1` streams the raw body into `files.write` chunks of 256 KiB, awaiting each before reading on; over 256 MiB answers 413 and aborts the upload.
 - Control actions (abort, exit, fork, compact, model, thinking, role writes, mkdir, queueing or cancelling a scheduled prompt, and login start, input, cancel and logout) are limited to 20 requests per 10 s per session, and each session has at most 4 transfers in flight; both answer 429.
 - `GET /api/agents` → `{ agents: AgentSummary[] }`.
+- `/api/groups`: dashboard session groups, see [Session groups](#session-groups).
 - `POST /api/agents/:id/send` `{ content, replyTo?, idempotencyKey }` →
   sends as `operator@<hub-host>` (dashboard-only; the dashboard is never
   a registered agent connection, so it can only send as this reserved
@@ -229,6 +230,30 @@ REST routes built on top of the same live registry:
   intercepts top-level navigations, falling back to a cached
   `/offline.html` when the hub is unreachable.
 - `/collab/` — the vendored Collab guest client.
+
+## Session groups
+
+The custom groups ("projects") in the dashboard's session rail live on the hub, so every dashboard tab and device shows the same groups. The selected session and inspector pane stay in each browser's `localStorage`.
+
+```ts
+interface SessionGroup { id: string; name: string; sessions: string[] } // sessions: member keys
+interface SessionGroupList { revision: number; groups: SessionGroup[] }
+```
+
+A member key is `${hostId}:label:${label}` when the session has a registered label (its ompc session name), else `${hostId}:instance:${instanceId}`. It has no Collab generation, so a session keeps its group when its room is hosted again, and a labelled session keeps it across omp restarts. The dashboard builds the keys (`groupMemberKey` in `webui/lib/workspace.ts`); the hub checks only their shape. A session is in at most one group.
+
+REST routes, one per dashboard action, so edits from several dashboards each apply to the current list instead of replacing it. Each answers the new `SessionGroupList`:
+
+- `GET /api/groups`.
+- `POST /api/groups` `{ name, session? }` adds a group at the end, moving `session` into it when given; the answer also has the new `group`.
+- `POST /api/groups/assign` `{ session, groupId }` moves a session into a group, or out of every group for `groupId: null`. An unknown group answers 404.
+- `POST /api/groups/import` `{ groups: { name, sessions }[] }` replaces an empty list; 409 once the hub has any group. The dashboard uses it once to upload groups it kept in `localStorage` before the hub stored them, translating their `host:instance:generation` members through the current session listing and dropping members it cannot match.
+
+Names are trimmed and must be 1-64 characters without control characters; there are at most 100 groups and 1000 grouped sessions. Invalid input answers 400. Writes share one limit of 30 per 10 s (429), as the dashboard has no per-user identity. A failed save answers 500 and leaves the groups unchanged.
+
+After every change the hub pushes `{ event: "groups.changed", revision, groups }` to `/ws/dashboard`. `revision` increments with every change, so a dashboard ignores a list older than the one it shows. It loads the list at start and again after its event socket reconnects, then accepts any revision, as a restarted hub with a new state file counts from 0.
+
+State file: `session-groups.json` in `OMP_HUB_STATE_DIR` (default `$XDG_STATE_HOME/omp-hub`, else `~/.local/state/omp-hub`), `{ version: 1, revision, groups }`. Each change is written to a temp file, synced and renamed over it. A missing file means no groups. An invalid file is renamed to `session-groups.json.corrupt-<ms>` and logged, and the hub starts with no groups.
 
 ## Collab rewind and fork
 
@@ -300,4 +325,4 @@ deployment documentation use placeholder hostnames such as
   agent's existing session through `/ws/agent`.
 - Its own registry (agents, Collab sessions, brokered links) is fully
   independent and does not merge with, read, or depend on any other
-  service's state.
+  service's state. Its only persistent state is the session group file.
