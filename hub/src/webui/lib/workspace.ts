@@ -203,11 +203,24 @@ export function defaultRequestedAccess(
   return session.access === "control" ? "control" : "view";
 }
 
+/**
+ * The listed session a stored selection key refers to: the same room, or the
+ * room the same OMP process hosts now. A process hosts a new generation when
+ * its room ends (e.g. a relay send backlog), and that is still the session
+ * the user picked.
+ */
 export function resolveRememberedSession(
   sessions: CollabSession[],
   selected: string | null,
 ): CollabSession | null {
-  return sessions.find((session) => sessionKey(session) === selected) ?? null;
+  if (!selected) return null;
+  return (
+    sessions.find((session) => sessionKey(session) === selected) ??
+    sessions.find((session) =>
+      selected.startsWith(`${session.host_id}:${session.instanceId}:`),
+    ) ??
+    null
+  );
 }
 
 /**

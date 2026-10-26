@@ -260,6 +260,66 @@ test("sessions from responsive hosts show while another host's listing is still 
   ).toBeVisible();
 });
 
+test("a selected session stays selected while its room relaunches", async ({
+  page,
+}) => {
+  await page.clock.install();
+  let phase: "listed" | "relaunching" | "rehosted" = "listed";
+  await page.route("**/api/hosts/viewer/collab", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as {
+      sessions: { generation: number }[];
+    };
+    if (phase === "relaunching") body.sessions = [];
+    if (phase === "rehosted")
+      body.sessions = body.sessions.map((session) => ({
+        ...session,
+        generation: session.generation + 1,
+      }));
+    await route.fulfill({ response, json: body });
+  });
+  const poll = async () => {
+    const listed = page.waitForResponse(
+      (response) =>
+        response.url().includes("/api/hosts/viewer/collab") &&
+        response.request().method() === "GET",
+    );
+    await page.clock.runFor(15_000);
+    await listed;
+  };
+  const selected = () =>
+    page.evaluate(() => {
+      // The dashboard's own persisted workspace, written by writeWorkspace().
+      const workspace = JSON.parse(
+        localStorage.getItem("omp-hub-dashboard/v1") ?? "{}",
+      ) as { selected?: string };
+      return workspace.selected;
+    });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "viewer view", exact: true }).click();
+  await expect(page.locator(".tail-viewer")).toBeVisible();
+  const before = await selected();
+  const topbar = page.locator("[data-topbar-session]");
+  const label = await topbar.textContent();
+
+  phase = "relaunching";
+  await poll();
+  await expect(
+    page.getByRole("button", { name: "viewer view", exact: true }),
+  ).toHaveCount(0);
+  expect(await selected()).toBe(before);
+  await expect(topbar).toHaveText(label ?? "");
+
+  phase = "rehosted";
+  await poll();
+  const [host, instance, generation] = (before ?? "").split(":");
+  await expect
+    .poll(selected)
+    .toBe(`${host}:${instance}:${Number(generation) + 1}`);
+  await expect(topbar).toHaveText(label ?? "");
+});
+
 test("session rail refresh preserves its visible position", async ({
   page,
 }) => {

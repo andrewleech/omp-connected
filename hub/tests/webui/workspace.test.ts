@@ -59,6 +59,17 @@ describe("fleet dashboard workspace", () => {
     expect(resolveRememberedSession([beta], sessionKey(alpha))).toBeNull();
   });
 
+  test("follows a remembered session to the room its process hosts now", () => {
+    const rehosted = { ...alpha, generation: alpha.generation + 1 };
+    expect(resolveRememberedSession([beta, rehosted], sessionKey(alpha))).toBe(
+      rehosted,
+    );
+    const otherHost = { ...alpha, host_id: "andrew@gamma", generation: 3 };
+    expect(
+      resolveRememberedSession([beta, otherHost], sessionKey(alpha)),
+    ).toBeNull();
+  });
+
   test("chooses the advertised maximum access for a new selection", () => {
     expect(defaultRequestedAccess(alpha)).toBe("control");
     expect(defaultRequestedAccess(beta)).toBe("view");

@@ -368,12 +368,19 @@ function createDashboard(root: HTMLElement): void {
 
   function reconcileSelection(unavailableHosts: ReadonlySet<string>): void {
     const remembered = resolveRememberedSession(state.sessions, state.selected);
-    if (
-      !remembered &&
-      state.selected &&
-      [...unavailableHosts].some((id) => state.selected?.startsWith(`${id}:`))
-    )
-      return;
+    if (!remembered) {
+      // A shown session missing from one listing stays shown: its room may be
+      // relaunching or its host answered late, and switching to an unrelated
+      // session would discard what the user is reading. Only an empty
+      // workspace takes the first listed session, and not while the host of
+      // the remembered session is unavailable.
+      if (state.selectedSession) return;
+      if (
+        state.selected &&
+        [...unavailableHosts].some((id) => state.selected?.startsWith(`${id}:`))
+      )
+        return;
+    }
     const resolved =
       remembered ?? (state.sessions[0] as CollabSession | undefined) ?? null;
     if (!resolved) {
@@ -924,9 +931,7 @@ function createDashboard(root: HTMLElement): void {
     if (rail) renderRail(rail);
     if (workspace) renderWorkspace(workspace);
     if (inspector) renderInspector(inspector);
-    const selected = state.sessions.find(
-      (session) => sessionKey(session) === state.selected,
-    );
+    const selected = state.selectedSession;
     const label = root.querySelector("[data-topbar-session]");
     if (label)
       label.textContent = selected ? sessionLabel(selected) : "No session";
