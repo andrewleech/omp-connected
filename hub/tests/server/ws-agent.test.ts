@@ -508,17 +508,16 @@ describe("wsAgentPlugin — host-level collab RPC forwarding", () => {
 
     const pushFrame = await push;
     expect(pushFrame.method).toBe("collab.list");
+    const session = fakeSession({ instanceId: "inst-1" });
     socket.send(
       JSON.stringify({
         jsonrpc: "2.0",
         id: pushFrame.id,
-        result: { sessions: [fakeSession({ instanceId: "inst-1" })] },
+        result: { sessions: [session] },
       }),
     );
 
-    expect(await callResult).toEqual({
-      sessions: [fakeSession({ instanceId: "inst-1" })],
-    });
+    expect(await callResult).toEqual({ sessions: [session] });
     socket.close();
   });
 

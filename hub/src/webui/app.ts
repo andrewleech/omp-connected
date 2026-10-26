@@ -456,6 +456,9 @@ function createDashboard(root: HTMLElement): void {
     method = "POST",
   ): Promise<void> {
     try {
+      // A change from this tab must not reach an empty hub before this
+      // browser's legacy groups, or their import would be refused.
+      await importLegacyGroups(true);
       applyGroups(
         await json<GroupList>(`/api/groups${path}`, {
           method,
@@ -472,30 +475,55 @@ function createDashboard(root: HTMLElement): void {
     void changeGroups("/assign", { session: groupMemberKey(session), groupId });
   }
 
-  // Uploads groups this browser kept before the hub stored them, once: only
-  // into a hub with no groups and once every member's host has listed (see
-  // legacyGroupsForImport); the local copy goes once the hub took them or
-  // has its own. Retried after every session load until then.
-  let importingLegacyGroups = false;
-  async function importLegacyGroups(): Promise<void> {
+  // Uploads groups this browser kept before the hub stored them, once, into
+  // a hub with no groups. It waits while a connected host has not listed
+  // (see legacyGroupsForImport) and is retried after every session load; a
+  // group change in this tab runs it first without waiting. The local copy
+  // goes once imported, or when the hub already had groups from another tab
+  // or device before this tab's attempt.
+  let legacyImport: Promise<void> | undefined;
+  async function importLegacyGroups(force = false): Promise<void> {
+    while (legacyImport) await legacyImport.catch(() => {});
+    legacyImport = runLegacyImport(force);
+    try {
+      await legacyImport;
+    } finally {
+      legacyImport = undefined;
+    }
+  }
+
+  async function runLegacyImport(force: boolean): Promise<void> {
     const legacy = readLegacyGroups(localStorage);
-    if (legacy.length === 0 || groupsRevision < 0 || importingLegacyGroups)
-      return;
+    if (legacy.length === 0) return;
+    if (groupsRevision < 0) {
+      if (!force) return;
+      await loadGroups();
+    }
     if (state.groups.length === 0) {
-      const groups = legacyGroupsForImport(legacy, state.sessions, listedHosts);
+      const waitingHosts = new Set(
+        force
+          ? []
+          : state.hosts
+              .map((host) => host.hostId)
+              .filter((hostId) => !listedHosts.has(hostId)),
+      );
+      const groups = legacyGroupsForImport(
+        legacy,
+        state.sessions,
+        waitingHosts,
+      );
       if (!groups) return;
-      importingLegacyGroups = true;
-      let response: Response;
-      try {
-        response = await fetch("/api/groups/import", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ groups }),
-        });
-      } finally {
-        importingLegacyGroups = false;
-      }
-      if (!response.ok && response.status !== 409) return;
+      const response = await fetch("/api/groups/import", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ groups }),
+      });
+      // 409: the hub got groups elsewhere first; this tab's own changes
+      // only follow a settled import.
+      if (!response.ok && response.status !== 409)
+        throw new Error(
+          `Could not import this browser's groups (${response.status})`,
+        );
       if (response.ok) applyGroups((await response.json()) as GroupList);
     }
     dropLegacyGroups(localStorage);
@@ -1205,7 +1233,8 @@ function createDashboard(root: HTMLElement): void {
 
   setInterval(() => void pollSessions().catch(() => {}), SESSION_POLL_MS);
   void Promise.all([refresh(), loadGroups()])
-    .then(() => importLegacyGroups())
+    // A failed import keeps the legacy copy and is retried after a session load.
+    .then(() => importLegacyGroups().catch(() => {}))
     .then(() => loadAgents())
     .then(() => render())
     .catch((error) => showStatus(error.message, "warning"));

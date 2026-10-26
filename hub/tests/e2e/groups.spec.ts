@@ -1,4 +1,9 @@
-import { type Page, expect, test } from "@playwright/test";
+import {
+  type APIRequestContext,
+  type Page,
+  expect,
+  test,
+} from "@playwright/test";
 
 const WRITER = '.session-card[title="Writable room"]';
 const VIEWER = '.session-card[title="Read-only room"]';
@@ -121,44 +126,79 @@ test("a session keeps its group while its agent's ompc name is unknown", async (
   await expect(group(page, "writer").locator(WRITER)).toHaveCount(0);
 });
 
-test("imports this browser's former groups into an empty hub once", async ({
-  page,
-  request,
-}) => {
-  await page.addInitScript(() => {
+// Seeds this browser's pre-hub groups once (init scripts also run on reloads).
+async function seedLegacyGroups(page: Page, sessions: string[]) {
+  await page.addInitScript((members) => {
     if (sessionStorage.getItem("seeded")) return;
     sessionStorage.setItem("seeded", "1");
     localStorage.setItem(
       "omp-hub-dashboard/v1",
       JSON.stringify({
         version: 1,
-        groups: [
-          {
-            id: "local",
-            name: "Imported",
-            sessions: ["writer:writer-room:1", "viewer:gone-room:1"],
-          },
-        ],
+        groups: [{ id: "local", name: "Imported", sessions: members }],
         selected: "writer:writer-room:1",
         inspector: "session",
       }),
     );
-  });
+  }, sessions);
+}
+
+function storedLegacyGroups(page: Page) {
+  return page.evaluate(
+    () =>
+      JSON.parse(localStorage.getItem("omp-hub-dashboard/v1") ?? "{}").groups,
+  );
+}
+
+async function hubGroups(request: APIRequestContext) {
+  return (
+    (await (await request.get("/api/groups")).json()) as {
+      groups: { name: string; sessions: string[] }[];
+    }
+  ).groups;
+}
+
+test("imports this browser's former groups into an empty hub once", async ({
+  page,
+  request,
+}) => {
+  await seedLegacyGroups(page, [
+    "writer:writer-room:1",
+    // A listed host without the session, and a host with no connected agent.
+    "viewer:gone-room:1",
+    "retired:room:1",
+  ]);
   await page.goto("/");
   await expect(group(page, "Imported").locator(WRITER)).toBeVisible();
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          JSON.parse(localStorage.getItem("omp-hub-dashboard/v1") ?? "{}")
-            .groups,
-      ),
-    )
-    .toBeUndefined();
-  const hub = (await (await request.get("/api/groups")).json()) as {
-    groups: { name: string; sessions: string[] }[];
-  };
-  expect(hub.groups).toMatchObject([
+  await expect.poll(() => storedLegacyGroups(page)).toBeUndefined();
+  expect(await hubGroups(request)).toMatchObject([
     { name: "Imported", sessions: ["writer:label:writer"] },
   ]);
+});
+
+test("a group change while the import waits for a host imports first", async ({
+  page,
+  request,
+}) => {
+  // viewer is connected but cannot list, so its member keeps the import waiting.
+  await page.route("**/api/hosts/viewer/collab", (route) =>
+    route.fulfill({ status: 504, json: { error: "agent RPC timed out" } }),
+  );
+  await seedLegacyGroups(page, ["writer:writer-room:1", "viewer:gone-room:1"]);
+  await page.goto("/");
+  await loaded(page);
+  expect(await hubGroups(request)).toEqual([]);
+  expect(await storedLegacyGroups(page)).toHaveLength(1);
+
+  page.once("dialog", (dialog) => void dialog.accept("Fresh"));
+  await page
+    .getByRole("button", { name: "+ New project group", exact: true })
+    .click();
+  await expect(group(page, "Fresh")).toBeVisible();
+  await expect(group(page, "Imported").locator(WRITER)).toBeVisible();
+  expect(await hubGroups(request)).toMatchObject([
+    { name: "Imported", sessions: ["writer:label:writer"] },
+    { name: "Fresh", sessions: [] },
+  ]);
+  expect(await storedLegacyGroups(page)).toBeUndefined();
 });

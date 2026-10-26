@@ -195,7 +195,7 @@ describe("fleet dashboard workspace", () => {
     });
   });
 
-  test("translates legacy room keys to member keys and drops ones their host no longer lists", () => {
+  test("translates legacy room keys to member keys and drops unmatched ones", () => {
     const named = { ...alpha, ompcLabel: "mesh", generation: 5 };
     const legacy = [
       {
@@ -205,18 +205,15 @@ describe("fleet dashboard workspace", () => {
           sessionKey(alpha),
           sessionKey({ ...alpha, generation: 4 }),
           sessionKey(beta),
+          // Listed host, session gone.
           "andrew@beta:exited-room:1",
+          // Host not connected (decommissioned, offline, no running omp).
+          "andrew@retired:room:1",
         ],
       },
       { id: "g2", name: " ", sessions: [] },
     ];
-    expect(
-      legacyGroupsForImport(
-        legacy,
-        [named, beta],
-        new Set(["andrew@alpha", "andrew@beta"]),
-      ),
-    ).toEqual([
+    expect(legacyGroupsForImport(legacy, [named, beta], new Set())).toEqual([
       {
         name: "Project",
         sessions: ["andrew@alpha:label:mesh", "andrew@beta:instance:beta-room"],
@@ -225,20 +222,23 @@ describe("fleet dashboard workspace", () => {
     ]);
   });
 
-  test("waits to import while an unmatched member's host has not listed", () => {
+  test("waits to import while an unmatched member's connected host has not listed", () => {
     const legacy = [
       { id: "g1", name: "Project", sessions: ["andrew@beta:exited-room:1"] },
     ];
-    // beta is offline or its listing failed.
+    // beta is connected but its listing is pending or failed.
+    expect(
+      legacyGroupsForImport(legacy, [alpha], new Set(["andrew@beta"])),
+    ).toBeNull();
     expect(
       legacyGroupsForImport(legacy, [alpha], new Set(["andrew@alpha"])),
-    ).toBeNull();
-    // A matched member does not need its host's latest listing.
+    ).toEqual([{ name: "Project", sessions: [] }]);
+    // A matched member does not wait for its host.
     expect(
       legacyGroupsForImport(
         [{ id: "g1", name: "Project", sessions: [sessionKey(beta)] }],
         [beta],
-        new Set(),
+        new Set(["andrew@beta"]),
       ),
     ).toEqual([
       { name: "Project", sessions: ["andrew@beta:instance:beta-room"] },

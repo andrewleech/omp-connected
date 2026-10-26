@@ -215,14 +215,14 @@ export function dropLegacyGroups(storage: StorageLike): void {
 /**
  * Legacy groups as a `POST /api/groups/import` body. Their members are
  * `sessionKey`s; each becomes the `groupMemberKey` of the listed session it
- * names (any generation). A member is dropped only when its host's latest
- * listing succeeded without it; while any member's host is not connected or
- * failed to list, the result is null, so the import waits.
+ * names (any generation). A member that matches no listed session is
+ * dropped, unless its host is in `waitingHosts` (connected, but its latest
+ * listing has not succeeded): then the result is null, so the import waits.
  */
 export function legacyGroupsForImport(
   groups: WorkspaceGroup[],
   sessions: CollabSession[],
-  listedHosts: ReadonlySet<string>,
+  waitingHosts: ReadonlySet<string>,
 ): { name: string; sessions: string[] }[] | null {
   const body = [];
   for (const group of groups) {
@@ -230,7 +230,7 @@ export function legacyGroupsForImport(
     for (const key of group.sessions) {
       const session = resolveRememberedSession(sessions, key);
       if (session) members.add(groupMemberKey(session));
-      else if (![...listedHosts].some((host) => key.startsWith(`${host}:`)))
+      else if ([...waitingHosts].some((host) => key.startsWith(`${host}:`)))
         return null;
     }
     body.push({
