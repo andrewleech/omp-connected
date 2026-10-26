@@ -11,7 +11,7 @@ import { OrderedWorkQueue } from "./ordered-work-queue";
 const IV_LENGTH = 12;
 const ENVELOPE_HEADER = 4;
 const ROOM_KEY_BYTES = 32;
-const COLLAB_PROTO = 3;
+const COLLAB_PROTO = 4;
 
 /** How many entries to show initially; more are prepended on scroll-up. */
 const INITIAL_TAIL = 80;
@@ -540,6 +540,11 @@ export class CollabTailViewer {
   #renderedCount = 0;
   #snapshotDone = false;
   #finalSeen = false;
+  #welcomed = false;
+  /** Live entries that arrived while the snapshot was still loading. The host
+   *  sends live traffic ahead of snapshot chunks, so these follow the whole
+   *  snapshot and are applied after its final chunk. */
+  #heldEntries: SessionEntry[] = [];
   #snapshotFailed = false;
   #decrypts: OrderedWorkQueue<Uint8Array, Record<string, unknown>> | null =
     null;
@@ -757,6 +762,17 @@ export class CollabTailViewer {
     const t = frame.t as string;
     switch (t) {
       case "welcome":
+        // A further welcome is a resync: the host dropped its send backlog
+        // and is sending a fresh snapshot.
+        if (this.#welcomed) {
+          this.#allEntries = [];
+          this.#heldEntries = [];
+          this.#totalReceived = 0;
+          this.#snapshotDone = false;
+          this.#finalSeen = false;
+          this.#resetWatchdog();
+        }
+        this.#welcomed = true;
         this.#header = (frame.header as Record<string, unknown>) ?? null;
         this.#state = (frame.state as Record<string, unknown>) ?? null;
         if (frame.leafId === null || typeof frame.leafId === "string")
@@ -787,24 +803,22 @@ export class CollabTailViewer {
       }
       case "entry": {
         const entry = frame.entry as SessionEntry | undefined;
-        if (entry) {
-          this.#allEntries.push(entry);
-          this.#totalReceived++;
-          if (this.#leafId !== undefined && typeof entry.id === "string")
-            this.#leafId = entry.id;
-          if (this.#snapshotDone) {
-            if (this.#leafId !== undefined) {
-              this.#renderTail();
-            } else {
-              const wasAtBottom = this.#isNearBottom();
-              this.#renderedCount++;
-              this.#contentEl.appendChild(renderEntry(entry));
-              if (wasAtBottom) this.#forceScrollBottom();
-              this.#updateLoadMore();
-            }
-            this.#updateStatus();
-          }
+        if (!entry) break;
+        if (!this.#snapshotDone) {
+          this.#heldEntries.push(entry);
+          break;
         }
+        this.#appendEntry(entry);
+        if (this.#leafId !== undefined) {
+          this.#renderTail();
+        } else {
+          const wasAtBottom = this.#isNearBottom();
+          this.#renderedCount++;
+          this.#contentEl.appendChild(renderEntry(entry));
+          if (wasAtBottom) this.#forceScrollBottom();
+          this.#updateLoadMore();
+        }
+        this.#updateStatus();
         break;
       }
       case "state":
@@ -831,9 +845,18 @@ export class CollabTailViewer {
     )
       return;
     this.#snapshotDone = true;
-    clearTimeout(this.#watchdog!);
+    clearTimeout(this.#watchdog ?? undefined);
+    for (const entry of this.#heldEntries) this.#appendEntry(entry);
+    this.#heldEntries = [];
     this.#renderTail();
     this.#updateStatus();
+  }
+
+  #appendEntry(entry: SessionEntry): void {
+    this.#allEntries.push(entry);
+    this.#totalReceived++;
+    if (this.#leafId !== undefined && typeof entry.id === "string")
+      this.#leafId = entry.id;
   }
 
   #renderTail(): void {
