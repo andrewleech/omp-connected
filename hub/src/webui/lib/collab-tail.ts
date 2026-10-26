@@ -12,6 +12,13 @@ const IV_LENGTH = 12;
 const ENVELOPE_HEADER = 4;
 const ROOM_KEY_BYTES = 32;
 const COLLAB_PROTO = 4;
+/** Older host protocols this viewer still joins. A v3 host never sends live
+ *  frames between snapshot chunks, so the v4 handling below covers it. A
+ *  mismatched host replies with an error and keeps the guest connected, so
+ *  the viewer resends its hello at the host's version. */
+const COLLAB_PROTO_COMPAT: readonly number[] = [3];
+const PROTO_MISMATCH =
+  /^protocol mismatch: host speaks v(\d+), guest sent v\d+/;
 
 /** How many entries to show initially; more are prepended on scroll-up. */
 const INITIAL_TAIL = 80;
@@ -541,6 +548,8 @@ export class CollabTailViewer {
   #snapshotDone = false;
   #finalSeen = false;
   #welcomed = false;
+  /** Protocol version sent in the latest hello. */
+  #helloProto = COLLAB_PROTO;
   /** Live entries that arrived while the snapshot was still loading. The host
    *  sends live traffic ahead of snapshot chunks, so these follow the whole
    *  snapshot and are applied after its final chunk. */
@@ -626,15 +635,10 @@ export class CollabTailViewer {
     ws.binaryType = "arraybuffer";
     this.#ws = ws;
 
-    ws.addEventListener("open", async () => {
+    ws.addEventListener("open", () => {
       if (this.#destroyed || !this.#key) return;
       this.#statusEl.textContent = "Joining room…";
-      const hello = await seal(this.#key, {
-        t: "hello",
-        proto: COLLAB_PROTO,
-        name: "Dashboard",
-      });
-      ws.send(packEnvelope(0, hello));
+      void this.#sendHello(COLLAB_PROTO);
     });
 
     // Keep WebCrypto bounded on mobile while committing decrypted frames in
@@ -664,6 +668,18 @@ export class CollabTailViewer {
         this.#statusEl.className = "tail-status warning";
       }
     });
+  }
+
+  async #sendHello(proto: number): Promise<void> {
+    const ws = this.#ws;
+    if (!ws || !this.#key) return;
+    this.#helloProto = proto;
+    const hello = await seal(this.#key, {
+      t: "hello",
+      proto,
+      name: "Dashboard",
+    });
+    ws.send(packEnvelope(0, hello));
   }
 
   #processMessage(event: MessageEvent): void {
@@ -829,10 +845,21 @@ export class CollabTailViewer {
         this.#statusEl.textContent = `Session ended: ${frame.reason ?? ""}`;
         this.#statusEl.className = "tail-status warning";
         break;
-      case "error":
-        this.#statusEl.textContent = `Error: ${frame.message ?? "unknown"}`;
+      case "error": {
+        const message = String(frame.message ?? "unknown");
+        const hostProto = Number(PROTO_MISMATCH.exec(message)?.[1]);
+        if (
+          !this.#welcomed &&
+          this.#helloProto === COLLAB_PROTO &&
+          COLLAB_PROTO_COMPAT.includes(hostProto)
+        ) {
+          void this.#sendHello(hostProto);
+          break;
+        }
+        this.#statusEl.textContent = `Error: ${message}`;
         this.#statusEl.className = "tail-status warning";
         break;
+      }
     }
   }
 
