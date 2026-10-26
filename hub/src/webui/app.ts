@@ -331,15 +331,11 @@ function createDashboard(root: HTMLElement): void {
     for (const session of state.sessions)
       byHost.get(session.host_id)?.push(session);
     const settledHosts = new Set<string>();
-    const failedHosts = new Set<string>();
-    const apply = (settled: boolean): void => {
+    const apply = (): void => {
       state.sessions = state.hosts.flatMap(
         (host) => byHost.get(host.hostId) ?? [],
       );
-      // The fallback pick waits for every host so a late host holding the
-      // remembered session does not cause a switch away and back.
-      if (settled || resolveRememberedSession(state.sessions, state.selected))
-        reconcileSelection(failedHosts);
+      reconcileSelection();
       render();
     };
     await Promise.all(
@@ -357,47 +353,32 @@ function createDashboard(root: HTMLElement): void {
           );
         } catch (error) {
           showStatus(`${host.hostId}: ${(error as Error).message}`, "warning");
-          failedHosts.add(host.hostId);
         }
         settledHosts.add(host.hostId);
-        if (settledHosts.size < state.hosts.length) apply(false);
+        if (settledHosts.size < state.hosts.length) apply();
       }),
     );
-    apply(true);
+    apply();
   }
 
-  function reconcileSelection(unavailableHosts: ReadonlySet<string>): void {
+  function reconcileSelection(): void {
     const remembered = resolveRememberedSession(state.sessions, state.selected);
-    if (!remembered) {
-      // A shown session missing from one listing stays shown: its room may be
-      // relaunching or its host answered late, and switching to an unrelated
-      // session would discard what the user is reading. Only an empty
-      // workspace takes the first listed session, and not while the host of
-      // the remembered session is unavailable.
-      if (state.selectedSession) return;
-      if (
-        state.selected &&
-        [...unavailableHosts].some((id) => state.selected?.startsWith(`${id}:`))
-      )
-        return;
-    }
-    const resolved =
-      remembered ?? (state.sessions[0] as CollabSession | undefined) ?? null;
-    if (!resolved) {
-      state.selectedSession = null;
-      return;
-    }
+    // Only a session the user picked is shown. One missing from the listing
+    // (room relaunching, host late or offline, session exited) stays shown,
+    // or the workspace stays empty; switching to a session the user did not
+    // pick would be confusing.
+    if (!remembered) return;
     if (
       state.selectedSession &&
-      sessionKey(state.selectedSession) === sessionKey(resolved)
+      sessionKey(state.selectedSession) === sessionKey(remembered)
     ) {
       // Same room as before this refresh: only update its polled fields
       // (participants, etc.); selectSession() would blank and reload the
       // live iframe for no reason.
-      state.selectedSession = resolved;
+      state.selectedSession = remembered;
       return;
     }
-    selectSession(resolved);
+    selectSession(remembered);
   }
 
   async function refresh(): Promise<void> {

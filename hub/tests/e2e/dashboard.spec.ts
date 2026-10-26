@@ -18,6 +18,26 @@ test("opens writable sessions in Collab control by default", async ({
   ).toHaveCount(0);
 });
 
+test.describe("without a picked session", () => {
+  test.use({ storageState: { cookies: [], origins: [] } });
+
+  test("opens no session until the user picks one", async ({ page }) => {
+    await page.goto("/");
+    const writer = page.getByRole("button", { name: "writer", exact: true });
+    await expect(writer).toBeVisible();
+    await expect(page.locator("[data-topbar-session]")).toHaveText(
+      "No session",
+    );
+    await expect(page.locator('iframe[src*="/collab/"]')).toHaveCount(0);
+
+    await writer.click();
+    await expect(page.locator("[data-collab-frame]")).toHaveAttribute(
+      "src",
+      /\/collab\/#fixture-control$/,
+    );
+  });
+});
+
 test("exit requires confirmation and removes the session only after acceptance", async ({
   page,
 }) => {
