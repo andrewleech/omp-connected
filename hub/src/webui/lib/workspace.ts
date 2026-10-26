@@ -33,10 +33,14 @@ export interface CollabSession {
   sessionId?: string;
   cwd?: string;
   participants?: number;
-  /** Registered agent label from the hub (the ompc session name). */
+  /** Registered agent label from the hub: the ompc session name, else the
+   *  cwd's basename, so not unique. */
   label?: string;
   /** Capabilities of the session's registered omp-connected extension. */
   features?: string[];
+  /** The ompc session name the agent explicitly registered with; unique
+   *  per host among live sessions. */
+  ompcLabel?: string;
 }
 
 /** A session group as the hub stores it; `sessions` holds `groupMemberKey`s. */
@@ -70,13 +74,34 @@ export function sessionKey(session: CollabSession): string {
 
 /**
  * A session's group member key. Unlike `sessionKey` it has no generation, so
- * a session keeps its group when its room is hosted again; a named ompc
- * session keys on its label, which also survives an omp restart.
+ * a session keeps its group when its room is hosted again; a session started
+ * by ompc keys on its session name, which also survives an omp restart.
  */
 export function groupMemberKey(session: CollabSession): string {
-  return session.label
-    ? `${session.host_id}:label:${session.label}`
+  return session.ompcLabel
+    ? `${session.host_id}:label:${session.ompcLabel}`
     : `${session.host_id}:instance:${session.instanceId}`;
+}
+
+/**
+ * `next` with each session's ompc session name filled in from `previous`
+ * when the listing lost it, as it does while a restarted hub waits for the
+ * session's agent to register again, so the session keeps its group key.
+ */
+export function keepKnownOmpcLabels(
+  previous: CollabSession[],
+  next: CollabSession[],
+): CollabSession[] {
+  return next.map((session) => {
+    if (session.ompcLabel) return session;
+    const known = previous.find(
+      (old) =>
+        old.host_id === session.host_id &&
+        old.instanceId === session.instanceId &&
+        old.ompcLabel,
+    )?.ompcLabel;
+    return known ? { ...session, ompcLabel: known } : session;
+  });
 }
 
 /**
@@ -190,23 +215,30 @@ export function dropLegacyGroups(storage: StorageLike): void {
 /**
  * Legacy groups as a `POST /api/groups/import` body. Their members are
  * `sessionKey`s; each becomes the `groupMemberKey` of the listed session it
- * names (any generation), and a member no listed session matches is dropped.
+ * names (any generation). A member is dropped only when its host's latest
+ * listing succeeded without it; while any member's host is not connected or
+ * failed to list, the result is null, so the import waits.
  */
 export function legacyGroupsForImport(
   groups: WorkspaceGroup[],
   sessions: CollabSession[],
-): { name: string; sessions: string[] }[] {
-  return groups.map((group) => ({
-    name: group.name.trim().slice(0, 64) || "Group",
-    sessions: [
-      ...new Set(
-        group.sessions.flatMap((key) => {
-          const session = resolveRememberedSession(sessions, key);
-          return session ? [groupMemberKey(session)] : [];
-        }),
-      ),
-    ],
-  }));
+  listedHosts: ReadonlySet<string>,
+): { name: string; sessions: string[] }[] | null {
+  const body = [];
+  for (const group of groups) {
+    const members = new Set<string>();
+    for (const key of group.sessions) {
+      const session = resolveRememberedSession(sessions, key);
+      if (session) members.add(groupMemberKey(session));
+      else if (![...listedHosts].some((host) => key.startsWith(`${host}:`)))
+        return null;
+    }
+    body.push({
+      name: group.name.trim().slice(0, 64) || "Group",
+      sessions: [...members],
+    });
+  }
+  return body;
 }
 
 export function groupSessions(

@@ -44,7 +44,10 @@ export function createHub(options: CreateHubOptions = {}): Hub {
   const webuiRoot = options.webuiRoot ?? `${import.meta.dir}/../../dist/webui`;
 
   const agentRegistry = new AgentRegistry();
-  const groups = new SessionGroupStore(options.stateDir ?? env.stateDir);
+  const groups = new SessionGroupStore(
+    options.stateDir ?? env.stateDir,
+    agentRegistry,
+  );
 
   const app = new Elysia()
     .get("/api/config", () => ({ publicOrigin: env.publicOrigin }))

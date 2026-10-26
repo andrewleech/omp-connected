@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AgentRegistry } from "@/server/agent-registry";
@@ -22,16 +22,18 @@ function start(agentRegistry: AgentRegistry): {
   url: string;
   dashboardUrl: string;
 } {
-  const groups = new SessionGroupStore(
-    mkdtempSync(join(tmpdir(), "omp-hub-ws-agent-")),
-  );
+  const stateDir = mkdtempSync(join(tmpdir(), "omp-hub-ws-agent-"));
+  const groups = new SessionGroupStore(stateDir);
   const app = new Elysia()
     .use(wsAgentPlugin(agentRegistry, HOST_TOKEN))
     .use(dashboardEventsPlugin(agentRegistry, groups));
   app.listen(0);
   const port = app.server?.port;
   if (!port) throw new Error("server did not report a port");
-  stopServer = () => app.stop();
+  stopServer = () => {
+    app.stop();
+    rmSync(stateDir, { recursive: true, force: true });
+  };
   return {
     url: `ws://localhost:${port}/ws/agent`,
     dashboardUrl: `ws://localhost:${port}/ws/dashboard`,

@@ -37,9 +37,12 @@ export function collabRpcRoutes(agentRegistry: AgentRegistry) {
           {},
           COLLAB_TIMEOUT_MS,
         );
-        // Attach each session's registered label (the ompc session name)
-        // so the dashboard shows the same name as the agent tools, and the
-        // features its extension advertised ([] when none is registered).
+        // Attach each session's registered label (the ompc session name, else
+        // its cwd's basename) so the dashboard shows the same name as the
+        // agent tools, and the features its extension advertised ([] when
+        // none is registered). `ompcLabel` is only an explicitly registered
+        // ompc session name, kept through a reconnect; the dashboard groups
+        // sessions by it.
         const agents = new Map(
           agentRegistry
             .listAgents()
@@ -49,9 +52,17 @@ export function collabRpcRoutes(agentRegistry: AgentRegistry) {
         return {
           sessions: result.sessions.map((session) => {
             const agent = agents.get(session.instanceId);
-            return agent === undefined
-              ? { ...session, features: [] }
-              : { ...session, label: agent.label, features: agent.features };
+            const ompcLabel = agentRegistry.ompcLabel(
+              hostId,
+              session.instanceId,
+            );
+            return {
+              ...session,
+              ...(agent === undefined
+                ? { features: [] }
+                : { label: agent.label, features: agent.features }),
+              ...(ompcLabel === undefined ? {} : { ompcLabel }),
+            };
           }),
         };
       } catch (err) {

@@ -57,6 +57,15 @@ test("group changes in one dashboard appear in another without a reload", async 
     .getByRole("button", { name: "+ New project group", exact: true })
     .click();
   await expect(group(page, "Empty")).toContainText("No sessions");
+
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page
+    .getByRole("button", { name: "Delete group Project", exact: true })
+    .click();
+  for (const view of [page, other]) {
+    await expect(group(view, "Project")).toHaveCount(0);
+    await expect(group(view, "viewer").locator(VIEWER)).toBeVisible();
+  }
 });
 
 test("a session keeps its group after its room is hosted again", async ({
@@ -80,6 +89,38 @@ test("a session keeps its group after its room is hosted again", async ({
   );
 });
 
+test("a session keeps its group while its agent's ompc name is unknown", async ({
+  page,
+  request,
+}) => {
+  await page.goto("/");
+  await loaded(page);
+  await newGroup(page, WRITER, "Project");
+  await expect(group(page, "Project").locator(WRITER)).toBeVisible();
+  expect(
+    (
+      (await (await request.get("/api/groups")).json()) as {
+        groups: { sessions: string[] }[];
+      }
+    ).groups[0]?.sessions,
+  ).toEqual(["writer:label:writer"]);
+
+  // The dashboard reconnects and reloads the listing, now without the name.
+  const relisted = page.waitForResponse(
+    async (response) =>
+      response.url().endsWith("/api/hosts/writer/collab") &&
+      !((await response.json()) as { sessions: { ompcLabel?: string }[] })
+        .sessions[0]?.ompcLabel,
+    { timeout: 10_000 },
+  );
+  await request.post("/__forget-label");
+  await relisted;
+  // Let the dashboard apply the listing before checking it changed nothing.
+  await page.waitForTimeout(300);
+  await expect(group(page, "Project").locator(WRITER)).toBeVisible();
+  await expect(group(page, "writer").locator(WRITER)).toHaveCount(0);
+});
+
 test("imports this browser's former groups into an empty hub once", async ({
   page,
   request,
@@ -95,7 +136,7 @@ test("imports this browser's former groups into an empty hub once", async ({
           {
             id: "local",
             name: "Imported",
-            sessions: ["writer:writer-room:1", "gone:room:1"],
+            sessions: ["writer:writer-room:1", "viewer:gone-room:1"],
           },
         ],
         selected: "writer:writer-room:1",
@@ -118,6 +159,6 @@ test("imports this browser's former groups into an empty hub once", async ({
     groups: { name: string; sessions: string[] }[];
   };
   expect(hub.groups).toMatchObject([
-    { name: "Imported", sessions: ["writer:instance:writer-room"] },
+    { name: "Imported", sessions: ["writer:label:writer"] },
   ]);
 });

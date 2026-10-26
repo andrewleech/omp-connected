@@ -4,9 +4,11 @@
 // /ws/dashboard as a `groups.changed` event carrying the full list.
 //
 // Members are stable session keys built by the dashboard
-// (`groupMemberKey` in webui/lib/workspace.ts): `${hostId}:label:${label}`
-// or `${hostId}:instance:${instanceId}`. The hub treats them as opaque
-// strings and only checks their shape.
+// (`groupMemberKey` in webui/lib/workspace.ts): `${hostId}:label:${name}`
+// for a session whose agent registered an ompc session name (unique per
+// host), else `${hostId}:instance:${instanceId}`. The hub checks their
+// shape and turns an instance key into the label key once it knows the
+// name (see SessionGroupStore).
 
 import {
   closeSync,
@@ -20,6 +22,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { type Context, Elysia } from "elysia";
+import type { AgentRegistry } from "./agent-registry";
 import { RateLimiter } from "./rate-limit";
 import type { SessionGroup, SessionGroupList } from "./types";
 
@@ -137,14 +140,43 @@ function parseStateFile(value: unknown): SessionGroupList | null {
   return { revision: value.revision, groups };
 }
 
+/** What the store needs from the agent registry: the ompc session name an
+ *  instance registered with, and a registration signal. */
+export type GroupIdentitySource = Pick<AgentRegistry, "ompcLabel" | "onChange">;
+
+const INSTANCE_MARKER = ":instance:";
+
 export class SessionGroupStore {
   readonly path: string;
   private state: SessionGroupList;
   private listeners = new Set<(list: SessionGroupList) => void>();
 
-  constructor(stateDir: string) {
+  /**
+   * With `identities`, a `host:instance:id` member key of a session whose
+   * agent registered an ompc session name is stored as its
+   * `host:label:name` key, and an agent registering with a name converts
+   * the instance key it was grouped by while its name was unknown (for
+   * example while it reconnected after a hub restart).
+   */
+  constructor(
+    stateDir: string,
+    private readonly identities?: GroupIdentitySource,
+  ) {
     this.path = join(stateDir, FILE_NAME);
     this.state = this.load();
+    identities?.onChange((event) => {
+      if (event.event !== "agent.registered") return;
+      const { hostId, instanceId } = event.agent;
+      const label = identities.ompcLabel(hostId, instanceId);
+      if (label === undefined) return;
+      try {
+        this.adoptLabel(hostId, instanceId, label);
+      } catch (error) {
+        console.error(
+          `session groups: could not save ${this.path}: ${(error as Error).message}`,
+        );
+      }
+    });
   }
 
   /** The groups and their revision, which every change increments. */
@@ -171,7 +203,7 @@ export class SessionGroupStore {
     };
     const next = this.list();
     if (session !== undefined) {
-      const key = parseMemberKey(session);
+      const key = this.memberKey(session);
       removeMember(next, key);
       group.sessions.push(key);
     }
@@ -182,7 +214,7 @@ export class SessionGroupStore {
 
   /** Moves `session` into the group `groupId`, or out of every group for null. */
   assign(session: unknown, groupId: unknown): void {
-    const key = parseMemberKey(session);
+    const key = this.memberKey(session);
     if (groupId !== null && typeof groupId !== "string")
       throw new GroupRequestError("groupId must be a string or null.", 400);
     const next = this.list();
@@ -193,6 +225,48 @@ export class SessionGroupStore {
     removeMember(next, key);
     target?.sessions.push(key);
     this.commit(next);
+  }
+
+  /** Deletes a group; its sessions are ungrouped. */
+  delete(groupId: string): void {
+    const next = this.list();
+    const index = next.findIndex((group) => group.id === groupId);
+    if (index < 0)
+      throw new GroupRequestError(`group '${groupId}' not found`, 404);
+    next.splice(index, 1);
+    this.commit(next);
+  }
+
+  /**
+   * Re-keys the member `host:instance:id` as `host:label:name`. The
+   * instance key holds the newer assignment (made while the name was not
+   * known), so the label key leaves any other group.
+   */
+  private adoptLabel(hostId: string, instanceId: string, label: string): void {
+    const instanceKey = `${hostId}${INSTANCE_MARKER}${instanceId}`;
+    const labelKey = `${hostId}:label:${label}`;
+    const next = this.list();
+    const target = next.find((group) => group.sessions.includes(instanceKey));
+    if (!target || !isGroupMemberKey(labelKey)) return;
+    removeMember(next, labelKey);
+    target.sessions = target.sessions.map((key) =>
+      key === instanceKey ? labelKey : key,
+    );
+    this.commit(next);
+  }
+
+  /** A valid member key, as the label key when the hub knows the name. */
+  private memberKey(value: unknown): string {
+    const key = parseMemberKey(value);
+    const at = key.indexOf(INSTANCE_MARKER);
+    if (at < 0 || !this.identities) return key;
+    const hostId = key.slice(0, at);
+    const label = this.identities.ompcLabel(
+      hostId,
+      key.slice(at + INSTANCE_MARKER.length),
+    );
+    const labelKey = `${hostId}:label:${label}`;
+    return label !== undefined && isGroupMemberKey(labelKey) ? labelKey : key;
   }
 
   /**
@@ -212,7 +286,7 @@ export class SessionGroupStore {
       return {
         id: crypto.randomUUID(),
         name: parseGroupName(field(entry, "name")),
-        sessions: sessions.map(parseMemberKey),
+        sessions: sessions.map((key) => this.memberKey(key)),
       };
     });
     const seen = new Set<string>();
@@ -345,6 +419,12 @@ export function sessionGroupRoutes(store: SessionGroupStore) {
     .post("/import", ({ body, set }) =>
       change(set, () => {
         store.importGroups(field(body, "groups"));
+        return store.snapshot();
+      }),
+    )
+    .delete("/:id", ({ params, set }) =>
+      change(set, () => {
+        store.delete(params.id);
         return store.snapshot();
       }),
     );

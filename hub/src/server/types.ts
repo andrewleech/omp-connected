@@ -57,6 +57,9 @@ export interface HostCollabSession {
   /** Hub-added: the features the registered agent advertised at
    *  registration; `[]` when no omp-connected agent is registered. */
   features?: string[];
+  /** Hub-added: the ompc session name the agent explicitly registered with,
+   *  also while it reconnects. Absent when it registered none. */
+  ompcLabel?: string;
 }
 
 export type CollabListParams = Record<string, never>;

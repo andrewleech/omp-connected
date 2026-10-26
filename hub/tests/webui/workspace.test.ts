@@ -8,6 +8,7 @@ import {
   dropLegacyGroups,
   groupMemberKey,
   groupSessions,
+  keepKnownOmpcLabels,
   legacyGroupsForImport,
   readLegacyGroups,
   readWorkspace,
@@ -56,21 +57,43 @@ describe("fleet dashboard workspace", () => {
     });
   });
 
-  test("keys group members by label, else by instance, never by generation", () => {
-    expect(groupMemberKey({ ...alpha, label: "mesh.install" })).toBe(
+  test("keys group members by explicit ompc name, else by instance, never by generation", () => {
+    expect(groupMemberKey({ ...alpha, ompcLabel: "mesh.install" })).toBe(
       "andrew@alpha:label:mesh.install",
     );
     expect(groupMemberKey(alpha)).toBe("andrew@alpha:instance:alpha-room");
-    expect(groupMemberKey({ ...alpha, label: "" })).toBe(
+    // `label` falls back to the cwd's basename, so two sessions in one
+    // directory share it; it never keys a group.
+    expect(groupMemberKey({ ...alpha, label: "mesh" })).toBe(
+      "andrew@alpha:instance:alpha-room",
+    );
+    expect(groupMemberKey({ ...alpha, ompcLabel: "" })).toBe(
       "andrew@alpha:instance:alpha-room",
     );
     expect(groupMemberKey({ ...alpha, generation: 9 })).toBe(
       groupMemberKey(alpha),
     );
-    // A restarted omp has a new instance but keeps its ompc label.
+    // A restarted omp has a new instance but keeps its ompc session name.
     expect(
-      groupMemberKey({ ...alpha, instanceId: "new-room", label: "mesh" }),
-    ).toBe(groupMemberKey({ ...alpha, label: "mesh" }));
+      groupMemberKey({ ...alpha, instanceId: "new-room", ompcLabel: "mesh" }),
+    ).toBe(groupMemberKey({ ...alpha, ompcLabel: "mesh" }));
+  });
+
+  test("keeps a session's known ompc name when a listing lacks it", () => {
+    const named = { ...alpha, ompcLabel: "mesh" };
+    const relisted = keepKnownOmpcLabels(
+      [named, beta],
+      [{ ...alpha, generation: 3 }, beta, { ...alpha, host_id: "andrew@x" }],
+    );
+    expect(relisted.map((session) => session.ompcLabel)).toEqual([
+      "mesh",
+      undefined,
+      undefined,
+    ]);
+    expect(
+      keepKnownOmpcLabels([named], [{ ...alpha, ompcLabel: "renamed" }])[0]
+        ?.ompcLabel,
+    ).toBe("renamed");
   });
 
   test("a grouped session stays in its group after its room is hosted again", () => {
@@ -172,24 +195,26 @@ describe("fleet dashboard workspace", () => {
     });
   });
 
-  test("translates legacy room keys to member keys and drops unknown ones", () => {
-    const named = { ...alpha, label: "mesh", generation: 5 };
+  test("translates legacy room keys to member keys and drops ones their host no longer lists", () => {
+    const named = { ...alpha, ompcLabel: "mesh", generation: 5 };
+    const legacy = [
+      {
+        id: "g1",
+        name: "  Project  ",
+        sessions: [
+          sessionKey(alpha),
+          sessionKey({ ...alpha, generation: 4 }),
+          sessionKey(beta),
+          "andrew@beta:exited-room:1",
+        ],
+      },
+      { id: "g2", name: " ", sessions: [] },
+    ];
     expect(
       legacyGroupsForImport(
-        [
-          {
-            id: "g1",
-            name: "  Project  ",
-            sessions: [
-              sessionKey(alpha),
-              sessionKey({ ...alpha, generation: 4 }),
-              sessionKey(beta),
-              "andrew@gone:room:1",
-            ],
-          },
-          { id: "g2", name: " ", sessions: [] },
-        ],
+        legacy,
         [named, beta],
+        new Set(["andrew@alpha", "andrew@beta"]),
       ),
     ).toEqual([
       {
@@ -197,6 +222,26 @@ describe("fleet dashboard workspace", () => {
         sessions: ["andrew@alpha:label:mesh", "andrew@beta:instance:beta-room"],
       },
       { name: "Group", sessions: [] },
+    ]);
+  });
+
+  test("waits to import while an unmatched member's host has not listed", () => {
+    const legacy = [
+      { id: "g1", name: "Project", sessions: ["andrew@beta:exited-room:1"] },
+    ];
+    // beta is offline or its listing failed.
+    expect(
+      legacyGroupsForImport(legacy, [alpha], new Set(["andrew@alpha"])),
+    ).toBeNull();
+    // A matched member does not need its host's latest listing.
+    expect(
+      legacyGroupsForImport(
+        [{ id: "g1", name: "Project", sessions: [sessionKey(beta)] }],
+        [beta],
+        new Set(),
+      ),
+    ).toEqual([
+      { name: "Project", sessions: ["andrew@beta:instance:beta-room"] },
     ]);
   });
 

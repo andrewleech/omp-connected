@@ -190,6 +190,7 @@ const scheduled: {
 
 const launched: (typeof sessions.writer & {
   label: string;
+  ompcLabel: string;
   sessionId: string;
 })[] = [];
 
@@ -241,8 +242,12 @@ const history = [
   },
 ];
 let writerExited = false;
+// The writer's agent registered as ompc session "writer"; POST /__forget-label
+// lists it without that name, as a restarted hub does until it re-registers.
+let writerOmpcLabelKnown = true;
 function resetWriter(): void {
   writerExited = false;
+  writerOmpcLabelKnown = true;
   sessions.writer.generation = 1;
   launched.length = 0;
   writerInfo.model = models[0];
@@ -555,6 +560,11 @@ Bun.serve({
       for (const socket of dashboardSockets) socket.close();
       return json({ ok: true });
     }
+    if (url.pathname === "/__forget-label" && request.method === "POST") {
+      writerOmpcLabelKnown = false;
+      for (const socket of dashboardSockets) socket.close();
+      return json({ ok: true });
+    }
     if (url.pathname === "/api/agents")
       return json({
         agents: [
@@ -592,7 +602,17 @@ Bun.serve({
       return json([{ hostId: "writer" }, { hostId: "viewer" }]);
     if (url.pathname === "/api/hosts/writer/collab")
       return json({
-        sessions: [...(writerExited ? [] : [sessions.writer]), ...launched],
+        sessions: [
+          ...(writerExited
+            ? []
+            : [
+                {
+                  ...sessions.writer,
+                  ...(writerOmpcLabelKnown ? { ompcLabel: "writer" } : {}),
+                },
+              ]),
+          ...launched,
+        ],
       });
     if (url.pathname === "/api/hosts/viewer/collab")
       return json({ sessions: [sessions.viewer] });
@@ -631,6 +651,7 @@ Bun.serve({
         ...sessions.writer,
         cwd: body.cwd,
         label,
+        ompcLabel: label,
         instanceId: `launched-${launched.length}`,
         sessionId: body.sessionId ?? `new-${launched.length}`,
         sessionName: body.sessionId
@@ -655,6 +676,7 @@ Bun.serve({
       launched.push({
         ...sessions.writer,
         label,
+        ompcLabel: label,
         instanceId: `launched-${launched.length}`,
         sessionId: `fork-${launched.length}`,
         sessionName: "Forked conversation",

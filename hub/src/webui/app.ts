@@ -42,6 +42,7 @@ import {
   dropLegacyGroups,
   groupMemberKey,
   groupSessions,
+  keepKnownOmpcLabels,
   legacyGroupsForImport,
   readLegacyGroups,
   readWorkspace,
@@ -198,6 +199,8 @@ function createDashboard(root: HTMLElement): void {
   };
   // Revision of state.groups; -1 accepts the next list whatever its revision.
   let groupsRevision = -1;
+  // Hosts whose latest session listing succeeded.
+  let listedHosts = new Set<string>();
   let lastWorkspaceSignature: string | null | undefined;
   let tailViewer: CollabTailViewer | null = null;
   let collabRequest = 0;
@@ -344,6 +347,7 @@ function createDashboard(root: HTMLElement): void {
     for (const session of state.sessions)
       byHost.get(session.host_id)?.push(session);
     const settledHosts = new Set<string>();
+    const listed = new Set<string>();
     const apply = (): void => {
       state.sessions = state.hosts.flatMap(
         (host) => byHost.get(host.hostId) ?? [],
@@ -359,11 +363,15 @@ function createDashboard(root: HTMLElement): void {
           );
           byHost.set(
             host.hostId,
-            result.sessions.map((session) => ({
-              ...session,
-              host_id: host.hostId,
-            })),
+            keepKnownOmpcLabels(
+              byHost.get(host.hostId) ?? [],
+              result.sessions.map((session) => ({
+                ...session,
+                host_id: host.hostId,
+              })),
+            ),
           );
+          listed.add(host.hostId);
         } catch (error) {
           showStatus(`${host.hostId}: ${(error as Error).message}`, "warning");
         }
@@ -371,7 +379,9 @@ function createDashboard(root: HTMLElement): void {
         if (settledHosts.size < state.hosts.length) apply();
       }),
     );
+    listedHosts = listed;
     apply();
+    void importLegacyGroups().catch(() => {});
   }
 
   function reconcileSelection(): void {
@@ -440,13 +450,17 @@ function createDashboard(root: HTMLElement): void {
     applyGroups(await json<GroupList>("/api/groups"));
   }
 
-  async function changeGroups(path: string, body: unknown): Promise<void> {
+  async function changeGroups(
+    path: string,
+    body?: unknown,
+    method = "POST",
+  ): Promise<void> {
     try {
       applyGroups(
         await json<GroupList>(`/api/groups${path}`, {
-          method: "POST",
+          method,
           headers: { "content-type": "application/json" },
-          body: JSON.stringify(body),
+          body: body === undefined ? undefined : JSON.stringify(body),
         }),
       );
     } catch (error) {
@@ -459,19 +473,28 @@ function createDashboard(root: HTMLElement): void {
   }
 
   // Uploads groups this browser kept before the hub stored them, once: only
-  // into a hub with no groups, and the local copy goes once the hub has any.
+  // into a hub with no groups and once every member's host has listed (see
+  // legacyGroupsForImport); the local copy goes once the hub took them or
+  // has its own. Retried after every session load until then.
+  let importingLegacyGroups = false;
   async function importLegacyGroups(): Promise<void> {
     const legacy = readLegacyGroups(localStorage);
-    if (legacy.length === 0) return;
+    if (legacy.length === 0 || groupsRevision < 0 || importingLegacyGroups)
+      return;
     if (state.groups.length === 0) {
-      const response = await fetch("/api/groups/import", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          groups: legacyGroupsForImport(legacy, state.sessions),
-        }),
-      });
-      // Kept for the next load unless the hub took them or has its own.
+      const groups = legacyGroupsForImport(legacy, state.sessions, listedHosts);
+      if (!groups) return;
+      importingLegacyGroups = true;
+      let response: Response;
+      try {
+        response = await fetch("/api/groups/import", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ groups }),
+        });
+      } finally {
+        importingLegacyGroups = false;
+      }
       if (!response.ok && response.status !== 409) return;
       if (response.ok) applyGroups((await response.json()) as GroupList);
     }
@@ -730,6 +753,27 @@ function createDashboard(root: HTMLElement): void {
               ?.cwd,
           );
         heading.append(start);
+      } else {
+        const remove = el("button", {
+          type: "button",
+          text: "×",
+          title: `Delete group ${group.name}`,
+        }) as HTMLButtonElement;
+        remove.className = "host-start-session group-delete";
+        remove.setAttribute("aria-label", `Delete group ${group.name}`);
+        remove.onclick = () => {
+          if (
+            confirm(
+              `Delete group "${group.name}"? Its sessions return to their hosts.`,
+            )
+          )
+            void changeGroups(
+              `/${encodeURIComponent(group.id)}`,
+              undefined,
+              "DELETE",
+            );
+        };
+        heading.append(remove);
       }
       section.append(heading);
       if (group.sessions.length === 0)

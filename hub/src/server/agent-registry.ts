@@ -104,6 +104,9 @@ interface AgentEntry {
   hostId: string;
   instanceId: string;
   label: string;
+  /** The label the extension registered (its ompc session name), unlike
+   *  `label` never derived from the cwd. Unique per host among live sessions. */
+  ompcLabel: string | undefined;
   cwd: string;
   pid: number;
   features: string[];
@@ -160,7 +163,7 @@ export class AgentRegistry {
   private events: AgentHubEvent[] = [];
   private nextMessageId = 1;
   private idempotency = new Map<string, IdempotencyEntry>();
-  private onChangeFn: (event: DashboardEvent) => void = () => {};
+  private listeners = new Set<(event: DashboardEvent) => void>();
   private readonly now: () => number;
   private readonly disconnectedTtlMs: number;
   private pendingHostCalls = new Map<string, PendingHostCall>();
@@ -172,7 +175,18 @@ export class AgentRegistry {
   }
 
   onChange(fn: (event: DashboardEvent) => void): void {
-    this.onChangeFn = fn;
+    this.listeners.add(fn);
+  }
+
+  private emit(event: DashboardEvent): void {
+    for (const listener of this.listeners) listener(event);
+  }
+
+  /** The ompc session name an agent registered with, also while it is
+   *  disconnected within its TTL, so a reconnect does not hide it. */
+  ompcLabel(hostId: string, instanceId: string): string | undefined {
+    this.pruneExpired();
+    return this.agents.get(`${hostId}:${instanceId}`)?.ompcLabel;
   }
 
   /** Registers an agent, replacing (and closing) any prior live connection
@@ -214,6 +228,7 @@ export class AgentRegistry {
       hostId: params.hostId,
       instanceId: params.instanceId,
       label: params.label ?? basename(params.cwd),
+      ompcLabel: params.label,
       cwd: params.cwd,
       pid: params.pid,
       features: [...(params.features ?? [])],
@@ -233,7 +248,7 @@ export class AgentRegistry {
       label: entry.label,
       hostId: entry.hostId,
     });
-    this.onChangeFn({ event: "agent.registered", agent: summary });
+    this.emit({ event: "agent.registered", agent: summary });
     return summary;
   }
 
@@ -246,7 +261,7 @@ export class AgentRegistry {
       return;
     entry.busy = busy;
     entry.waiting = waiting;
-    this.onChangeFn({ event: "agent.activity", agentId: id, busy, waiting });
+    this.emit({ event: "agent.activity", agentId: id, busy, waiting });
   }
 
   /** Marks an agent's live connection gone. The entry (and its mailbox) is
@@ -260,7 +275,7 @@ export class AgentRegistry {
     entry.disconnectedAt = this.now();
     this.rejectPendingHostCallsFor(id);
     this.recordEvent("agent.disconnected", { agentId: id });
-    this.onChangeFn({ event: "agent.disconnected", agentId: id });
+    this.emit({ event: "agent.disconnected", agentId: id });
   }
 
   /** Currently connected agents only — same "live only" contract as

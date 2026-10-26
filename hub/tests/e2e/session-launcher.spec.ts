@@ -109,7 +109,7 @@ test("keeps the host launch button when its sessions belong to custom groups", a
     page.locator('.session-card[title="Writable room"]'),
   ).toHaveAttribute("aria-description", "Working");
   await request.post("/api/groups", {
-    data: { name: "Project", session: "writer:instance:writer-room" },
+    data: { name: "Project", session: "writer:label:writer" },
   });
   await expect(
     page.getByRole("heading", { name: "Project", exact: true }),

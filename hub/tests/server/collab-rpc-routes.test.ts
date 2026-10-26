@@ -80,9 +80,57 @@ describe("collab-rpc-routes", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       sessions: [
-        { instanceId: "inst-1", label: "x.install", features: ["session.v1"] },
+        {
+          instanceId: "inst-1",
+          label: "x.install",
+          features: ["session.v1"],
+          ompcLabel: "x.install",
+        },
         { instanceId: "other", features: [] },
       ],
+    });
+  });
+
+  test("GET /:id/collab sets ompcLabel only for an explicit label, also while reconnecting", async () => {
+    const registry = new AgentRegistry();
+    registerFakeAgent(registry, "user@hub-host");
+    const app = collabRpcRoutes(registry);
+    const other = (label?: string) => {
+      const conn: AgentConn = { send: () => {}, close: () => {} };
+      registry.register(
+        {
+          hostId: "user@hub-host",
+          instanceId: "other",
+          pid: 222,
+          cwd: "/work/proj",
+          ...(label ? { label } : {}),
+        },
+        conn,
+      );
+      return conn;
+    };
+    const listedOther = async () =>
+      (
+        (await (
+          await app.handle(
+            new Request("http://localhost/api/hosts/user@hub-host/collab"),
+          )
+        ).json()) as { sessions: Record<string, unknown>[] }
+      ).sessions[1];
+
+    other();
+    expect(await listedOther()).toEqual({
+      instanceId: "other",
+      label: "proj",
+      features: [],
+    });
+
+    const conn = other("proj.dev");
+    registry.unregister("user@hub-host:other", conn);
+    expect(await listedOther()).toEqual({
+      instanceId: "other",
+      features: [],
+      ompcLabel: "proj.dev",
     });
   });
 

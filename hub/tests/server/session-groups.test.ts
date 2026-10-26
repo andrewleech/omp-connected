@@ -289,3 +289,105 @@ test("every change pushes the full list to dashboard sockets", async () => {
     app.stop();
   }
 });
+
+function registerAgent(
+  registry: AgentRegistry,
+  instanceId: string,
+  label?: string,
+) {
+  const conn = { send() {}, close() {} };
+  registry.register(
+    {
+      hostId: "user@host-a",
+      instanceId,
+      pid: 1,
+      cwd: "/work/proj",
+      ...(label ? { label } : {}),
+    },
+    conn,
+  );
+  return conn;
+}
+
+test("deleting a group ungroups its sessions and pushes the change", async () => {
+  const store = new SessionGroupStore(dir);
+  const app = sessionGroupRoutes(store);
+  const pushed: number[] = [];
+  store.onChange((list) => pushed.push(list.revision));
+  const project = await createGroup(app, "Project", WRITER);
+  const other = await createGroup(app, "Other");
+  const deleted = await call(
+    app,
+    new Request(`${base}/${project.id}`, { method: "DELETE" }),
+  );
+  expect(deleted.status).toBe(200);
+  expect(deleted.body).toEqual({ revision: 3, groups: [other] });
+  expect(pushed).toEqual([1, 2, 3]);
+  expect(
+    (
+      await call(
+        app,
+        new Request(`${base}/${project.id}`, { method: "DELETE" }),
+      )
+    ).status,
+  ).toBe(404);
+  expect(new SessionGroupStore(dir).snapshot().groups).toEqual([other]);
+});
+
+test("stores an instance key as the label key once the hub knows the ompc name", async () => {
+  const registry = new AgentRegistry();
+  const store = new SessionGroupStore(dir, registry);
+  const app = sessionGroupRoutes(store);
+  const conn = registerAgent(registry, "named", "proj.dev");
+  registerAgent(registry, "plain");
+  const project = await createGroup(
+    app,
+    "Project",
+    "user@host-a:instance:named",
+  );
+  expect(project.sessions).toEqual(["user@host-a:label:proj.dev"]);
+  // Kept while the agent reconnects.
+  registry.unregister("user@host-a:named", conn);
+  await call(
+    app,
+    post("/assign", { session: "user@host-a:instance:named", groupId: null }),
+  );
+  await call(
+    app,
+    post("/assign", {
+      session: "user@host-a:instance:plain",
+      groupId: project.id,
+    }),
+  );
+  expect(store.snapshot().groups[0]?.sessions).toEqual([
+    "user@host-a:instance:plain",
+  ]);
+});
+
+test("an agent registering its ompc name re-keys the instance key it was grouped by", async () => {
+  const registry = new AgentRegistry();
+  const store = new SessionGroupStore(dir, registry);
+  const app = sessionGroupRoutes(store);
+  const old = await createGroup(app, "Old", "user@host-a:label:proj.dev");
+  const project = await createGroup(
+    app,
+    "Project",
+    "user@host-a:instance:fresh",
+  );
+  const pushed: SessionGroup[][] = [];
+  store.onChange((list) => pushed.push(list.groups));
+
+  registerAgent(registry, "unrelated", "other.name");
+  registerAgent(registry, "fresh", "proj.dev");
+  const expected = [
+    { id: old.id, name: "Old", sessions: [] },
+    {
+      id: project.id,
+      name: "Project",
+      sessions: ["user@host-a:label:proj.dev"],
+    },
+  ];
+  expect(store.snapshot().groups).toEqual(expected);
+  expect(pushed).toEqual([expected]);
+  expect(new SessionGroupStore(dir).snapshot().groups).toEqual(expected);
+});

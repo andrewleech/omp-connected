@@ -96,6 +96,7 @@ interface HostCollabSession {
   participants: number; relayConnected: boolean; inputRequired: boolean;
   label?: string; // hub-added from the registered agent, absent if none
   features: string[]; // hub-added from the registered agent, [] if none
+  ompcLabel?: string; // hub-added: the label the agent explicitly registered (its ompc session name), also while it reconnects within its TTL
 }
 ```
 
@@ -240,14 +241,21 @@ interface SessionGroup { id: string; name: string; sessions: string[] } // sessi
 interface SessionGroupList { revision: number; groups: SessionGroup[] }
 ```
 
-A member key is `${hostId}:label:${label}` when the session has a registered label (its ompc session name), else `${hostId}:instance:${instanceId}`. It has no Collab generation, so a session keeps its group when its room is hosted again, and a labelled session keeps it across omp restarts. The dashboard builds the keys (`groupMemberKey` in `webui/lib/workspace.ts`); the hub checks only their shape. A session is in at most one group.
+A member key is `${hostId}:label:${ompcLabel}` when the session's agent explicitly registered a label (its ompc session name, which tmux keeps unique per host), else `${hostId}:instance:${instanceId}`. The cwd-derived `label` never keys a group, as sessions in one directory share it. A key has no Collab generation, so a session keeps its group when its room is hosted again, and an ompc session keeps it across omp restarts. The dashboard builds the keys (`groupMemberKey` in `webui/lib/workspace.ts`); the hub checks their shape. A session is in at most one group.
+
+The session's name must not drop out of its key while its agent reconnects:
+
+- The registry keeps a disconnected agent's entry, and so its `ompcLabel`, for its 5-minute TTL; `/api/hosts/:id/collab` reports it from there.
+- A dashboard keeps the `ompcLabel` it last saw for a host and instance while the listing lacks it (as after a hub restart, until the agent registers again).
+- The hub stores an instance key as the label key when it knows the name, and when an agent registers with a name it re-keys the instance key it is grouped by (pushed like any change). That assignment is the newer one, so the label key leaves any other group. An assignment made while the name was unknown is therefore kept.
 
 REST routes, one per dashboard action, so edits from several dashboards each apply to the current list instead of replacing it. Each answers the new `SessionGroupList`:
 
 - `GET /api/groups`.
 - `POST /api/groups` `{ name, session? }` adds a group at the end, moving `session` into it when given; the answer also has the new `group`.
 - `POST /api/groups/assign` `{ session, groupId }` moves a session into a group, or out of every group for `groupId: null`. An unknown group answers 404.
-- `POST /api/groups/import` `{ groups: { name, sessions }[] }` replaces an empty list; 409 once the hub has any group. The dashboard uses it once to upload groups it kept in `localStorage` before the hub stored them, translating their `host:instance:generation` members through the current session listing and dropping members it cannot match.
+- `DELETE /api/groups/:id` deletes a group and ungroups its sessions; 404 when unknown. The rail's custom group headings have a delete button.
+- `POST /api/groups/import` `{ groups: { name, sessions }[] }` replaces an empty list; 409 once the hub has any group. The dashboard uses it once to upload groups it kept in `localStorage` before the hub stored them, translating their `host:instance:generation` members through the current session listing. It waits until every member is either listed or on a host whose latest listing succeeded without it (those are dropped), retrying after each session load, and keeps its copy until the hub took the groups or already has its own.
 
 Names are trimmed and must be 1-64 characters without control characters; there are at most 100 groups and 1000 grouped sessions. Invalid input answers 400. Writes share one limit of 30 per 10 s (429), as the dashboard has no per-user identity. A failed save answers 500 and leaves the groups unchanged.
 
