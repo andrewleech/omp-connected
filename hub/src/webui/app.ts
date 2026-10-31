@@ -431,6 +431,7 @@ function createDashboard(root: HTMLElement): void {
     const frame = root.querySelector<HTMLIFrameElement>("[data-collab-frame]");
     if (frame) frame.src = "about:blank";
     state.selected = sessionKey(session);
+    unseenIdle.delete(`${session.host_id}:${session.instanceId}`);
     state.selectedSession = session;
     state.selectedAccess = null;
     persist();
@@ -825,7 +826,7 @@ function createDashboard(root: HTMLElement): void {
                 ? ["working", "Working"]
                 : ["idle", "Idle"];
           const dot = el("span", {
-            className: `activity-dot ${stateClass}`,
+            className: `activity-dot ${stateClass}${stateClass === "idle" && agent !== undefined && unseenIdle.has(agent.id) ? " unseen" : ""}`,
             title: label,
           });
           // Described rather than named, so the card's accessible name stays
@@ -945,9 +946,33 @@ function createDashboard(root: HTMLElement): void {
     }
   }
 
+  // Agents that went idle while the user was elsewhere pulse until opened.
+  const unseenIdle = new Set<string>();
+  const lastAgentState = new Map<string, string>();
+  function agentStateOf(a: AgentSummary): string {
+    return a.waiting === true ? "waiting" : a.busy ? "working" : "idle";
+  }
+  function selectedAgentId(): string | null {
+    const s = state.selectedSession;
+    return s ? `${s.host_id}:${s.instanceId}` : null;
+  }
+  function noteAgentTransitions(agents: AgentSummary[]): void {
+    const seen = selectedAgentId();
+    for (const a of agents) {
+      if (a.busy === undefined) continue;
+      const now = agentStateOf(a);
+      const before = lastAgentState.get(a.id);
+      if (before !== undefined && before !== now) {
+        if (now === "idle" && a.id !== seen) unseenIdle.add(a.id);
+        else unseenIdle.delete(a.id);
+      }
+      lastAgentState.set(a.id, now);
+    }
+  }
   async function loadAgents(): Promise<void> {
     try {
       const result = await json<{ agents: AgentSummary[] }>("/api/agents");
+      noteAgentTransitions(result.agents);
       state.agents = result.agents;
     } catch {
       // Agent activity is auxiliary; preserve the last known rail indicators.
