@@ -32,6 +32,7 @@ export const SESSION_REFRESH_MS = 5_000;
 
 export interface PaneHost {
   showStatus(message: string, kind?: string): void;
+  openTerminal?(session: CollabSession): void;
 }
 
 export class SessionPane {
@@ -75,6 +76,7 @@ export class SessionPane {
   readonly #usageError: HTMLElement;
   #usageLoading = false;
   readonly #abortButton: HTMLButtonElement;
+  readonly #terminalButton: HTMLButtonElement;
 
   constructor(host: PaneHost) {
     this.#host = host;
@@ -183,6 +185,11 @@ export class SessionPane {
     this.#abortButton.addEventListener("click", () => {
       void this.#act("Aborting", "/abort", {});
     });
+    this.#terminalButton = button("Open terminal");
+    this.#terminalButton.type = "button";
+    this.#terminalButton.addEventListener("click", () => {
+      if (this.#session) this.#host.openTerminal?.(this.#session);
+    });
 
     this.#controls.append(
       el("h3", { text: "Controls" }),
@@ -192,6 +199,7 @@ export class SessionPane {
       this.#thinkingField,
       compactForm,
       this.#abortButton,
+      this.#terminalButton,
     );
     this.element.append(
       el("h2", { text: "Session" }),
@@ -537,6 +545,9 @@ export class SessionPane {
     this.#compactInput.disabled = viewOnly;
     this.#compactButton.disabled = !canControl;
     this.#abortButton.disabled = !canControl || !info || info.idle;
+    this.#terminalButton.hidden =
+      !this.#session?.features?.includes("terminal.v1") ||
+      info?.access !== "control";
     this.#usageButton.hidden = !supportsSessionUsage(this.#session ?? {});
     const canReadUsage =
       !this.#usageButton.hidden && info?.access === "control";

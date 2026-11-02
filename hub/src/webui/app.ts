@@ -215,8 +215,11 @@ function createDashboard(root: HTMLElement): void {
       showStatus((error as Error).message, "warning"),
     );
   });
-  const sessionPane = new SessionPane({ showStatus });
   const terminalWindow = new TerminalWindow();
+  const sessionPane = new SessionPane({
+    showStatus,
+    openTerminal: (session) => void terminalWindow.open(session),
+  });
   const filesPane = new FilesPane(
     { showStatus },
     (session) => sessionPane.cwdFor(session),
@@ -913,39 +916,22 @@ function createDashboard(root: HTMLElement): void {
     // The Collab iframe (control mode) shows the session title in its own
     // header, so only label the workspace while connecting or for the
     // title-less tail viewer.
-    const terminalAvailable =
-      state.selectedAccess === "control" &&
-      session.features?.includes("terminal.v1") === true;
-    if (state.selectedAccess !== "control" || terminalAvailable) {
+    if (state.selectedAccess !== "control") {
       const header = el("header", { className: "workspace-header" });
-      if (state.selectedAccess !== "control") {
-        const title = el("div", { className: "workspace-title" });
-        title.append(
-          el("span", {
-            className: "workspace-title-text",
-            text: `${displayName(session)} · ${session.host_id}`,
-          }),
-        );
-        title.append(
-          el("span", {
-            className: `badge ${state.selectedAccess ?? "connecting"}`,
-            text: state.selectedAccess === "view" ? "view" : "connecting…",
-          }),
-        );
-        header.append(title);
-      }
-      if (terminalAvailable) {
-        const terminalButton = el("button", {
-          type: "button",
-          className: "workspace-terminal-button",
-          text: "Terminal",
-        }) as HTMLButtonElement;
-        terminalButton.addEventListener(
-          "click",
-          () => void terminalWindow.open(session),
-        );
-        header.append(terminalButton);
-      }
+      const title = el("div", { className: "workspace-title" });
+      title.append(
+        el("span", {
+          className: "workspace-title-text",
+          text: `${displayName(session)} · ${session.host_id}`,
+        }),
+      );
+      title.append(
+        el("span", {
+          className: `badge ${state.selectedAccess ?? "connecting"}`,
+          text: state.selectedAccess === "view" ? "view" : "connecting…",
+        }),
+      );
+      header.append(title);
       container.append(header);
     }
     // Tail viewer active → show it; otherwise show the collab iframe.
