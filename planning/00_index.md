@@ -25,7 +25,7 @@ HEAD: ea1ccb0695
 
 9. Per-model profiles that reduce initial context, superseded by item 10 (kept for its measurements; no fork branch, no upstream issue): [design](20261019_model_profiles_design.md): `modelProfiles` in `models.yml`, one resolution function for subagent spawn and live model switch, phases 1 to 3, open questions 1 to 12.
 10. Classifier-based capability selector, active design for an upstream proposal (no fork branch yet): [design](20261020_capability_selector_design.md): skills, MCP routes, agents and tools leave the system prompt; a Jev-style judge (hosted Jev or self-hosted jeff) on a new `selector` model role injects matches per prompt, plus a `capability` pull tool; phases 0 to 4, open questions 1 to 13.
-11. Web terminal attached to a session's tmux, active design (no fork branch, no upstream change needed): [design](20261031_web_terminal_design.md): one binary frame protocol with permessage-deflate and credit flow control, direct browser-to-host route with hub relay fallback, tickets signed with the host token, on by default; phases 0 to 3, open questions 1 to 5.
+11. Web terminal attached to a session's tmux, implemented and deployed (no fork branch, no upstream change needed): [design](20261031_web_terminal_design.md): binary frame protocol with permessage-deflate and flow control, direct browser-to-host route with hub relay fallback, random single-use tickets delivered over agent RPC (not signed with the host token), on by default; the hub has no dashboard-user authentication.
 
 ## Operating conventions
 - Every document is stamped with its date and HEAD revision.

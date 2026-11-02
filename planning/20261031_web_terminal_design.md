@@ -2,7 +2,7 @@
 
 Date: 2026-10-31
 HEAD: bc7ab5140a
-Status: implementation is in progress. Phase 0 findings below replace the original assumptions.
+Status: implemented and deployed (commits `0534347`, `1a5e59b` and the Session tab layout change). The Terminal action is the **Open terminal** button in the Session tab's Tools section. Phase 0 findings below replace the original assumptions.
 
 ## Summary
 
