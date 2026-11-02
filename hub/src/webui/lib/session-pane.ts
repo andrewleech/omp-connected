@@ -77,6 +77,7 @@ export class SessionPane {
   #usageLoading = false;
   readonly #abortButton: HTMLButtonElement;
   readonly #terminalButton: HTMLButtonElement;
+  readonly #tools: HTMLElement;
 
   constructor(host: PaneHost) {
     this.#host = host;
@@ -152,11 +153,7 @@ export class SessionPane {
     this.#usageButton = button("Usage");
     this.#usageButton.type = "button";
     this.#usageButton.addEventListener("click", () => void this.#onUsage());
-    compactRow.append(
-      this.#compactInput,
-      this.#compactButton,
-      this.#usageButton,
-    );
+    compactRow.append(this.#compactInput, this.#compactButton);
     compactForm.append(
       el("span", { className: "field-label", text: "Compact context" }),
       compactRow,
@@ -191,6 +188,14 @@ export class SessionPane {
       if (this.#session) this.#host.openTerminal?.(this.#session);
     });
 
+    this.#tools = el("div", { className: "session-tools" });
+    this.#tools.append(
+      el("h3", { text: "Tools" }),
+      this.#usageButton,
+      this.#terminalButton,
+    );
+    const footer = el("div", { className: "session-footer" });
+    footer.append(this.#abortButton);
     this.#controls.append(
       el("h3", { text: "Controls" }),
       this.#hint,
@@ -198,8 +203,6 @@ export class SessionPane {
       this.#modelOptions,
       this.#thinkingField,
       compactForm,
-      this.#abortButton,
-      this.#terminalButton,
     );
     this.element.append(
       el("h2", { text: "Session" }),
@@ -208,6 +211,8 @@ export class SessionPane {
       this.#usageDialog,
       this.#infoList,
       this.#controls,
+      this.#tools,
+      footer,
     );
     this.#update();
   }
@@ -549,6 +554,8 @@ export class SessionPane {
       !this.#session?.features?.includes("terminal.v1") ||
       info?.access !== "control";
     this.#usageButton.hidden = !supportsSessionUsage(this.#session ?? {});
+    this.#tools.hidden =
+      this.#usageButton.hidden && this.#terminalButton.hidden;
     const canReadUsage =
       !this.#usageButton.hidden && info?.access === "control";
     this.#usageButton.disabled = !canControl || this.#usageLoading;
