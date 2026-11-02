@@ -11,6 +11,7 @@ import { dashboardEventsPlugin } from "./dashboard-events";
 import { hostSessionRoutes } from "./host-session-routes";
 import { SessionGroupStore, sessionGroupRoutes } from "./session-groups";
 import { MAX_UPLOAD_BYTES, sessionRpcRoutes } from "./session-rpc-routes";
+import { terminalRoutes } from "./terminal-routes";
 import { wsAgentPlugin } from "./ws-agent";
 
 export interface CreateHubOptions {
@@ -78,6 +79,9 @@ export function createHub(options: CreateHubOptions = {}): Hub {
     .use(sessionRpcRoutes(agentRegistry))
     .use(agentRpcRoutes(agentRegistry, osHostname()))
     .use(sessionGroupRoutes(groups))
+    .use(
+      terminalRoutes(agentRegistry, env.publicOrigin, env.relayAllowedOrigins),
+    )
     .use(wsAgentPlugin(agentRegistry, hostToken))
     .use(dashboardEventsPlugin(agentRegistry, groups))
     .onBeforeHandle(({ request, set }) => {

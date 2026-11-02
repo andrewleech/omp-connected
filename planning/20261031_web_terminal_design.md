@@ -2,38 +2,44 @@
 
 Date: 2026-10-31
 HEAD: bc7ab5140a
-Status: plan, no code written. Open questions 1 to 5 are settled in phase 0.
+Status: implementation is in progress. Phase 0 findings below replace the original assumptions.
 
 ## Summary
 
-Add a "Terminal" button to the session view in the dashboard. It opens an xterm.js window attached to the session's own tmux server, so the user gets the real omp TUI (`/settings`, dialogs, anything the Collab view does not show).
+The dashboard shows a Terminal action for control-shared sessions advertising `terminal.v1`. It connects xterm.js to `tmux -L <OMPC_SESSION> attach-session` on the host. When a direct TLS endpoint is available, the browser tries it first; otherwise it uses the hub relay.
 
-- Every `ompc` session already runs in its own tmux server (`tmux -L <name>`), and exports the name as `OMPC_SESSION`. The extension in the omp process knows the exact socket to attach to.
-- The extension spawns `tmux -L <name> attach-session` on a pty and streams it over a websocket.
-- One wire protocol, two routes. The browser connects directly to the host when it can, and through the hub relay when it cannot. The browser code and the extension code are the same for both.
-- The stream uses permessage-deflate, output coalescing and credit-based flow control.
-- On by default on every host. No per-host configuration. Authorisation is a short-lived ticket signed with the host token that every host already has.
+- The extension starts a PTY with `Bun.spawn` and attaches tmux using the registered `OMPC_SESSION` name.
+- The hub issues a random, short-lived relay capability over trusted agent RPC. When direct TLS is available, the extension returns a separate direct ticket in the same single-use capability group. Neither ticket is signed with the shared registration token.
+- If both direct and relay connection attempts fail, the browser requests a new endpoint and retries the relay with its new ticket.
+- The browser loads terminal packages with dynamic imports when opening the terminal.
+- PTY output callbacks cannot be paused. The extension bounds queued output and closes the connection if the queue exceeds its limit.
+
+## Phase 0 - Verified findings
+
+- The runtime's `Bun.spawn` supports the `terminal` option used by the extension; no helper binary is required.
+- The extension invokes `tailscale status --json` and `tailscale cert` to find the host's MagicDNS name and obtain a certificate. It checks the certificate hostname and expiry before advertising the direct URL. This is automatic detection, not a verified fleet-wide availability claim.
+- The terminal attaches with `tmux -L <socket> attach-session`; it does not pass `-f ignore-size`. tmux applies its normal attached-client sizing behavior.
+- Bun's PTY callback does not provide a way to pause PTY reads. The service queues output, applies bounded output and websocket buffering, and closes on overflow; it does not use PTY pause/resume flow control.
+- The hub has no dashboard authentication. Terminal HTTP requests and hub client websocket upgrades accept the configured public origin, the request's own origin when no public origin is configured, or configured allowed origins. The terminal request also requires a Collab control share. These checks are not user authentication.
+- The hub creates a random relay ticket and sends it to the extension with `terminal.open`. If direct TLS is available, the extension creates a distinct direct ticket in the same single-use capability group. The hub ticket expires after 30 seconds; the extension keeps the ticket group locally for up to 35 seconds. These tickets are not HMAC tickets and do not use `OMP_HUB_HOST_TOKEN` as a signing key.
+- The browser dynamically imports xterm.js, Fit, and Unicode 11 on terminal open.
+- The terminal route has its own per-agent request limiter.
 
 ## Constraints
 
-- Sessions on remote hosts only connect outbound to the hub (`/ws/agent`). The hub cannot dial them.
-- A session without `OMPC_SESSION` has no tmux. The button is hidden for those sessions.
-- The dashboard is served over HTTPS, so the browser blocks plain `ws://` to a host (mixed content). A direct connection needs `wss://` with a certificate the browser trusts.
-- A terminal gives no more access than the agent session on the same host already gives (the agent runs bash tools). It needs no extra gate beyond the existing dashboard authentication.
+- Sessions on remote hosts connect outbound to the hub over `/ws/agent`; terminal setup is requested on that connection.
+- A session without a tmux-backed `OMPC_SESSION` does not advertise `terminal.v1`.
+- A browser page can use the direct route only when the host obtains a TLS certificate trusted by that browser; otherwise it uses the hub relay.
+- The hub does not authenticate dashboard users. Same-origin checks and Collab control access do not establish a user identity.
+
+
+The browser blocks insecure websocket connections from an HTTPS page. A direct connection therefore needs a browser-trusted TLS certificate. The hub has no dashboard authentication; the same-origin check and the session's Collab control access are not user authentication.
 
 ## Design
 
-### Registration
+### Capability registration
 
-The extension adds a `terminal` field to its registration message:
-
-```
-terminal: { tmuxSocket: string, direct?: { url: string } } | undefined
-```
-
-- `tmuxSocket` is the `OMPC_SESSION` value. It is absent when there is no tmux.
-- `direct.url` is the `wss://` URL of the extension's own terminal listener, present only when the listener started and has a usable certificate (see "Direct route").
-- The hub copies the field into the agent summary, and the dashboard shows the button when `terminal` exists.
+The extension advertises `terminal.v1` only when `OMPC_SESSION` is set. The dashboard shows the Terminal action only for sessions with this feature and control access. A direct URL and a distinct direct ticket are returned in the response to `POST /api/agents/:id/terminal` only when a direct TLS listener is available; neither is part of agent registration.
 
 ### Wire protocol
 
@@ -41,7 +47,7 @@ One websocket per terminal, binary frames, first byte is the type. Both routes c
 
 | Type | Direction | Body |
 |---|---|---|
-| `0x00` hello | both | protocol version, ticket (browser to host only) |
+| `0x00` hello | peers | browser and relay host send protocol version and their route ticket; hub or direct host replies with version and status |
 | `0x01` out | host to browser | raw pty bytes |
 | `0x02` in | browser to host | raw key bytes |
 | `0x03` resize | browser to host | cols, rows (u16 each) |
@@ -49,90 +55,61 @@ One websocket per terminal, binary frames, first byte is the type. Both routes c
 | `0x05` exit | host to browser | exit code (i16); tmux ended or detached |
 
 Compression:
-- permessage-deflate with context takeover on every hop (browser to host, browser to hub, hub to host). Browsers negotiate it natively. Bun supports it on the server (`perMessageDeflate`); phase 0 checks the client side in omp's embedded Bun.
-- The host coalesces pty reads into one `out` frame per 8 to 16 ms, or 16 KiB, whichever comes first. Larger frames compress better and cut per-frame overhead.
-- No application-level compression layer. Browsers have no native zstd, and `CompressionStream` has no streaming dictionary reuse across frames, so it would do worse than context takeover.
-- `in`, `resize` and `ack` frames are a few bytes each and are not worth compressing.
+- permessage-deflate is enabled on hub relay and direct listener websockets.
+- The extension coalesces PTY reads on a 12 ms timer, and sends frames up to 16 KiB. xterm.js acknowledges output in 32 KiB batches.
 
 Flow control:
-- The host stops reading the pty when unacknowledged bytes exceed 128 KiB. It resumes when they drop under 32 KiB.
-- The browser sends `ack` from xterm.js's `write` callback, batched every 32 KiB. This keeps a runaway command from filling the websocket buffer and stalling input.
-- Reconnect needs no replay buffer. Re-attaching to tmux makes tmux redraw the screen.
+- PTY callbacks cannot pause reads. The extension bounds queued output to 1 MiB and closes when it exceeds that limit. It limits unacknowledged output to 128 KiB and checks websocket buffering before sending.
+- The hub bounds websocket buffering and closes sockets on overflow.
+- Reconnect is manual. A new tmux attachment redraws the current screen; there is no replay buffer.
 
-### Authorisation
+### Capability and access checks
 
-- The browser asks the hub: `POST /api/agents/<id>/terminal`. This route is behind the same authentication as the other `/api` routes.
-- The hub returns a ticket and the candidate routes. The ticket is `{agentId, instance, exp, nonce}` plus an HMAC-SHA256 signature. It expires after 30 seconds and works once per host process.
-- The signing key is the host token (`OMP_HUB_HOST_TOKEN`) the host already uses to register, so the host can verify the ticket with no new configuration. The hub knows each host's token.
-- A direct listener without a valid ticket closes the socket before it sends any terminal data.
-- The hub logs open and close per terminal (agent, user, duration, bytes).
-- Limit: four concurrent terminals per session. The existing `RateLimiter` covers the ticket route.
+- The browser posts to `/api/agents/<id>/terminal`. The route accepts the configured public origin, the request's own origin when no public origin is configured, or a configured allowed origin. It checks that the target session has Collab control access.
+- The hub has no dashboard authentication. The request does not identify or authenticate a user.
+- The hub creates a random 32-byte base64url relay ticket, stores it with the target agent and a 30-second expiry, then sends it to the extension through `terminal.open` on `/ws/agent`.
+- When direct TLS is available, the extension returns a separate direct ticket in the same capability group. Claiming either ticket consumes the group.
+- The capability group expires locally after 35 seconds. The tickets are not signed with `OMP_HUB_HOST_TOKEN`. The hub does not log terminal user identities, durations or byte counts.
+- The route limits requests to 20 per 10 seconds and four active terminals per agent.
 
-### Relay route (default path, works everywhere)
+1. The hub sends `terminal.open {ticket, relayUrl}` to the extension over the existing agent websocket.
+2. The extension dials `relayUrl` (`/ws/terminal/host`).
+3. The browser connects to `/ws/terminal/client` with the relay ticket.
+4. The hub pairs the client and host sockets by relay ticket and relays binary frames. It closes connections when websocket backpressure exceeds its configured limit.
 
-1. The hub sends `terminal.open {ticketId, relayUrl}` to the extension over the existing control websocket.
-2. The extension dials `relayUrl` (`/ws/terminal/host`) outbound, and sends the ticket.
-3. The browser connects to `/ws/terminal/client` on the hub with the same ticket.
-4. The hub pairs the two sockets by ticket id and pipes frames both ways without parsing them. It applies backpressure per socket pair.
+Each terminal uses separate websockets, not the `/ws/agent` socket, for PTY traffic.
 
-Each terminal has its own websocket. It is not multiplexed onto `/ws/agent`, so terminal output cannot delay control traffic, and backpressure applies per stream.
+### Direct route (optional)
 
-### Direct route (optional, auto-detected)
+The extension starts direct TLS setup when its terminal service starts. It reads `Self.DNSName` from `tailscale status --json`, asks `tailscale cert` to issue certificate and key files in a temporary directory, and validates the certificate hostname and expiry. A terminal request retries setup if needed but does not wait for an in-progress attempt; it includes a direct URL and ticket only if the listener is already available. Certificate renewal is attempted every 24 hours.
 
-The extension starts one `Bun.serve` listener on an ephemeral port when the session starts, and registers `direct.url` if it can serve TLS.
+The direct websocket accepts the hub origin or a client origin associated with an unexpired terminal capability. The browser tries the direct URL with a 1.5-second timeout and a separate direct ticket. If direct fails, it tries the original relay ticket; if that fails, it requests a new endpoint and tries relay again. Claiming either direct or relay ticket consumes both tickets in their capability group.
 
-- Certificate: the extension looks for a Tailscale certificate for the host's MagicDNS name (`tailscale cert`). If one is available and readable, it serves `wss://<host>.your-tailnet.ts.net:<port>`. If not, `direct` is absent and the session uses the relay. No configuration is needed in either case.
-- The dashboard tries the direct URL first with a short timeout (1.5 s), then falls back to the relay with the same ticket (the host accepts one ticket per route attempt, so the ticket carries two nonces).
-- The dashboard remembers the winning route per host for the page's lifetime to avoid repeating the failed attempt.
-- The direct route removes the hub from the data path. Data flows browser to host only, so a terminal costs the hub nothing.
+### Extension and hub
 
-### Extension
+The extension service is created for sessions with `OMPC_SESSION`. On `terminal.open`, it stores the relay ticket for up to 35 seconds, opens the relay websocket, and returns an optional direct URL and separate ticket. It starts a `Bun.spawn` PTY for `tmux -L <name> attach-session` when a route claims a ticket. The PTY closes when its websocket ends; tmux remains running.
 
-New module `extension/src/terminal.ts`:
-- Spawns `tmux -L <name> attach-session` on a pty (`Bun.spawn` with the `terminal` option if omp's embedded Bun has it; otherwise a pty helper, see question 1).
-- Applies the frame protocol above, coalescing and flow control.
-- Closes the pty on socket close. tmux keeps running, and only the web client detaches.
-- Reports `exit` when tmux ends (omp exited).
-- Uses `ignore-size` handling per question 3.
-
-### Hub
-
-- `hub/src/server/terminal-routes.ts`: the ticket route, the `/ws/terminal/client` and `/ws/terminal/host` upgrades, pairing and piping.
-- `ws-agent.ts` and `types.ts`: the `terminal` registration field and the `terminal.open` message.
 
 ### Web UI
 
-- `@xterm/xterm`, `@xterm/addon-fit`, `@xterm/addon-webgl` (canvas fallback) and `@xterm/addon-unicode11`. They load with a dynamic import on the first click, so first page load stays the same size.
-- A "Terminal" button in the session header, next to the existing actions. It opens a resizable window (modal on mobile). The window follows the dashboard theme.
-- Fit on resize sends a `resize` frame.
-- On mobile, a key bar (Esc, Tab, Ctrl, arrows, `|`, `~`) sits above the keyboard, since omp's TUI needs keys that phone keyboards lack.
-- Disconnect shows a reconnect button. It does not reconnect on its own, so a closed window does not leave a terminal open on the host.
+The browser dynamically imports `@xterm/xterm`, `@xterm/addon-fit`, and `@xterm/addon-unicode11` when opening the terminal. It opens a terminal dialog with a mobile key bar, sends resize and input frames, and acknowledges output after xterm.js processes it. On disconnect, it offers manual reconnect; it does not reconnect automatically.
 
-## Tests
+## Planned validation
 
-- Unit: frame encode/decode, ticket sign/verify/expiry/replay, coalescing and watermark behaviour against a fake pty.
-- Integration (extension, real hub process, real tmux): open a terminal on a `tmux -L test-<pid>` session, type, resize, compare screen content from `tmux capture-pane`, and check the relay path and direct path both work.
-- E2E (Playwright, `fixture-server.ts`): button visibility with and without `terminal`, open/close, fallback from a failing direct URL to the relay.
-- Measurement: replay a recorded omp session through the pty path and record bytes on the wire with and without deflate. The result goes in this document.
-- Manual: one real fleet host over the relay route and one over the direct route; a phone over the tailnet.
+- Unit and integration coverage: frame handling, capability expiry/claim, PTY output buffering, relay pairing, and terminal input/resize.
+- Browser coverage: control-and-feature-gated action, open/close, direct-first connection, relay fallback with the original relay ticket, and retrying relay with a fresh endpoint ticket if that fails.
 
 ## Phases
 
-0. Revalidate assumptions (settles questions 1 to 5). No product code.
-1. Relay route end to end: extension `terminal.ts`, hub routes, ticket, UI button and window, tests. This is the shippable default.
-2. Direct route: listener, certificate detection, route race and fallback, tests.
-3. Mobile key bar, documentation (`hub/ARCHITECTURE.md`, `extension/ARCHITECTURE.md`, `README.md`), measurements recorded.
+0. **Assumption review - complete.** Confirmed Bun PTY support; documented capability and same-origin checks, bounded PTY output, and automatic optional direct TLS behavior. A fleet-wide Tailscale certificate availability survey was not performed; direct TLS remains opportunistic and relay is the fallback.
+1. **Relay and browser terminal - implementation in progress.** Implement the extension PTY service, hub capability and relay routes, UI, and tests.
+2. **Direct TLS route - implementation in progress.** Attempt Tailscale certificate acquisition, offer direct websocket service when available, and retain relay fallback.
+3. **Documentation and field checks.** Document behavior and validate relay/direct use where available.
 
-## Open questions
+## Phase 0 decisions
 
-1. Does omp's embedded Bun support `Bun.spawn` with `terminal` and a client-side `perMessageDeflate` websocket? If not, the choices are a small pty helper binary, or `script -qfc` (no resize support), or `python3 -c pty`. Check in phase 0 against the shipped fork binary.
-2. Is the `tailscale cert` file readable by the user running omp on each host, and is HTTPS enabled on the tailnet? If not on most hosts, the direct route would rarely start and phase 2 is not worth building. Check every fleet host in phase 0. A per-host `tailscale set --operator` is configuration the user said to avoid.
-3. Window sizing. tmux (3.7c here) defaults to `window-size latest`, so the web client resizes the window while it is the most recently active client and the real terminal gets squashed until the user types there. `attach-session -f ignore-size` avoids that, but then the web terminal shows the window at the other client's size. Decide which on real use; `omp-tmux.conf` sets neither today.
-4. Should a read-only mode exist (`attach-session -r`)? Not needed for the stated goal; leave out unless asked.
-5. Does tmux end when omp exits? If `ompc` keeps the tmux session open after omp exits, the `exit` frame needs the pane's dead status instead of the tmux process exit.
-
-## Risks
-
-- Two interactive clients on one pane (the real terminal and the browser) interleave keystrokes. This is normal tmux behaviour and is documented, not prevented.
-- One listener per omp process on a tailnet-reachable port. Tickets and TLS limit access, but sessions that exit leave no listener behind only if the extension closes it on shutdown; the integration tests check for leaks.
-- xterm.js on mobile has input quirks (IME, autocorrect, key repeat). The key bar covers the main gaps; expect fixes after field use.
+- Bun's PTY `terminal` option is used; no PTY helper is required.
+- PTY reads are not paused. Output is buffered within configured bounds, and the connection closes on overflow.
+- The implementation uses normal tmux client sizing; it does not use `attach-session -f ignore-size`.
+- Read-only terminal access is not implemented. Opening a terminal requires Collab control access.
+- Direct TLS availability is not assumed across hosts. The extension attempts Tailscale status and certificate issuance, and only returns a direct URL when it can start the TLS listener.

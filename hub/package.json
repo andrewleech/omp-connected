@@ -23,6 +23,9 @@
   "type": "module",
   "dependencies": {
     "@elysiajs/static": "1.4.10",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-unicode11": "^0.9.0",
+    "@xterm/xterm": "^6.0.0",
     "elysia": "1.4.28",
     "marked": "^18.0.14"
   }

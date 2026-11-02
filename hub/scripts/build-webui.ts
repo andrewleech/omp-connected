@@ -9,24 +9,43 @@ const dist = `${root}dist/webui`;
 
 await $`mkdir -p ${dist}`;
 // Clean old hashed bundles
-for (const f of new Bun.Glob("{app,share}.*.js").scanSync(dist))
+for (const f of new Bun.Glob("{app,share}.*.{js,css}").scanSync(dist))
   await $`rm -f ${dist}/${f}`;
 await $`rm -f ${dist}/index.html ${dist}/share.html`;
 // Build with content hash in the filename
 const result = await Bun.build({
   entrypoints: [`${root}src/webui/app.ts`],
   outdir: dist,
-  naming: "app.[hash].js",
+  splitting: true,
+  naming: {
+    entry: "app.[hash].[ext]",
+    chunk: "app.[hash].[ext]",
+    asset: "app.[hash].[ext]",
+  },
   minify: false,
 });
 if (!result.success) {
   for (const log of result.logs) console.error(log);
   process.exit(1);
 }
-const outName = result.outputs[0]?.path.split("/").pop() ?? "";
-// Rewrite the script src in index.html
+const entryOutput = result.outputs.find(
+  (output) => output.kind === "entry-point" && output.path.endsWith(".js"),
+);
+if (!entryOutput)
+  throw new Error("Web UI build did not emit an app entry point");
+const outName = entryOutput.path.split("/").pop() ?? "";
+const cssName = result.outputs
+  .find((output) => output.kind === "asset" && output.path.endsWith(".css"))
+  ?.path.split("/")
+  .pop();
+// Rewrite the script and stylesheet links in index.html.
 let html = await Bun.file(`${root}src/webui/index.html`).text();
 html = html.replace(/src="\/app[^"]*\.js"/, `src="/${outName}"`);
+if (cssName)
+  html = html.replace(
+    "</head>",
+    `  <link rel="stylesheet" href="/${cssName}">\n</head>`,
+  );
 await Bun.write(`${dist}/index.html`, html);
 // Standalone single-session page served at /s/
 const share = await Bun.build({

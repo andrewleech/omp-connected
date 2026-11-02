@@ -23,6 +23,7 @@ import {
 	supportsModelRoles,
 	type SessionRequestHandler,
 } from "./session-rpc.js";
+import { TerminalService, TERMINAL_FEATURE } from "./terminal.js";
 
 const DISCOVERY_ATTEMPTS = 10;
 const DISCOVERY_INTERVAL_MS = 1_000;
@@ -91,6 +92,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 	let files: FileService | undefined;
 	let sessionRpc: SessionRequestHandler | undefined;
 	let scheduler: PromptScheduler | undefined;
+	let terminal: TerminalService | undefined;
 	let logins: LoginManager | undefined;
 	const hostSessions = new HostSessions({
 		listHistory: async () => {
@@ -171,6 +173,10 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		params: unknown,
 		afterReply: (callback: () => void) => void,
 	): Promise<unknown> {
+		if (method === "terminal.open") {
+			if (!terminal) throw new RpcError(RpcCode.MethodNotFound, "terminal is unavailable for this session");
+			return terminal.open(params);
+		}
 		if (method === "host.sessions.list") return hostSessions.list();
 		if (method === "host.sessions.start") return hostSessions.start(params);
 		if (!sessionRpc) throw new RpcError(RpcCode.Internal, "the session is not ready");
@@ -241,6 +247,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 							HOST_SESSIONS_FEATURE,
 							USAGE_FEATURE,
 							AUTH_FEATURE,
+							...(terminal ? [TERMINAL_FEATURE] : []),
 							...(supportsModelRoles(ownerContext) ? [MODEL_ROLES_FEATURE, AGENT_ROLES_FEATURE] : []),
 						],
 					});
@@ -323,6 +330,9 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 			},
 			onChange: showScheduled,
 		});
+		terminal?.close();
+		terminal = ompcSession ? new TerminalService(ompcSession) : undefined;
+		terminal?.prepareDirect();
 		try {
 			const service = await FileService.open(process.cwd());
 			files = service;
@@ -401,6 +411,8 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		busy = false;
 		asking.clear();
 		hub.shuttingDown = true;
+		terminal?.close();
+		terminal = undefined;
 		hub.transport?.close();
 		hub.transport = undefined;
 		const pending = files;

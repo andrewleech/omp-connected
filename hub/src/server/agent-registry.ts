@@ -40,6 +40,7 @@ import {
   type SessionMethod,
   type SessionMethodParams,
   type SessionMethodResult,
+  TERMINAL_FEATURE,
 } from "./types";
 
 export interface AgentConn {
@@ -774,6 +775,9 @@ export class AgentRegistry {
       features: [...entry.features],
       ...(entry.busy !== undefined ? { busy: entry.busy } : {}),
       ...(entry.waiting !== undefined ? { waiting: entry.waiting } : {}),
+      ...(entry.features.includes(TERMINAL_FEATURE)
+        ? { terminal: { available: true as const } }
+        : {}),
     };
   }
 

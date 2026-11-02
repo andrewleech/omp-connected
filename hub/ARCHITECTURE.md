@@ -301,6 +301,18 @@ The host and hub are deployment roles, not fixed machines; examples in
 deployment documentation use placeholder hostnames such as
 `hub.example.test` and `host-a.example.test`.
 
+## Web terminal (`terminal.v1`)
+
+An extension with a tmux-backed `OMPC_SESSION` advertises `terminal.v1`. The dashboard shows the Terminal action only for sessions with that feature and control access. The route `POST /api/agents/:id/terminal` accepts the configured public origin (or the request's own origin when no public origin is configured) and configured allowed origins. It verifies the agent is live and advertises the feature, then asks the host for `collab.list`; only a session with control access can open a terminal. These checks do not authenticate a dashboard user; the hub has no dashboard authentication.
+
+The hub creates a random 32-byte base64url relay ticket with a 30-second expiry and sends it with the client's `Origin` to the extension through `terminal.open` on `/ws/agent`. If a direct TLS listener is already available, the extension returns a separate direct ticket in the same single-use capability group. The browser tries the direct URL and direct ticket first, then tries the original relay ticket. If that fails, it requests a new endpoint and retries through the relay.
+
+The extension connects outbound to `/ws/terminal/host`; the browser connects to `/ws/terminal/client`. Each relay peer sends a binary hello with protocol version and relay ticket; the hub responds to both with an accepted hello carrying version and status, then relays terminal frames. Client requests and relay websocket upgrades use the configured public origin, the request's own origin when the public origin is unset, or a configured allowed origin. The direct websocket accepts the configured hub origin or the client origin associated with an unexpired capability. Each agent has a limit of four active terminal requests and 20 requests per 10 seconds.
+
+The extension claims a direct or relay ticket once across the capability group, attaches `tmux -L <OMPC_SESSION> attach-session` to a PTY, and streams input, output and resize frames. The browser acknowledges output after xterm.js processes it. Bun's PTY output callback cannot pause reads, so the extension uses bounded queues and closes on overflow rather than pausing the PTY. Websocket backpressure limits also close overflowing connections. Closing a browser terminal detaches that PTY; tmux itself remains running. Reconnect is user-triggered.
+
+The extension starts attempting Tailscale certificate setup when its terminal service starts. A terminal request retries setup when needed but does not wait for an attempt already in progress; it includes a direct URL and ticket only when the listener is available. The direct route carries terminal data between browser and host without the hub relay. See `extension/ARCHITECTURE.md` for host behavior.
+
 ## Security model
 
 - **Shared-secret agent registration, self-attested identity.**

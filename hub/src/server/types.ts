@@ -164,12 +164,12 @@ export interface AgentSummary {
   connectedAt: string;
   teams: string[];
   features: string[]; // advertised at registration, [] if none
-  /** Whether the session is mid-turn; omitted until the extension reports it
-   *  (older extensions never do). */
+  /** Whether the session is mid-turn; omitted until the extension reports it. */
   busy?: boolean;
-  /** Whether a turn is blocked on a question to the user (the ask tool);
-   *  omitted until the extension reports it. */
+  /** Whether a turn is blocked on a question to the user; omitted until reported. */
   waiting?: boolean;
+  /** Terminal is available only for an OMPC_SESSION-backed tmux session. */
+  terminal?: { available: true };
 }
 
 export type AgentMessageType = "message" | "reply";
@@ -538,6 +538,8 @@ export interface ScheduledPromptResult {
   createdAt: number;
 }
 
+export const TERMINAL_FEATURE = "terminal.v1";
+
 export interface SessionMethodParams {
   "session.info": Record<string, never>;
   "session.abort": Record<string, never>;
@@ -565,6 +567,7 @@ export interface SessionMethodParams {
   "session.agent_roles": Record<string, never>;
   "session.set_model_role": SetModelRoleParams;
   "session.usage": Record<string, never>;
+  "terminal.open": { ticket: string; relayUrl: string };
 }
 
 export interface SessionMethodResult {
@@ -594,6 +597,7 @@ export interface SessionMethodResult {
   "session.agent_roles": AgentRolesInfo;
   "session.usage": SessionUsageResult;
   "session.set_model_role": ModelRolesInfo;
+  "terminal.open": { ok: true; directUrl?: string; directTicket?: string };
 }
 
 export type SessionMethod = keyof SessionMethodParams;
