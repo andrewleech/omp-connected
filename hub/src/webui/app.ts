@@ -587,7 +587,11 @@ function createDashboard(root: HTMLElement): void {
         );
         if (frame) {
           frame.style.display = "";
-          frame.src = collabFrameUrl(result.url, location.origin);
+          frame.src = collabFrameUrl(
+            result.url,
+            location.origin,
+            session.ompcLabel,
+          );
         }
       }
 

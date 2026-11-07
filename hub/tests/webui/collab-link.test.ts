@@ -11,6 +11,17 @@ describe("collabFrameUrl", () => {
     expect(new URL(frameUrl).search).toBe("");
   });
 
+  test("adds the session label as a query parameter, never in the fragment", () => {
+    const frameUrl = collabFrameUrl(
+      "https://relay.example/#room.key.write-token",
+      "https://hub.example",
+      "my session",
+    );
+    const parsed = new URL(frameUrl);
+    expect(parsed.searchParams.get("label")).toBe("my session");
+    expect(parsed.hash).toBe("#room.key.write-token");
+  });
+
   test("rejects a link without a fragment", () => {
     expect(() =>
       collabFrameUrl("https://relay.example/room", "https://hub.example"),

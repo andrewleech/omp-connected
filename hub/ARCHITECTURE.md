@@ -300,6 +300,22 @@ sequenceDiagram
     end
 ```
 
+### Copy reference
+
+The same context menu offers **Copy reference** to any guest, including view-only ones and while the host is busy. It copies plain text the user pastes into the session's own agent:
+
+```
+omp message reference
+session: <ompc session name>
+role: assistant
+preview: <first ~100 characters>
+read: history://current/entry/<entryId>?session=<sessionUuid>&leaf=<leafId>
+```
+
+The ompc name comes from a `label` query parameter the dashboard adds to the guest iframe URL (`collabFrameUrl`, outside the fragment, so it never carries the capability); the line is omitted without it. `leaf` is the last entry of the branch the guest was showing, so the reference still resolves after a rewind.
+
+The agent reads the URL with its `read` tool. `history://current/entry/<id>` returns the entry and a window of entries either side along the path root to `leaf` (`before`/`after`, default 6, at most 50), including compaction boundaries and so context from before the session's last compaction. The header gives the window's first and last entry ids and `hasEarlier`/`hasLater`, and `Earlier:`/`Later:` lines give ready-to-read URLs for the next window in each direction. A `session` that is not the caller's own session is refused. It needs no setting; only `history://current/full` depends on `compaction.experimentalContextManagement`.
+
 The host and hub are deployment roles, not fixed machines; examples in
 deployment documentation use placeholder hostnames such as
 `hub.example.test` and `host-a.example.test`.
