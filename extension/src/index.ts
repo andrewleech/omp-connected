@@ -511,7 +511,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		pi.registerTool({
 			name,
 			label,
-			description: `Call omp-hub ${method}. Use displayName for human-readable references and canonical id for routing.`,
+			description: `Call omp-hub ${method}. Use displayName for human-readable references, the qualified friendly address for normal routing, and fromId for exact replies when present.`,
 			parameters,
 			approval: readOnly ? "read" : "write",
 			async execute(_toolCallId, params) {

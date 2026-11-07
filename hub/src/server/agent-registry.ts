@@ -413,10 +413,9 @@ export class AgentRegistry {
     return [...names].map((team) => this.teamSummary(team));
   }
 
-  /** Address resolution: exact canonical ID always wins; otherwise an
-   *  unambiguous display-label match; otherwise ambiguous or not-found.
-   *  Scans all known entries, connected or within their disconnect TTL —
-   *  a recently-disconnected agent is still a valid send/mailbox target. */
+  /** Address resolution: exact canonical ID always wins, then an exact
+   *  label-and-host address, then an unambiguous label. Scans all known
+   *  entries, connected or within their disconnect TTL. */
   resolve(address: string): AgentResolution {
     this.pruneExpired();
     const resolved = this.resolveEntry(address);
@@ -426,10 +425,9 @@ export class AgentRegistry {
     return resolved;
   }
 
-  /** Sends a direct message. `from` is stored verbatim (it may be a
-   *  registered agent's canonical id or the dashboard's `operator@<host>`
-   *  principal) — the caller is responsible for confirming the real
-   *  sender identity from its own connection/request context. */
+  /** Sends a direct message. `from` is a canonical registered agent ID or
+   *  the dashboard's `operator@<host>` principal. Message senders are emitted
+   *  with a friendly agent address; registry events retain the canonical ID. */
   send(params: {
     from: string;
     to: string;
@@ -468,8 +466,7 @@ export class AgentRegistry {
     }
     const recipient = resolved.entry;
     const message = this.buildMessage({
-      from: params.from,
-      fromDisplayName: this.displayNameForId(params.from),
+      ...this.messageSender(params.from),
       to: recipient.id,
       content: params.content,
       replyTo: params.replyTo,
@@ -528,7 +525,7 @@ export class AgentRegistry {
     const recipients = [...this.agents.values()].filter(
       (e) => e.teams.has(params.team) && e.id !== params.from,
     );
-    const fromDisplayName = this.displayNameForId(params.from);
+    const sender = this.messageSender(params.from);
     const messageId = String(this.nextMessageId++);
     const timestamp = new Date(this.now()).toISOString();
     const type: AgentMessageType =
@@ -537,8 +534,7 @@ export class AgentRegistry {
     for (const entry of recipients) {
       const message: AgentMessage = {
         messageId,
-        from: params.from,
-        ...(fromDisplayName !== undefined ? { fromDisplayName } : {}),
+        ...sender,
         to: entry.id,
         type,
         content: params.content,
@@ -663,6 +659,21 @@ export class AgentRegistry {
   private resolveEntry(address: string): ResolvedEntry {
     const exact = this.agents.get(address);
     if (exact) return { kind: "found", entry: exact };
+    const qualified = [...this.agents.values()].filter(
+      (e) => `${e.label}:${e.hostId}` === address,
+    );
+    if (qualified.length === 1) {
+      const only = qualified[0];
+      if (only) return { kind: "found", entry: only };
+    }
+    if (qualified.length > 1) {
+      const live = qualified.filter((entry) => entry.conn !== undefined);
+      if (live.length === 1) {
+        const only = live[0];
+        if (only) return { kind: "found", entry: only };
+      }
+      return this.ambiguousAddress(address, qualified);
+    }
     const candidates = [...this.agents.values()].filter(
       (e) => e.label === address,
     );
@@ -671,19 +682,26 @@ export class AgentRegistry {
       if (only) return { kind: "found", entry: only };
     }
     if (candidates.length > 1) {
-      return {
-        kind: "ambiguous",
-        data: {
-          address,
-          candidates: candidates.map((e) => ({
-            id: e.id,
-            displayName: this.displayName(e),
-            cwd: e.cwd,
-          })),
-        },
-      };
+      return this.ambiguousAddress(address, candidates);
     }
     return { kind: "not_found" };
+  }
+
+  private ambiguousAddress(
+    address: string,
+    candidates: AgentEntry[],
+  ): ResolvedEntry {
+    return {
+      kind: "ambiguous",
+      data: {
+        address,
+        candidates: candidates.map((e) => ({
+          id: e.id,
+          displayName: this.displayName(e),
+          cwd: e.cwd,
+        })),
+      },
+    };
   }
 
   private teamExists(team: string): boolean {
@@ -710,6 +728,7 @@ export class AgentRegistry {
 
   private buildMessage(params: {
     from: string;
+    fromId?: string;
     fromDisplayName?: string;
     to: string;
     content: string;
@@ -718,6 +737,7 @@ export class AgentRegistry {
     return {
       messageId: String(this.nextMessageId++),
       from: params.from,
+      ...(params.fromId !== undefined ? { fromId: params.fromId } : {}),
       ...(params.fromDisplayName !== undefined
         ? { fromDisplayName: params.fromDisplayName }
         : {}),
@@ -756,9 +776,16 @@ export class AgentRegistry {
     return `${entry.label}:${entry.hostId} (${entry.instanceId})`;
   }
 
-  private displayNameForId(id: string): string | undefined {
+  private messageSender(
+    id: string,
+  ): Pick<AgentMessage, "from" | "fromId" | "fromDisplayName"> {
     const entry = this.agents.get(id);
-    return entry ? this.displayName(entry) : undefined;
+    if (!entry) return { from: id };
+    return {
+      from: `${entry.label}:${entry.hostId}`,
+      fromId: id,
+      fromDisplayName: this.displayName(entry),
+    };
   }
 
   private toSummary(entry: AgentEntry): AgentSummary {

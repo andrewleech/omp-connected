@@ -147,10 +147,9 @@ export type DashboardEvent =
 
 // ---------------------------------------------------------------------------
 // Agent-to-agent messaging.
-// Canonical agent identity is `${hostId}:${instanceId}`; the display label
-// (the ompc session name, else `basename(cwd)`) is a convenience address that resolves only when
-// unambiguous across all currently-known agents. See
-// cc-pi-bridge/planning/20260920_research_wire-protocol-spec.md.
+// Canonical agent identity is `${hostId}:${instanceId}`. Recipient addresses
+// accept that canonical ID, `${label}:${hostId}`, or an unambiguous label.
+// See cc-pi-bridge/planning/20260920_research_wire-protocol-spec.md.
 // ---------------------------------------------------------------------------
 
 export interface AgentSummary {
@@ -176,8 +175,9 @@ export type AgentMessageType = "message" | "reply";
 
 export interface AgentMessage {
   messageId: string; // server-assigned monotonic, decimal string
-  from: string;
-  fromDisplayName?: string; // absent for non-agent senders and messages from older hubs
+  from: string; // registered agent: `${label}:${hostId}`; operator: `operator@<hub-host>`
+  fromId?: string; // canonical registered agent ID for exact replies; absent for operator
+  fromDisplayName?: string; // registered agent display name, includes instance ID
   to: string;
   type: AgentMessageType;
   content: string;
@@ -255,7 +255,7 @@ export interface AgentRegisterResult {
 }
 
 export interface AgentSendParams {
-  to: string; // canonical ID or unambiguous display label
+  to: string; // canonical ID, qualified friendly address, or unambiguous label
   content: string;
   replyTo?: string;
   idempotencyKey: string; // client-supplied, reused verbatim on retry
@@ -328,7 +328,7 @@ export interface AgentQueryEventsParams {
   event?: string; // dot-prefix filter
   since?: number; // epoch ms, exclusive
   limit?: number;
-  agent?: string; // filter by canonical ID or label
+  agent?: string; // filter by canonical ID, qualified friendly address, or label
 }
 
 export interface AgentQueryEventsResult {

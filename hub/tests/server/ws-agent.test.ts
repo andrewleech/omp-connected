@@ -385,7 +385,7 @@ describe("wsAgentPlugin — message routing", () => {
     const pushFrame = await bPush;
     expect(pushFrame.method).toBe("agent.message");
     expect(pushFrame.params?.content).toBe("hi");
-    expect(pushFrame.params?.from).toBe("user@hub-host:a");
+    expect(pushFrame.params?.from).toBe("alpha:user@hub-host");
     socketB.send(
       JSON.stringify({
         jsonrpc: "2.0",

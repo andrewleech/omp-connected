@@ -18,6 +18,7 @@ function registerAgent(
     instanceId: string;
     pid: number;
     cwd: string;
+    label: string;
   }> = {},
   conn: AgentConn = fakeConn(),
 ) {
@@ -27,6 +28,7 @@ function registerAgent(
       instanceId: overrides.instanceId ?? "inst-1",
       pid: overrides.pid ?? 1234,
       cwd: overrides.cwd ?? "/home/user/api",
+      ...(overrides.label !== undefined ? { label: overrides.label } : {}),
     },
     conn,
   );
@@ -39,6 +41,66 @@ describe("AgentRegistry — identity resolution", () => {
 
     const resolved = registry.resolve("api");
     expect(resolved).toEqual({ kind: "found", agent: summary });
+  });
+  test("label and host resolves as a friendly address", () => {
+    const registry = new AgentRegistry();
+    const summary = registerAgent(registry, {
+      hostId: "user@worker-host",
+      instanceId: "inst-1",
+      label: "trace.integrate",
+    });
+
+    expect(registry.resolve("trace.integrate:user@worker-host")).toEqual({
+      kind: "found",
+      agent: summary,
+    });
+  });
+
+  test("a single live qualified match wins over a stale disconnected entry", () => {
+    const registry = new AgentRegistry();
+    const staleConn = fakeConn();
+    registerAgent(
+      registry,
+      {
+        hostId: "user@worker-host",
+        instanceId: "old",
+        label: "trace.integrate",
+      },
+      staleConn,
+    );
+    registry.unregister("user@worker-host:old", staleConn);
+    const active = registerAgent(registry, {
+      hostId: "user@worker-host",
+      instanceId: "current",
+      label: "trace.integrate",
+    });
+
+    expect(registry.resolve("trace.integrate:user@worker-host")).toEqual({
+      kind: "found",
+      agent: active,
+    });
+  });
+
+  test("same label and host across live sessions is ambiguous with all candidates", () => {
+    const registry = new AgentRegistry();
+    registerAgent(registry, {
+      hostId: "user@worker-host",
+      instanceId: "inst-1",
+      label: "trace.integrate",
+    });
+    registerAgent(registry, {
+      hostId: "user@worker-host",
+      instanceId: "inst-2",
+      label: "trace.integrate",
+    });
+
+    const resolved = registry.resolve("trace.integrate:user@worker-host");
+    expect(resolved.kind).toBe("ambiguous");
+    if (resolved.kind !== "ambiguous") throw new Error("unreachable");
+    expect(resolved.data.candidates.map((candidate) => candidate.id)).toEqual([
+      "user@worker-host:inst-1",
+      "user@worker-host:inst-2",
+    ]);
   });
 
   test("two agents sharing a label resolve ambiguously with both candidates", () => {
@@ -212,7 +274,8 @@ describe("AgentRegistry — mailbox", () => {
       id: result.messageId,
       method: "agent.message",
       params: {
-        from: "user@worker-host:worker-1",
+        from: "worker:user@worker-host",
+        fromId: "user@worker-host:worker-1",
         fromDisplayName: "worker:user@worker-host (worker-1)",
         content: "hello",
       },
@@ -504,8 +567,11 @@ describe("AgentRegistry — teams", () => {
     expect(pushedA).toHaveLength(0); // sender excluded
     expect(pushedB).toHaveLength(1);
     const frame = JSON.parse(pushedB[0] ?? "{}");
+    expect(frame.id).toBe(result.messageId);
     expect(frame.params).toMatchObject({
-      from: "user@hub-host:a",
+      messageId: result.messageId,
+      from: "a:user@hub-host",
+      fromId: "user@hub-host:a",
       fromDisplayName: "a:user@hub-host (a)",
     });
   });

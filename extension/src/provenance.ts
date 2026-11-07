@@ -8,6 +8,7 @@ export const MAX_INBOUND_BYTES = 16_000;
 export interface AgentMessage {
 	messageId: string;
 	from: string;
+	fromId?: string;
 	fromDisplayName?: string;
 	to: string;
 	type: "message" | "reply";
@@ -47,10 +48,11 @@ export function formatInboundMessage(message: AgentMessage): ProvenancedMessage 
 	const sender = message.fromDisplayName
 		? `${message.fromDisplayName} <${message.from}>`
 		: message.from;
+	const exactId = message.fromId ? ` id=${message.fromId}` : "";
 	return {
 		customType: AGENT_MESSAGE_TYPE,
 		attribution: "agent",
-		content: `[from ${sender}]\n${content}`,
+		content: `[from ${sender}${exactId}]\n${content}`,
 		details,
 	};
 }

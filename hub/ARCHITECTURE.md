@@ -63,9 +63,10 @@ interface AgentActivityParams { busy: boolean; waiting?: boolean; }
 // reply is its delivery receipt, matched on the message's own id)
 interface AgentMessagePush {
   messageId: string;
-  from: string; // canonical routing id
-  fromDisplayName?: string; // absent for non-agent senders or older hubs
-  to: string;
+  from: string; // registered agent: `${label}:${hostId}`; operator: `operator@<hub-host>`
+  fromId?: string; // canonical registered agent ID for exact replies; absent for operator
+  fromDisplayName?: string; // registered agent display name, includes instance ID
+  to: string; // canonical routing ID
   content: string;
   replyTo?: string;
 }
@@ -222,8 +223,10 @@ REST routes built on top of the same live registry:
 - `POST /api/agents/:id/send` `{ content, replyTo?, idempotencyKey }` →
   sends as `operator@<hub-host>` (dashboard-only; the dashboard is never
   a registered agent connection, so it can only send as this reserved
-  principal, never spoof a real agent's identity); `:id` accepts a
-  canonical ID or an unambiguous display label.
+  principal, never spoof a real agent's identity); `:id` accepts the
+  canonical ID `${hostId}:${instanceId}`, the qualified friendly address
+  `${label}:${hostId}`, or an unambiguous label. Ambiguous addresses return
+  every matching display name and canonical ID.
 - `GET /` — the fleet dashboard webui.
 - `GET /manifest.webmanifest`, `GET /sw.js` — PWA manifest and service
   worker, served `cache-control: no-cache` (outside the static plugin's
