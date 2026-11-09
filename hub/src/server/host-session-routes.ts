@@ -3,6 +3,7 @@ import { AgentCallError, type AgentRegistry } from "./agent-registry";
 import { RateLimiter } from "./rate-limit";
 import {
   HOST_SESSIONS_FEATURE,
+  HOST_SESSIONS_RESERVED_LABELS_FEATURE,
   type HostMethodParams,
   SESSION_RPC_ERRORS,
 } from "./types";
@@ -25,6 +26,7 @@ export function hostSessionRoutes(registry: AgentRegistry) {
     method: M,
     params: HostMethodParams[M],
     set: Context["set"],
+    feature: string = HOST_SESSIONS_FEATURE,
   ) {
     const agents = registry
       .listAgents()
@@ -33,13 +35,13 @@ export function hostSessionRoutes(registry: AgentRegistry) {
       set.status = 404;
       return { error: `host '${hostId}' not connected` };
     }
-    if (
-      !agents.some((agent) => agent.features.includes(HOST_SESSIONS_FEATURE))
-    ) {
+    if (!agents.some((agent) => agent.features.includes(feature))) {
       set.status = 501;
       return {
         error:
-          "Restart an OMP session on this host to enable dashboard session launching.",
+          feature === HOST_SESSIONS_RESERVED_LABELS_FEATURE
+            ? "Restart an OMP session on this host to enable reserved-label session launching."
+            : "Restart an OMP session on this host to enable dashboard session launching.",
       };
     }
     if (!limiter.allow(hostId)) {
@@ -53,7 +55,7 @@ export function hostSessionRoutes(registry: AgentRegistry) {
         method,
         params,
         RPC_TIMEOUT_MS,
-        HOST_SESSIONS_FEATURE,
+        feature,
       );
     } catch (error) {
       if (!(error instanceof AgentCallError)) throw error;
@@ -86,7 +88,14 @@ export function hostSessionRoutes(registry: AgentRegistry) {
           !/^[A-Za-z0-9_.][A-Za-z0-9_.-]*$/.test(value.name)) ||
         (value.sessionId !== undefined &&
           (typeof value.sessionId !== "string" ||
-            !/^[A-Za-z0-9_-]{1,128}$/.test(value.sessionId)))
+            !/^[A-Za-z0-9_-]{1,128}$/.test(value.sessionId))) ||
+        (value.reservedLabels !== undefined &&
+          (!Array.isArray(value.reservedLabels) ||
+            value.reservedLabels.some(
+              (label: unknown) =>
+                typeof label !== "string" ||
+                !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(label),
+            )))
       ) {
         set.status = 400;
         return {
@@ -103,8 +112,14 @@ export function hostSessionRoutes(registry: AgentRegistry) {
           ...(value.sessionId === undefined
             ? {}
             : { sessionId: value.sessionId as string }),
+          ...(value.reservedLabels === undefined
+            ? {}
+            : { reservedLabels: value.reservedLabels as string[] }),
         },
         set,
+        value.reservedLabels === undefined
+          ? HOST_SESSIONS_FEATURE
+          : HOST_SESSIONS_RESERVED_LABELS_FEATURE,
       );
     });
 }

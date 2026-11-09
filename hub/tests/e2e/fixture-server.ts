@@ -660,9 +660,29 @@ Bun.serve({
         cwd: string;
         name: string;
         sessionId?: string;
+        reservedLabels?: string[];
       };
-      const label =
-        body.cwd.split("/").pop() + (body.name ? `.${body.name}` : "");
+      const directory = body.cwd.split("/").pop() ?? "";
+      const base = directory + (body.name ? `.${body.name}` : "");
+      let label = base;
+      let suffix = 2;
+      while (body.reservedLabels?.includes(label)) {
+        const number = String(suffix++);
+        const available = 64 - directory.length - 1;
+        if (number.length > available)
+          return Response.json(
+            {
+              error:
+                "The directory name leaves no room for a distinct session name. Choose a shorter directory name.",
+            },
+            { status: 400 },
+          );
+        const prefix = body.name.slice(
+          0,
+          Math.max(0, available - number.length - 1),
+        );
+        label = `${directory}.${prefix ? `${prefix}-${number}` : number}`;
+      }
       if (launched.some((session) => session.label === label))
         return Response.json(
           { error: "This ompc name already exists." },
