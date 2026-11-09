@@ -518,6 +518,7 @@ export interface FilesWriteParams {
   data: string; // base64
   final: boolean;
   overwrite: boolean;
+  destination?: "temp";
 }
 
 export interface FilesWriteResult {
@@ -539,6 +540,7 @@ export interface ScheduledPromptResult {
 }
 
 export const TERMINAL_FEATURE = "terminal.v1";
+export const FILES_TEMP_UPLOAD_FEATURE = "files.temp_upload.v1";
 
 export interface SessionMethodParams {
   "session.info": Record<string, never>;
@@ -552,7 +554,7 @@ export interface SessionMethodParams {
   "files.stat": { path: string };
   "files.read": FilesReadParams;
   "files.write": FilesWriteParams;
-  "files.write_abort": { path: string; uploadId: string };
+  "files.write_abort": { path: string; uploadId: string; destination?: "temp" };
   "files.mkdir": { path: string };
   "session.schedule_prompt": { text: string; delayMs: number };
   "session.scheduled": Record<string, never>;

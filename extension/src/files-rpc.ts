@@ -1,10 +1,11 @@
-// `files.*` requests pushed by omp-hub: browse, download and upload inside
-// the session's root directory. Every path is POSIX and relative to the root;
-// each one is resolved with realpath and refused when it lands outside the
-// root, so neither `..` nor a symlink can reach the rest of the filesystem.
+// `files.*` requests pushed by omp-hub: browse and download inside the
+// session's root directory, and upload inside that root or the host temp
+// directory. Every path is POSIX and relative to its selected root; realpath
+// checks prevent symlinks from escaping that root.
 
 import { constants, type Stats } from "node:fs";
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 import { paramsRecord, RpcCode, RpcError } from "./protocol.js";
 
@@ -34,6 +35,7 @@ export interface FileServiceOptions {
 
 interface Upload {
 	rel: string;
+	destination: "root" | "temp";
 	temp: string;
 	timer?: NodeJS.Timeout;
 	busy: boolean;
@@ -116,25 +118,36 @@ function uploadIdParam(value: unknown): string {
 }
 
 /**
- * Validates a request path and returns it normalised: `""` for the root,
- * otherwise a relative POSIX path without `.` segments. Rejects non-strings,
- * NUL bytes, absolute paths, empty segments (e.g. a trailing slash) and
- * anything that climbs above the root lexically. Symlink escapes are caught
- * later, when the path is resolved.
+ * Validates a request path and returns it normalised: `""` for the selected
+ * root, otherwise a relative POSIX path without `.` segments. Rejects
+ * non-strings, NUL bytes, absolute paths, empty segments (e.g. a trailing
+ * slash) and anything that climbs above the root lexically. Symlink escapes
+ * are caught later, when the path is resolved.
  */
 export function normalizeRelPath(value: unknown): string {
 	if (typeof value !== "string") throw invalid("path must be a string");
 	if (value.includes("\0")) throw invalid("path contains a NUL byte");
-	if (value.startsWith("/")) throw invalid("path must be relative to the session root");
+	if (value.startsWith("/")) throw invalid("path must be relative to its destination root");
+	if (path.sep === "\\" && /[\\:]/.test(value)) {
+		throw invalid("path must use relative POSIX segments");
+	}
 	const normalised = path.posix.normalize(value === "" ? "." : value);
 	if (normalised === ".") return "";
 	if (normalised === ".." || normalised.startsWith("../")) {
-		throw new RpcError(RpcCode.Forbidden, "path is outside the session root");
+		throw new RpcError(RpcCode.Forbidden, "path is outside the destination root");
 	}
 	if (normalised.split("/").some((segment) => segment === "" || segment === ".")) {
 		throw invalid("path has an empty segment");
 	}
 	return normalised;
+}
+
+type UploadDestination = "root" | "temp";
+
+function uploadDestination(value: unknown): UploadDestination {
+	if (value === undefined) return "root";
+	if (value === "temp") return value;
+	throw invalid("destination must be 'temp'");
 }
 
 function tempName(name: string, uploadId: string): string {
@@ -143,13 +156,11 @@ function tempName(name: string, uploadId: string): string {
 
 export class FileService {
 	readonly root: string;
-	readonly #prefix: string;
 	readonly #idleMs: number;
 	readonly #uploads = new Map<string, Upload>();
 
 	private constructor(root: string, options: FileServiceOptions) {
 		this.root = root;
-		this.#prefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
 		this.#idleMs = options.idleMs ?? UPLOAD_IDLE_MS;
 	}
 
@@ -163,28 +174,32 @@ export class FileService {
 		return this.#uploads.size;
 	}
 
-	#inside(real: string): boolean {
-		return real === this.root || real.startsWith(this.#prefix);
+	#insideRoot(real: string, root: string): boolean {
+		return real === root || real.startsWith(root.endsWith(path.sep) ? root : `${root}${path.sep}`);
 	}
 
-	/** Realpath of an existing `rel`, refused when it resolves outside the root. */
-	async #resolveExisting(rel: string): Promise<string> {
-		const real = await attempt(rel, () => fs.realpath(path.join(this.root, rel)));
-		if (!this.#inside(real)) {
-			throw new RpcError(RpcCode.Forbidden, `${describe(rel)} resolves outside the session root`);
+	/** Realpath of an existing `rel`, refused when it resolves outside `root`. */
+	async #resolveExistingAt(root: string, rel: string): Promise<string> {
+		const real = await attempt(rel, () => fs.realpath(path.join(root, rel)));
+		if (!this.#insideRoot(real, root)) {
+			throw new RpcError(RpcCode.Forbidden, `${describe(rel)} resolves outside its destination root`);
 		}
 		return real;
 	}
 
+	async #resolveExisting(rel: string): Promise<string> {
+		return this.#resolveExistingAt(this.root, rel);
+	}
+
 	/** For a path that need not exist yet: the realpath of its parent
-	 *  directory (which must exist inside the root) and its final name. */
-	async #resolveParent(rel: string): Promise<{ dir: string; name: string }> {
-		if (rel === "") throw invalid("the session root is not a valid target");
+	 *  directory (which must exist inside `root`) and its final name. */
+	async #resolveParentAt(root: string, rel: string): Promise<{ dir: string; name: string }> {
+		if (rel === "") throw invalid("the destination root is not a valid target");
 		const parentRel = path.posix.dirname(rel);
 		const parent = parentRel === "." ? "" : parentRel;
 		let dir: string;
 		try {
-			dir = await this.#resolveExisting(parent);
+			dir = await this.#resolveExistingAt(root, parent);
 		} catch (error) {
 			if (error instanceof RpcError && error.code === RpcCode.NotFound) {
 				throw new RpcError(RpcCode.NotFound, `the parent directory of ${describe(rel)} does not exist`);
@@ -194,6 +209,10 @@ export class FileService {
 		const stats = await attempt(parent, () => fs.stat(dir));
 		if (!stats.isDirectory()) throw invalid(`the parent of ${describe(rel)} is not a directory`);
 		return { dir, name: path.posix.basename(rel) };
+	}
+
+	async #resolveParent(rel: string): Promise<{ dir: string; name: string }> {
+		return this.#resolveParentAt(this.root, rel);
 	}
 
 	async list(params: unknown): Promise<{ path: string; entries: FileEntry[] }> {
@@ -227,7 +246,7 @@ export class FileService {
 		if (entry.type !== "symlink") return entry;
 		try {
 			const real = await fs.realpath(full);
-			if (!this.#inside(real)) return entry;
+			if (!this.#insideRoot(real, this.root)) return entry;
 			const target = await fs.stat(real);
 			const targetType = typeOf(target);
 			if (targetType !== "file" && targetType !== "dir") return entry;
@@ -315,6 +334,8 @@ export class FileService {
 	async write(params: unknown): Promise<{ ok: true; path: string; size: number }> {
 		const p = paramsRecord(params);
 		const rel = normalizeRelPath(p.path);
+		const destination = uploadDestination(p.destination);
+		const root = destination === "temp" ? await fs.realpath(os.tmpdir()) : this.root;
 		const uploadId = uploadIdParam(p.uploadId);
 		const offset = nonNegativeInteger(p.offset, "offset");
 		if (typeof p.data !== "string" || !BASE64_PATTERN.test(p.data)) throw invalid("data must be base64");
@@ -323,14 +344,16 @@ export class FileService {
 		const bytes = Buffer.from(p.data, "base64");
 		if (bytes.length > MAX_CHUNK_BYTES) throw invalid(`a chunk must be at most ${MAX_CHUNK_BYTES} bytes`);
 
-		const { dir, name } = await this.#resolveParent(rel);
+		const { dir, name } = await this.#resolveParentAt(root, rel);
 		const target = path.join(dir, name);
 		const temp = path.join(dir, tempName(name, uploadId));
 
 		// No await from here until `busy` is set: an abort or a second chunk
 		// sees either no upload yet or one that is marked busy.
 		let upload = this.#uploads.get(uploadId);
-		if (upload && upload.rel !== rel) throw invalid("uploadId is in use for a different path");
+		if (upload && (upload.rel !== rel || upload.destination !== destination)) {
+			throw invalid("uploadId is in use for a different path or destination");
+		}
 		if ((!upload || upload.aborted) && offset !== 0) {
 			throw invalid("no upload in progress for this uploadId; start again at offset 0");
 		}
@@ -338,7 +361,7 @@ export class FileService {
 		if (upload && upload.temp !== temp) throw invalid("the upload's directory moved; start again at offset 0");
 
 		if (!upload) {
-			upload = { rel, temp, busy: false, aborted: false };
+			upload = { rel, destination, temp, busy: false, aborted: false };
 			this.#uploads.set(uploadId, upload);
 		}
 		const active = upload;
@@ -372,7 +395,7 @@ export class FileService {
 			const size = offset + bytes.length;
 			if (!final) {
 				this.#armIdleTimer(uploadId, active);
-				return { ok: true, path: rel, size };
+				return { ok: true, path: destination === "temp" ? path.join(root, rel) : rel, size };
 			}
 
 			let mode: number | undefined;
@@ -386,7 +409,7 @@ export class FileService {
 			if (active.aborted) throw invalid("the upload was aborted");
 			await attempt(rel, () => fs.rename(temp, target));
 			this.#uploads.delete(uploadId);
-			return { ok: true, path: rel, size };
+			return { ok: true, path: destination === "temp" ? target : rel, size };
 		} catch (error) {
 			// A refused first chunk leaves nothing worth resuming, nor does an
 			// aborted upload; a later chunk stays resumable (or abortable) until
@@ -427,15 +450,20 @@ export class FileService {
 	async writeAbort(params: unknown): Promise<{ ok: true }> {
 		const p = paramsRecord(params);
 		const rel = normalizeRelPath(p.path);
+		const destination = uploadDestination(p.destination);
+		const root = destination === "temp" ? await fs.realpath(os.tmpdir()) : this.root;
 		const uploadId = uploadIdParam(p.uploadId);
 		const upload = this.#uploads.get(uploadId);
-		if (upload && upload.rel === rel) {
+		if (upload && (upload.rel !== rel || upload.destination !== destination)) {
+			throw invalid("uploadId is in use for a different path or destination");
+		}
+		if (upload) {
 			await this.#discard(uploadId);
 			return { ok: true };
 		}
 		let resolved: { dir: string; name: string };
 		try {
-			resolved = await this.#resolveParent(rel);
+			resolved = await this.#resolveParentAt(root, rel);
 		} catch (error) {
 			if (error instanceof RpcError && error.code === RpcCode.NotFound) return { ok: true };
 			throw error;

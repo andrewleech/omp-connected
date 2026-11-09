@@ -13,6 +13,7 @@ import {
 	createAccessCache,
 	createSessionRpc,
 	EXIT_FEATURE,
+	FILES_TEMP_UPLOAD_FEATURE,
 	AUTH_FEATURE,
 	AGENT_ROLES_FEATURE,
 	MODEL_ROLES_FEATURE,
@@ -241,6 +242,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 						label: ompcSession,
 						features: [
 							SESSION_FEATURE,
+							FILES_TEMP_UPLOAD_FEATURE,
 							SCHEDULE_FEATURE,
 							EXIT_FEATURE,
 							SESSION_FORK_FEATURE,

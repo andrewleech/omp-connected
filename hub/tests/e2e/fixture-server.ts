@@ -33,6 +33,7 @@ const sessions = {
       "session.model_roles.v1",
       "session.agent_roles.v1",
       "session.usage.v1",
+      "files.temp_upload.v1",
       "session.auth.v1",
     ],
   },
@@ -56,6 +57,7 @@ const guest = `<!doctype html><html><body style="margin:0;background:#111;color:
 <div class="sh-composer" style="position:fixed;left:0;right:0;bottom:0;padding:10px"><div class="sh-composer-inner" style="display:flex;gap:8px"><textarea class="sh-composer-input" aria-label="prompt" style="flex:1"></textarea><div class="sh-composer-actions"><button type="button" class="sh-btn sh-btn-primary">Send</button></div></div></div>
 <script>
 const input = document.querySelector(".sh-composer-input");
+const composer = document.querySelector(".sh-composer");
 const send = document.querySelector(".sh-btn-primary");
 let text = "";
 const sync = () => { send.disabled = text.trim() === ""; };
@@ -67,6 +69,23 @@ send.addEventListener("click", () => {
   text = "";
   input.value = "";
   sync();
+});
+const dropCount = document.createElement("output");
+dropCount.dataset.dropCount = "0";
+document.body.append(dropCount);
+document.addEventListener("drop", () => {
+  dropCount.dataset.dropCount = String(Number(dropCount.dataset.dropCount) + 1);
+});
+const imageAttachments = document.createElement("output");
+imageAttachments.dataset.imageAttachments = "0";
+document.body.append(imageAttachments);
+composer.addEventListener("drop", (event) => {
+  const count = [...(event.dataTransfer?.files ?? [])].filter((file) =>
+    file.type.toLowerCase().startsWith("image/"),
+  ).length;
+  imageAttachments.dataset.imageAttachments = String(
+    Number(imageAttachments.dataset.imageAttachments) + count,
+  );
 });
 sync();
 </script></body></html>`;
@@ -489,14 +508,16 @@ async function writerSessionApi(
     return json(listing(path));
   }
   if (route === "/files/upload" && request.method === "PUT") {
-    if (files.has(path) && url.searchParams.get("overwrite") !== "1")
+    const uploadedPath =
+      url.searchParams.get("destination") === "temp" ? `/tmp/${path}` : path;
+    if (files.has(uploadedPath) && url.searchParams.get("overwrite") !== "1")
       return Response.json(
-        { error: `'${path}' already exists` },
+        { error: `'${uploadedPath}' already exists` },
         { status: 409 },
       );
     const data = new Uint8Array(await request.arrayBuffer());
-    files.set(path, data);
-    return json({ ok: true, path, size: data.length });
+    files.set(uploadedPath, data);
+    return json({ ok: true, path: uploadedPath, size: data.length });
   }
   if (route === "/files/download") {
     const data = files.get(path);
@@ -577,7 +598,7 @@ Bun.serve({
             pid: 4242,
             connectedAt: new Date(0).toISOString(),
             teams: [],
-            features: ["session.v1"],
+            features: [...sessions.writer.features],
             busy: writerBusy,
           },
         ],

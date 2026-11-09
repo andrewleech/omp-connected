@@ -14,6 +14,7 @@ export const MAX_COMPACT_INSTRUCTIONS = 4000;
 export const MAX_UPLOAD_BYTES = 256 * 1024 * 1024;
 export const MODEL_ROLES_FEATURE = "session.model_roles.v1";
 export const USAGE_FEATURE = "session.usage.v1";
+export const FILES_TEMP_UPLOAD_FEATURE = "files.temp_upload.v1";
 
 export interface SessionUsageLimit {
   label: string;

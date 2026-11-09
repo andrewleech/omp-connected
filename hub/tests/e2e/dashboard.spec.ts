@@ -6,7 +6,10 @@ test("opens writable sessions in Collab control by default", async ({
   await page.goto("/");
 
   const frame = page.locator("[data-collab-frame]");
-  await expect(frame).toHaveAttribute("src", /\/collab\/#fixture-control$/);
+  await expect(frame).toHaveAttribute(
+    "src",
+    /\/collab\/\?label=writer#fixture-control$/,
+  );
   await expect(
     page
       .frameLocator("[data-collab-frame]")
@@ -33,7 +36,7 @@ test.describe("without a picked session", () => {
     await writer.click();
     await expect(page.locator("[data-collab-frame]")).toHaveAttribute(
       "src",
-      /\/collab\/#fixture-control$/,
+      /\/collab\/\?label=writer#fixture-control$/,
     );
   });
 });
@@ -130,7 +133,10 @@ test("mobile drawers return focus and do not replace the control iframe", async 
     page.getByRole("button", { name: "Refresh", exact: true }),
   ).toHaveCount(0);
   const frame = page.locator("[data-collab-frame]");
-  await expect(frame).toHaveAttribute("src", /\/collab\/#fixture-control$/);
+  await expect(frame).toHaveAttribute(
+    "src",
+    /\/collab\/\?label=writer#fixture-control$/,
+  );
   const initialSource = await frame.getAttribute("src");
   if (!initialSource) throw new Error("Control iframe has no source");
 
@@ -164,7 +170,10 @@ test("clicking the open session's card keeps its Collab document", async ({
 }) => {
   await page.goto("/");
   const frame = page.locator("[data-collab-frame]");
-  await expect(frame).toHaveAttribute("src", /\/collab\/#fixture-control$/);
+  await expect(frame).toHaveAttribute(
+    "src",
+    /\/collab\/\?label=writer#fixture-control$/,
+  );
   const collab = page.frameLocator("[data-collab-frame]");
   await expect(collab.locator("[data-native-status-bar]")).toBeVisible();
   // A marker on the loaded document: any reload or blanking loses it.
@@ -181,7 +190,7 @@ test("clicking the open session's card keeps its Collab document", async ({
 
   await card.click();
   expect(await frame.getAttribute("src")).toMatch(
-    /\/collab\/#fixture-control$/,
+    /\/collab\/\?label=writer#fixture-control$/,
   );
 
   await page.setViewportSize({ width: 390, height: 844 });
@@ -191,7 +200,7 @@ test("clicking the open session's card keeps its Collab document", async ({
   await card.click();
   await expect(sessions).toHaveAttribute("aria-expanded", "false");
   expect(await frame.getAttribute("src")).toMatch(
-    /\/collab\/#fixture-control$/,
+    /\/collab\/\?label=writer#fixture-control$/,
   );
   expect(linkRequests).toBe(0);
   await expect(collab.locator("body")).toHaveAttribute(
@@ -219,7 +228,10 @@ test("clicking a session whose room failed to open retries it", async ({
   await expect(frame).not.toHaveAttribute("src", /fixture-control/);
 
   await page.getByRole("button", { name: "writer", exact: true }).click();
-  await expect(frame).toHaveAttribute("src", /\/collab\/#fixture-control$/);
+  await expect(frame).toHaveAttribute(
+    "src",
+    /\/collab\/\?label=writer#fixture-control$/,
+  );
 });
 
 test("session dots follow the agent's working/idle state live", async ({
@@ -242,7 +254,7 @@ test("session dots follow the agent's working/idle state live", async ({
   // The workspace iframe is untouched by the dot update.
   await expect(page.locator("[data-collab-frame]")).toHaveAttribute(
     "src",
-    /\/collab\/#fixture-control$/,
+    /\/collab\/\?label=writer#fixture-control$/,
   );
 });
 
@@ -425,4 +437,86 @@ test("the guest composer keeps vertical swipes for prompt history", async ({
     el.style.overflowY = "auto";
   });
   await expect(input).toHaveCSS("touch-action", "pan-y");
+});
+
+test("unsupported composer drops upload to host temp and insert the returned path", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const frame = page.frameLocator("[data-collab-frame]");
+  const input = frame.locator(".sh-composer-input");
+  await expect(input).toBeVisible();
+  const uploaded = page.waitForResponse(
+    (response) =>
+      response.url().includes("/files/upload?") &&
+      response.url().includes("destination=temp") &&
+      response.request().method() === "PUT",
+  );
+  await input.evaluate((element) => {
+    const composer = element.closest(".sh-composer");
+    if (!(composer instanceof HTMLElement))
+      throw new Error("Composer not found");
+    const transfer = new DataTransfer();
+    transfer.items.add(
+      new File(["document contents"], "notes.pdf", {
+        type: "application/pdf",
+      }),
+    );
+    for (const type of ["dragover", "drop"])
+      composer.dispatchEvent(
+        new DragEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer: transfer,
+        }),
+      );
+  });
+  const response = await uploaded;
+  const body = (await response.json()) as { ok: boolean; path: string };
+  expect(body.ok).toBe(true);
+  expect(body.path).toMatch(/^\/tmp\/[0-9a-f-]+\.pdf$/);
+  await expect(input).toHaveValue(body.path);
+  await frame.getByRole("button", { name: "Send" }).click();
+  await expect(frame.locator("[data-sent]")).toHaveText(body.path);
+  await expect(frame.locator(".sh-composer-drop-error")).toHaveCount(0);
+});
+
+test("image-only composer drops remain handled by the guest", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const frame = page.frameLocator("[data-collab-frame]");
+  const input = frame.locator(".sh-composer-input");
+  const uploadRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/files/upload?"))
+      uploadRequests.push(request.url());
+  });
+  await input.evaluate((element) => {
+    const composer = element.closest(".sh-composer");
+    if (!(composer instanceof HTMLElement))
+      throw new Error("Composer not found");
+    const transfer = new DataTransfer();
+    transfer.items.add(
+      new File(["image"], "photo.png", {
+        type: "image/png",
+      }),
+    );
+    composer.dispatchEvent(
+      new DragEvent("drop", {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer: transfer,
+      }),
+    );
+  });
+  await expect(frame.locator("output[data-drop-count]")).toHaveAttribute(
+    "data-drop-count",
+    "1",
+  );
+  await expect(frame.locator("output[data-image-attachments]")).toHaveAttribute(
+    "data-image-attachments",
+    "1",
+  );
+  expect(uploadRequests).toEqual([]);
 });

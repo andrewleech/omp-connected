@@ -21,6 +21,7 @@ import { opensInViewer } from "./file-view";
 import { FileViewer } from "./file-viewer";
 import {
   ApiError,
+  FILES_TEMP_UPLOAD_FEATURE,
   type FileEntry,
   type FileListing,
   LatestResponseGate,
@@ -49,17 +50,25 @@ interface UploadItem {
   apiBase: string;
   dir: string;
   path: string;
+  destination: "session" | "temp";
+  uploadedPath: string;
   file: File;
   state: UploadState;
   xhr: XMLHttpRequest | null;
   row: HTMLElement;
-  progress: HTMLProgressElement;
-  status: HTMLElement;
-  cancel: HTMLButtonElement;
+  copyPath: HTMLButtonElement;
+  dropCopy: DropCopyBatch | null;
+}
+
+interface DropCopyBatch {
+  remaining: number;
+  paths: string[];
+  cwd: string;
+  destination: "session" | "temp";
 }
 
 interface UploadResponse {
-  status: number;
+  status: number | null;
   body: unknown;
 }
 
@@ -102,6 +111,7 @@ export class FilesPane {
   readonly #uploadList: HTMLElement;
   readonly #clearUploads: HTMLButtonElement;
   readonly #dropHint: HTMLElement;
+  readonly #tempDropZone: HTMLElement;
 
   constructor(
     host: PaneHost,
@@ -196,6 +206,18 @@ export class FilesPane {
       this.#uploadsSection,
     );
     this.#dropHint = el("div", { className: "drop-hint" });
+    this.#dropHint.setAttribute("aria-hidden", "true");
+    const sessionDropZone = el("div", {
+      className: "drop-zone drop-zone-session",
+      text: "Drop to upload to this folder",
+    });
+    sessionDropZone.dataset.dropDestination = "session";
+    this.#tempDropZone = el("div", {
+      className: "drop-zone drop-zone-temp",
+      text: "Drop to upload to host temp directory",
+    });
+    this.#tempDropZone.dataset.dropDestination = "temp";
+    this.#dropHint.append(sessionDropZone, this.#tempDropZone);
     this.element.append(
       el("h2", { text: "Files" }),
       this.#empty,
@@ -214,6 +236,12 @@ export class FilesPane {
       ? supportsSessionV1(this.#session)
       : false;
     this.#session = session;
+    const supportsTempUpload =
+      session?.features?.includes(FILES_TEMP_UPLOAD_FEATURE) ?? false;
+    this.#tempDropZone.textContent = supportsTempUpload
+      ? "Drop to upload to host temp directory"
+      : "Host temp uploads need the updated extension; restart this session";
+    this.#tempDropZone.classList.toggle("unsupported", !supportsTempUpload);
     if (key !== this.#key) {
       this.#key = key;
       this.#path = "";
@@ -513,6 +541,39 @@ export class FilesPane {
     window.prompt("Copy this path", absolute);
   }
 
+  async #copyUploadedPath(
+    path: string,
+    destination: "session" | "temp",
+    allowPrompt = false,
+  ): Promise<void> {
+    const cwd = this.#cwd();
+    const absolute =
+      destination === "temp" || !cwd ? path : absolutePath(cwd, path);
+    if (await copyText(absolute)) {
+      this.#host.showStatus("Uploaded path copied", "ok");
+      return;
+    }
+    if (allowPrompt) {
+      window.prompt("Copy uploaded path", absolute);
+      return;
+    }
+    this.#host.showStatus(
+      "Upload finished, but the browser could not copy the path",
+      "warning",
+    );
+  }
+  async #copyDroppedPaths(paths: string[]): Promise<void> {
+    const value = paths.join("\n");
+    if (await copyText(value)) {
+      this.#host.showStatus(
+        paths.length === 1 ? "Path copied" : "Paths copied",
+        "ok",
+      );
+      return;
+    }
+    window.prompt("Copy uploaded paths", value);
+  }
+
   async #mkdir(): Promise<void> {
     const session = this.#session;
     const key = this.#key;
@@ -538,34 +599,105 @@ export class FilesPane {
 
   #attachDropTarget(): void {
     let depth = 0;
+    let destination: "session" | "temp" = "session";
+    const target = this.element.ownerDocument;
+    const isPaneEvent = (event: DragEvent): boolean => {
+      const body = this.element.closest(".inspector-body");
+      return (
+        this.element.isConnected &&
+        body !== null &&
+        event.composedPath().includes(body)
+      );
+    };
     const hasFiles = (event: DragEvent) =>
       event.dataTransfer?.types.includes("Files") ?? false;
     const setDragging = (dragging: boolean) => {
       this.element.classList.toggle("dragging", dragging);
-      this.#dropHint.textContent = dragging
-        ? `Drop to upload to ${this.#crumbs.lastElementChild?.textContent ?? "this folder"}`
-        : "";
+      if (dragging) {
+        const pane = this.element.getBoundingClientRect();
+        const viewport = this.element.ownerDocument.defaultView;
+        const body = this.element.closest(".inspector-body");
+        const inspector = this.element.closest(".inspector");
+        const bodyRect = body?.getBoundingClientRect() ?? pane;
+        const inspectorRect = inspector?.getBoundingClientRect() ?? bodyRect;
+        const top = Math.max(0, bodyRect.top, inspectorRect.top);
+        const bottom = Math.min(
+          viewport?.innerHeight ?? bodyRect.bottom,
+          bodyRect.bottom,
+          inspectorRect.bottom,
+        );
+        const left = Math.max(0, pane.left, inspectorRect.left);
+        const right = Math.min(
+          viewport?.innerWidth ?? pane.right,
+          pane.right,
+          inspectorRect.right,
+        );
+        if (this.#dropHint.parentElement !== this.element.ownerDocument.body)
+          this.element.ownerDocument.body.append(this.#dropHint);
+        this.#dropHint.style.display = "flex";
+        this.#dropHint.style.flexDirection = "column";
+        this.#dropHint.style.inset = "auto";
+        this.#dropHint.style.position = "fixed";
+        this.#dropHint.style.zIndex = "30";
+        this.#dropHint.style.left = `${left}px`;
+        this.#dropHint.style.top = `${top}px`;
+        this.#dropHint.style.width = `${Math.max(0, right - left)}px`;
+        this.#dropHint.style.height = `${Math.max(0, bottom - top)}px`;
+        this.#dropHint.style.pointerEvents = "none";
+      } else {
+        this.element.append(this.#dropHint);
+        this.#dropHint.removeAttribute("style");
+      }
     };
-    this.element.addEventListener("dragenter", (event) => {
-      if (!hasFiles(event) || !this.#canWrite()) return;
+    const setDestination = (event: DragEvent) => {
+      const temp = this.#tempDropZone.getBoundingClientRect();
+      destination =
+        temp.height > 0 && event.clientY >= temp.top ? "temp" : "session";
+      this.#dropHint.dataset.destination = destination;
+    };
+    target.addEventListener("dragenter", (event) => {
+      if (!isPaneEvent(event) || !hasFiles(event) || !this.#canWrite()) return;
       event.preventDefault();
       depth += 1;
       setDragging(true);
+      setDestination(event);
     });
-    this.element.addEventListener("dragover", (event) => {
-      if (!hasFiles(event) || !this.#canWrite()) return;
+    target.addEventListener("dragover", (event) => {
+      if (!isPaneEvent(event) || !hasFiles(event) || !this.#canWrite()) return;
       event.preventDefault();
+      setDragging(true);
+      setDestination(event);
       if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
     });
-    this.element.addEventListener("dragleave", () => {
+    target.addEventListener("dragleave", () => {
       depth = Math.max(0, depth - 1);
       if (depth === 0) setDragging(false);
     });
-    this.element.addEventListener("drop", (event) => {
+    target.addEventListener("drop", (event) => {
+      if (!isPaneEvent(event)) return;
+      if (!hasFiles(event) || !this.#canWrite()) {
+        depth = 0;
+        setDragging(false);
+        return;
+      }
+      event.preventDefault();
+      setDragging(true);
+      setDestination(event);
+      const selectedDestination = destination;
+      if (
+        selectedDestination === "temp" &&
+        !(this.#session?.features?.includes(FILES_TEMP_UPLOAD_FEATURE) ?? false)
+      ) {
+        depth = 0;
+        setDragging(false);
+        this.#host.showStatus(
+          "Host temp uploads need the updated extension; restart this session",
+          "warning",
+        );
+        return;
+      }
       depth = 0;
       setDragging(false);
-      if (!hasFiles(event) || !this.#canWrite()) return;
-      event.preventDefault();
       const files: File[] = [];
       let skipped = 0;
       for (const item of [...(event.dataTransfer?.items ?? [])]) {
@@ -582,29 +714,46 @@ export class FilesPane {
           "Folders cannot be uploaded; drop files",
           "warning",
         );
-      this.#enqueue(files);
+      this.#enqueue(files, selectedDestination, true);
     });
   }
 
-  #enqueue(files: File[]): void {
+  #enqueue(
+    files: File[],
+    destination: "session" | "temp" = "session",
+    copyAfterDrop = false,
+  ): void {
     const session = this.#session;
     const key = this.#key;
     if (!session || !key || files.length === 0) return;
+    const dropCopy: DropCopyBatch | null = copyAfterDrop
+      ? {
+          remaining: files.length,
+          paths: [],
+          cwd: this.#cwd(),
+          destination,
+        }
+      : null;
     for (const file of files) {
       const row = el("li", { className: "upload-row" });
       const name = el("span", { className: "upload-name", text: file.name });
       name.title = file.name;
       const status = el("span", { className: "upload-status" });
+      const copyPath = button("Copy path", "small");
+      copyPath.hidden = true;
       const cancel = button("Cancel", "small");
       const progress = document.createElement("progress");
       progress.max = 1;
       progress.value = 0;
-      row.append(name, status, cancel, progress);
+      row.append(name, status, copyPath, cancel, progress);
+      const dir = destination === "session" ? this.#path : "";
       const item: UploadItem = {
         key,
         apiBase: this.#apiBase(session),
-        dir: this.#path,
-        path: joinPath(this.#path, file.name),
+        dir,
+        path: joinPath(dir, file.name),
+        destination,
+        uploadedPath: "",
         file,
         state: "queued",
         xhr: null,
@@ -612,7 +761,18 @@ export class FilesPane {
         progress,
         status,
         cancel,
+        copyPath,
+        dropCopy,
       };
+      copyPath.addEventListener(
+        "click",
+        () =>
+          void this.#copyUploadedPath(
+            item.uploadedPath,
+            item.destination,
+            true,
+          ),
+      );
       row.dataset.uploadName = file.name;
       cancel.addEventListener("click", () => {
         if (item.state === "uploading") item.xhr?.abort();
@@ -629,12 +789,36 @@ export class FilesPane {
   }
 
   #setUpload(item: UploadItem, state: UploadState, text: string): void {
+    const terminal =
+      state === "done" ||
+      state === "skipped" ||
+      state === "error" ||
+      state === "cancelled";
+    const wasTerminal =
+      item.state === "done" ||
+      item.state === "skipped" ||
+      item.state === "error" ||
+      item.state === "cancelled";
     item.state = state;
     item.status.textContent = text;
     item.row.dataset.state = state;
     item.cancel.hidden = state !== "queued" && state !== "uploading";
+    item.copyPath.hidden = state !== "done";
     item.progress.hidden = state !== "uploading" && state !== "done";
     if (state === "done") item.progress.value = 1;
+    if (terminal && !wasTerminal && item.dropCopy) {
+      const batch = item.dropCopy;
+      if (state === "done") batch.paths.push(item.uploadedPath);
+      batch.remaining -= 1;
+      if (batch.remaining === 0 && batch.paths.length > 0)
+        void this.#copyDroppedPaths(
+          batch.paths.map((path) =>
+            batch.destination === "session" && batch.cwd
+              ? absolutePath(batch.cwd, path)
+              : path,
+          ),
+        );
+    }
     this.#renderUploads();
   }
 
@@ -657,6 +841,7 @@ export class FilesPane {
         if (!item) return;
         await this.#upload(item);
         if (
+          item.destination === "session" &&
           item.state === "done" &&
           item.key === this.#key &&
           item.dir === this.#path
@@ -674,27 +859,35 @@ export class FilesPane {
       this.#setUpload(item, "uploading", "Uploading 0%");
       item.progress.value = 0;
       const response = await this.#put(item, overwrite);
+      if (response.status === null) {
+        this.#setUpload(item, "cancelled", "Cancelled");
+        return;
+      }
       if (response.status === 0) {
-        this.#setUpload(
-          item,
-          item.state === "cancelled" ? "cancelled" : "error",
-          item.state === "cancelled"
-            ? "Cancelled"
-            : "Upload failed: hub unreachable",
-        );
+        this.#setUpload(item, "error", "Upload failed: hub unreachable");
         return;
       }
       if (response.status >= 200 && response.status < 300) {
-        const size = (response.body as { size?: number } | null)?.size;
+        const result = response.body as {
+          path?: unknown;
+          size?: number;
+        } | null;
+        const path = typeof result?.path === "string" ? result.path : item.path;
+        item.uploadedPath = path;
         this.#setUpload(
           item,
           "done",
-          `Uploaded${typeof size === "number" ? ` (${formatBytes(size)})` : ""}`,
+          `Uploaded${typeof result?.size === "number" ? ` (${formatBytes(result.size)})` : ""}`,
         );
         return;
       }
       if (response.status === 409 && !overwrite) {
-        const where = item.dir ? item.dir : "the session folder";
+        const where =
+          item.destination === "temp"
+            ? "the host temp directory"
+            : item.dir
+              ? item.dir
+              : "the session folder";
         if (
           window.confirm(
             `"${item.file.name}" already exists in ${where}. Overwrite it?`,
@@ -725,9 +918,10 @@ export class FilesPane {
     const { promise, resolve } = Promise.withResolvers<UploadResponse>();
     const xhr = new XMLHttpRequest();
     item.xhr = xhr;
+    const destination = item.destination === "temp" ? "&destination=temp" : "";
     xhr.open(
       "PUT",
-      `${item.apiBase}/files/upload?path=${encodeURIComponent(item.path)}&overwrite=${overwrite ? 1 : 0}`,
+      `${item.apiBase}/files/upload?path=${encodeURIComponent(item.path)}&overwrite=${overwrite ? 1 : 0}${destination}`,
     );
     xhr.upload.addEventListener("progress", (event) => {
       if (!event.lengthComputable || event.total === 0) return;
@@ -735,7 +929,7 @@ export class FilesPane {
       item.progress.value = fraction;
       item.status.textContent = `Uploading ${Math.floor(fraction * 100)}%`;
     });
-    const finish = (status: number) => {
+    const finish = (status: number | null) => {
       item.xhr = null;
       let body: unknown = null;
       try {
@@ -747,10 +941,7 @@ export class FilesPane {
     };
     xhr.addEventListener("load", () => finish(xhr.status));
     xhr.addEventListener("error", () => finish(0));
-    xhr.addEventListener("abort", () => {
-      item.state = "cancelled";
-      finish(0);
-    });
+    xhr.addEventListener("abort", () => finish(null));
     xhr.send(item.file);
     return promise;
   }

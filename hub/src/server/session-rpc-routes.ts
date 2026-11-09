@@ -18,6 +18,7 @@ import {
   AGENT_ROLES_FEATURE,
   AUTH_FEATURE,
   EXIT_FEATURE,
+  FILES_TEMP_UPLOAD_FEATURE,
   type FilesStatResult,
   MAX_AUTH_INPUT,
   MAX_SCHEDULED_TEXT,
@@ -289,6 +290,7 @@ export function sessionRpcRoutes(
     request: Request,
     path: string,
     overwrite: boolean,
+    destination?: "temp",
   ) {
     const uploadId = randomBytes(16).toString("base64url");
     const reader = request.body?.getReader();
@@ -307,6 +309,7 @@ export function sessionRpcRoutes(
         data: Buffer.from(buffer.buffer, 0, filled).toString("base64"),
         final,
         overwrite,
+        ...(destination === undefined ? {} : { destination }),
       });
       offset += filled;
       filled = 0;
@@ -339,7 +342,11 @@ export function sessionRpcRoutes(
       if (started) {
         // Sent immediately; the reply (or its absence) doesn't change the
         // response, and the extension also expires idle uploads itself.
-        call(agentId, "files.write_abort", { path, uploadId }).catch(() => {});
+        call(agentId, "files.write_abort", {
+          path,
+          uploadId,
+          ...(destination === undefined ? {} : { destination }),
+        }).catch(() => {});
       }
       if (err instanceof UploadTooLargeError)
         return fail(set, {
@@ -711,10 +718,20 @@ export function sessionRpcRoutes(
         const path = query.path;
         if (!isNonEmptyString(path))
           return fail(set, { status: 400, error: "path is required" });
+        const destination = query.destination;
+        if (destination !== undefined && destination !== "temp")
+          return fail(set, {
+            status: 400,
+            error: "destination must be temp",
+          });
         const overwrite = queryFlag(query.overwrite);
         if (overwrite === undefined)
           return fail(set, { status: 400, error: "overwrite must be 0 or 1" });
-        const resolved = target(params.id, params.instanceId);
+        const resolved = target(
+          params.id,
+          params.instanceId,
+          destination === "temp" ? FILES_TEMP_UPLOAD_FEATURE : SESSION_FEATURE,
+        );
         if (!("agentId" in resolved)) return fail(set, resolved);
         const declaredLength = Number(
           request.headers.get("content-length") ?? 0,
@@ -727,7 +744,14 @@ export function sessionRpcRoutes(
         const release = acquireTransfer(resolved.agentId);
         if (!release) return transfersBusy(set);
         try {
-          return await upload(set, resolved.agentId, request, path, overwrite);
+          return await upload(
+            set,
+            resolved.agentId,
+            request,
+            path,
+            overwrite,
+            destination,
+          );
         } finally {
           release();
         }

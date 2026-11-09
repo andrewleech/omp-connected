@@ -32,6 +32,8 @@ export const USAGE_FEATURE = "session.usage.v1";
 export const SESSION_FORK_FEATURE = "session.fork.v1";
 /** Advertised by sessions that can log providers in and out for the dashboard. */
 export const AUTH_FEATURE = "session.auth.v1";
+/** Advertised by sessions that support uploads to the host temp directory. */
+export const FILES_TEMP_UPLOAD_FEATURE = "files.temp_upload.v1";
 /** Longest accepted answer to a login prompt, in UTF-16 code units. */
 export const MAX_LOGIN_INPUT = 100_000;
 

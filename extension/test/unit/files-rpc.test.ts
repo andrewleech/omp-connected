@@ -36,8 +36,16 @@ async function rpcCode(promise: Promise<unknown> | (() => unknown)): Promise<num
 
 const b64 = (text: string) => Buffer.from(text).toString("base64");
 
-function chunk(p: string, uploadId: string, offset: number, text: string, final: boolean, overwrite = false) {
-	return service.write({ path: p, uploadId, offset, data: b64(text), final, overwrite });
+function chunk(
+	p: string,
+	uploadId: string,
+	offset: number,
+	text: string,
+	final: boolean,
+	overwrite = false,
+	destination?: "temp",
+) {
+	return service.write({ path: p, uploadId, offset, data: b64(text), final, overwrite, destination });
 }
 
 test("normalizeRelPath maps the root spellings to '' and folds inner dot segments", () => {
@@ -175,6 +183,64 @@ test("chunks accumulate in a temp file that is renamed onto the target only on t
 	expect(service.activeUploads).toBe(0);
 });
 
+
+test("temp uploads write under the host temp directory and return an absolute path", async () => {
+	const name = `omp-files-rpc-${path.basename(base)}.txt`;
+	const tmpdir = spyOn(os, "tmpdir").mockReturnValue(base);
+	const target = path.join(base, name);
+	try {
+		const partial = await chunk(name, "upload-01", 0, "hello ", false, false, "temp");
+		expect(partial).toEqual({ ok: true, path: target, size: 6 });
+		const complete = await chunk(name, "upload-01", 6, "world", true, false, "temp");
+		expect(complete).toEqual({ ok: true, path: target, size: 11 });
+		expect(path.isAbsolute(complete.path)).toBe(true);
+		expect(await fs.readFile(target, "utf8")).toBe("hello world");
+	} finally {
+		tmpdir.mockRestore();
+		await fs.rm(target, { force: true });
+	}
+});
+
+test("temp uploads reject traversal and unknown destinations", async () => {
+	expect(await rpcCode(chunk("../outside/escaped.txt", "upload-01", 0, "x", true, false, "temp"))).toBe(
+		RpcCode.Forbidden,
+	);
+	expect(
+		await rpcCode(
+			service.write({
+				path: "bad.txt",
+				uploadId: "upload-01",
+				offset: 0,
+				data: b64("x"),
+				final: true,
+				overwrite: false,
+				destination: "arbitrary",
+			}),
+		),
+	).toBe(RpcCode.Invalid);
+	expect(await rpcCode(service.writeAbort({ path: "bad.txt", uploadId: "upload-01", destination: "arbitrary" }))).toBe(
+		RpcCode.Invalid,
+	);
+});
+
+test("an upload cannot switch destination for a later chunk or abort", async () => {
+	const name = `omp-files-rpc-${path.basename(base)}.txt`;
+	const tmpdir = spyOn(os, "tmpdir").mockReturnValue(base);
+	const target = path.join(base, name);
+	const partialPath = path.join(base, `.${name}.omp-upload-upload-01`);
+	try {
+		await chunk(name, "upload-01", 0, "partial", false, false, "temp");
+		expect(await rpcCode(chunk(name, "upload-01", 7, "next", true))).toBe(RpcCode.Invalid);
+		expect(await rpcCode(service.writeAbort({ path: name, uploadId: "upload-01" }))).toBe(RpcCode.Invalid);
+		expect(await fs.readFile(partialPath, "utf8")).toBe("partial");
+		await service.writeAbort({ path: name, uploadId: "upload-01", destination: "temp" });
+		expect(await fs.stat(target).then(() => true, () => false)).toBe(false);
+	} finally {
+		tmpdir.mockRestore();
+		await fs.rm(target, { force: true });
+		await fs.rm(partialPath, { force: true });
+	}
+});
 test("a chunk whose offset does not match the bytes received so far is invalid and leaves the temp intact", async () => {
 	await chunk("up.txt", "upload-01", 0, "abc", false);
 	expect(await rpcCode(chunk("up.txt", "upload-01", 5, "x", false))).toBe(RpcCode.Invalid);

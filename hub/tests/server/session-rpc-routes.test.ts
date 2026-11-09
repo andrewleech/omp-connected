@@ -7,6 +7,7 @@ import {
 import {
   AGENT_ROLES_FEATURE,
   AUTH_FEATURE,
+  FILES_TEMP_UPLOAD_FEATURE,
   MODEL_ROLES_FEATURE,
   SESSION_FORK_FEATURE,
   USAGE_FEATURE,
@@ -761,6 +762,51 @@ describe("session-rpc-routes: upload", () => {
     expect(uploadIds.size).toBe(1);
     expect([...uploadIds][0]).toMatch(/^[A-Za-z0-9_-]{22}$/);
     expect(calls.every((c) => c.params.overwrite === false)).toBe(true);
+    expect(calls.every((c) => c.params.destination === undefined)).toBe(true);
+  });
+
+  test("temp destination reaches every chunk and abort", async () => {
+    const registry = new AgentRegistry();
+    const recorder = writeRecorder();
+    const calls = registerSessionAgent(
+      registry,
+      (method, params) => {
+        if (method === "files.write" && params.offset === FILE_CHUNK_BYTES)
+          throw new RpcFault(-32002, "write failed");
+        return recorder.handler(method, params);
+      },
+      { features: ["session.v1", FILES_TEMP_UPLOAD_FEATURE] },
+    );
+    const app = sessionRpcRoutes(registry);
+    const response = await app.handle(
+      put(
+        "f",
+        streamOf([patternBytes(2 * FILE_CHUNK_BYTES + 1)]),
+        "&destination=temp",
+      ),
+    );
+
+    expect(response.status).toBe(409);
+    expect(calls.map((c) => c.method)).toEqual([
+      "files.write",
+      "files.write",
+      "files.write_abort",
+    ]);
+    expect(calls.every((c) => c.params.destination === "temp")).toBe(true);
+    expect(calls[2]?.params.path).toBe("f");
+    expect(calls[2]?.params.uploadId).toBe(calls[0]?.params.uploadId);
+  });
+  test("temp upload refuses sessions without temp-upload support", async () => {
+    const registry = new AgentRegistry();
+    const calls = registerSessionAgent(registry, () => ({ ok: true }), {
+      features: ["session.v1"],
+    });
+    const app = sessionRpcRoutes(registry);
+
+    const response = await app.handle(put("f", "x", "&destination=temp"));
+
+    expect(response.status).toBe(501);
+    expect(calls).toEqual([]);
   });
 
   test("a body of exactly two chunks ends with a full final chunk", async () => {
@@ -970,6 +1016,16 @@ describe("session-rpc-routes: upload", () => {
 
     expect(noPath.status).toBe(400);
     expect(badOverwrite.status).toBe(400);
+    expect(calls).toEqual([]);
+  });
+  test("invalid upload destinations return 400 without forwarding", async () => {
+    const registry = new AgentRegistry();
+    const calls = registerSessionAgent(registry, () => ({ ok: true }));
+    const app = sessionRpcRoutes(registry);
+
+    const response = await app.handle(put("f", "x", "&destination=elsewhere"));
+
+    expect(response.status).toBe(400);
     expect(calls).toEqual([]);
   });
 });

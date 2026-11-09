@@ -11,6 +11,7 @@ import "@xterm/xterm/css/xterm.css";
 import { AuthPane } from "./lib/auth-pane";
 import {
   attachCollabFileLinks,
+  attachUnsupportedFileDrop,
   customizeCollabFrame,
 } from "./lib/collab-frame";
 import { collabFrameUrl } from "./lib/collab-link";
@@ -206,6 +207,12 @@ function createDashboard(root: HTMLElement): void {
   let lastWorkspaceSignature: string | null | undefined;
   let tailViewer: CollabTailViewer | null = null;
   let collabRequest = 0;
+  let collabFileDropBinding: {
+    frame: HTMLIFrameElement;
+    key: string;
+    request: number;
+    url: string;
+  } | null = null;
   let leftDrawerOpen = false;
   let rightDrawerOpen = false;
   let drawerTrigger: HTMLElement | null = null;
@@ -436,6 +443,7 @@ function createDashboard(root: HTMLElement): void {
     tailViewer = null;
     const frame = root.querySelector<HTMLIFrameElement>("[data-collab-frame]");
     if (frame) frame.src = "about:blank";
+    collabFileDropBinding = null;
     state.selected = sessionKey(session);
     unseenIdle.delete(`${session.host_id}:${session.instanceId}`);
     state.selectedSession = session;
@@ -543,6 +551,7 @@ function createDashboard(root: HTMLElement): void {
     const session = state.selectedSession;
     const selectedKey = session && sessionKey(session);
     if (!session || !selectedKey || !canRequestAccess(session, access)) return;
+    collabFileDropBinding = null;
     showStatus(`Requesting ${access} access…`);
     try {
       const result = await json<{ access: string; url: string }>(
@@ -587,11 +596,13 @@ function createDashboard(root: HTMLElement): void {
         );
         if (frame) {
           frame.style.display = "";
-          frame.src = collabFrameUrl(
+          const url = collabFrameUrl(
             result.url,
             location.origin,
             session.ompcLabel,
           );
+          frame.src = url;
+          collabFileDropBinding = { frame, key: selectedKey, request, url };
         }
       }
 
@@ -1084,13 +1095,37 @@ function createDashboard(root: HTMLElement): void {
       if (!(frame instanceof HTMLIFrameElement)) return;
       const doc = frame.contentDocument;
       if (!doc?.head) return;
+      const binding = collabFileDropBinding;
+      const session = state.selectedSession;
+      const frameIsCurrent = () =>
+        binding !== null &&
+        binding.frame === frame &&
+        binding.request === collabRequest &&
+        binding.url === doc.location.href &&
+        root.querySelector<HTMLIFrameElement>("[data-collab-frame]") ===
+          frame &&
+        state.selectedAccess === "control" &&
+        !!state.selectedSession &&
+        sessionKey(state.selectedSession) === binding.key &&
+        state.selectedSession.features?.includes("files.temp_upload.v1") ===
+          true;
+      if (
+        binding &&
+        session &&
+        frameIsCurrent() &&
+        session.features?.includes("files.temp_upload.v1")
+      )
+        attachUnsupportedFileDrop(doc, {
+          apiBase: sessionApiBase(session.host_id, session.instanceId),
+          canUpload: frameIsCurrent,
+          onError: (message) => showStatus(message, "warning"),
+        });
       customizeCollabFrame(doc, localStorage);
       attachCollabFileLinks(doc, (path) => filesPane.openFilePath(path));
       attachEdgeSwipe(
         doc,
         edgeSwipeOptions(() => frame.getBoundingClientRect().left),
       );
-      const session = state.selectedSession;
       if (
         session &&
         state.selectedAccess === "control" &&

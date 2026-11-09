@@ -82,6 +82,7 @@ test("a session without session.v1 asks for a restart", async ({ page }) => {
 test("Files tab browses, uploads and asks before overwriting", async ({
   page,
 }) => {
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.goto("/");
   await page.getByRole("button", { name: "Files", exact: true }).click();
   const pane = page.locator("[data-files-pane]");
@@ -125,6 +126,188 @@ test("Files tab browses, uploads and asks before overwriting", async ({
   });
   await overwrite;
   await expect(list.locator('[data-name="report.txt"]')).toContainText("14 B");
+});
+test("Files tab copies successful paths when a temp upload is cancelled", async ({
+  page,
+}) => {
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Files", exact: true }).click();
+  const pane = page.locator("[data-files-pane]");
+  let signalFirstUpload!: () => void;
+  let releaseFirstUpload!: () => void;
+  const firstUploadIntercepted = new Promise<void>((resolve) => {
+    signalFirstUpload = resolve;
+  });
+  const firstUploadGate = new Promise<void>((resolve) => {
+    releaseFirstUpload = resolve;
+  });
+  await page.route("**/files/upload*", async (route) => {
+    const path = new URL(route.request().url()).searchParams.get("path");
+    if (path !== "scratch.txt") {
+      await route.continue();
+      return;
+    }
+    signalFirstUpload();
+    await firstUploadGate;
+    try {
+      await route.continue();
+    } catch {
+      return;
+    }
+  });
+  const uploads = [
+    pane.locator('[data-upload-name="scratch.txt"]'),
+    pane.locator('[data-upload-name="second.txt"]'),
+    pane.locator('[data-upload-name="third.txt"]'),
+  ];
+  const request = page.waitForRequest((item) =>
+    item.url().includes("destination=temp"),
+  );
+  const geometry = await pane.evaluate((element) => {
+    const transfer = new DataTransfer();
+    transfer.items.add(
+      new File(["temporary data"], "scratch.txt", { type: "text/plain" }),
+    );
+    transfer.items.add(
+      new File(["more temporary data"], "second.txt", { type: "text/plain" }),
+    );
+    transfer.items.add(
+      new File(["last temporary data"], "third.txt", { type: "text/plain" }),
+    );
+    element.dispatchEvent(
+      new DragEvent("dragenter", {
+        bubbles: true,
+        cancelable: true,
+        clientY: 0,
+        dataTransfer: transfer,
+      }),
+    );
+    const hint = document.querySelector(".drop-hint");
+    const sessionZone = document.querySelector(".drop-zone-session");
+    const tempZone = document.querySelector(".drop-zone-temp");
+    if (
+      !(hint instanceof HTMLElement) ||
+      !(sessionZone instanceof HTMLElement) ||
+      !(tempZone instanceof HTMLElement)
+    )
+      throw new Error("Drop zones not found");
+    const hintRect = hint.getBoundingClientRect();
+    const sessionRect = sessionZone.getBoundingClientRect();
+    const tempRect = tempZone.getBoundingClientRect();
+    const x = hintRect.left + hintRect.width / 2;
+    const y = tempRect.top + 1;
+    const hit = document.elementFromPoint(x, y);
+    if (!(hit instanceof Element)) throw new Error("No drop hit target");
+    const hitTarget = hit.closest(".inspector-body");
+    if (!(hitTarget instanceof HTMLElement))
+      throw new Error("Overlay blocks the underlying drop target");
+    for (const type of ["dragover", "drop"])
+      hitTarget.dispatchEvent(
+        new DragEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          clientX: x,
+          clientY: y,
+          dataTransfer: transfer,
+        }),
+      );
+    const inspector = element.closest(".inspector");
+    if (!(inspector instanceof HTMLElement))
+      throw new Error("Inspector not found");
+    const inspectorRect = inspector.getBoundingClientRect();
+    return {
+      height: hintRect.height,
+      sessionHeight: sessionRect.height,
+      tempHeight: tempRect.height,
+      top: hintRect.top,
+      bottom: hintRect.bottom,
+      inspectorTop: inspectorRect.top,
+      inspectorBottom: inspectorRect.bottom,
+      viewportHeight: window.innerHeight,
+    };
+  });
+  expect(geometry.height).toBeGreaterThan(0);
+  expect(geometry.top).toBeGreaterThanOrEqual(geometry.inspectorTop);
+  expect(geometry.bottom).toBeLessThanOrEqual(geometry.inspectorBottom);
+  expect(geometry.bottom).toBeLessThanOrEqual(geometry.viewportHeight);
+  expect(geometry.sessionHeight / geometry.tempHeight).toBeCloseTo(2, 0);
+  await request;
+  await firstUploadIntercepted;
+  await expect(uploads[0]).toHaveAttribute("data-state", "uploading");
+  await uploads[0].getByRole("button", { name: "Cancel" }).click();
+  releaseFirstUpload();
+  await expect(uploads[0]).toHaveAttribute("data-state", "cancelled");
+  await expect(uploads[1]).toHaveAttribute("data-state", "done");
+  await expect(uploads[2]).toHaveAttribute("data-state", "done");
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toBe("/tmp/second.txt\n/tmp/third.txt");
+});
+
+test("Files tab session-folder drops copy paths but picker uploads do not", async ({
+  page,
+}) => {
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Files", exact: true }).click();
+  const pane = page.locator("[data-files-pane]");
+  await page.evaluate(() =>
+    navigator.clipboard.writeText("preserve clipboard"),
+  );
+  await pane.locator("[data-files-upload-input]").setInputFiles({
+    name: "picker.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("picker"),
+  });
+  const pickerUpload = pane.locator(
+    '[data-upload-name="picker.txt"][data-state="done"]',
+  );
+  await expect(pickerUpload).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toBe("preserve clipboard");
+
+  const sessionUpload = pane.locator(
+    '[data-upload-name="session-drop.txt"][data-state="done"]',
+  );
+  const request = page.waitForRequest(
+    (item) =>
+      item.url().includes("path=session-drop.txt") &&
+      !item.url().includes("destination=temp"),
+  );
+  await pane.evaluate((element) => {
+    const transfer = new DataTransfer();
+    transfer.items.add(
+      new File(["session data"], "session-drop.txt", { type: "text/plain" }),
+    );
+    element.dispatchEvent(
+      new DragEvent("dragenter", {
+        bubbles: true,
+        cancelable: true,
+        clientY: 0,
+        dataTransfer: transfer,
+      }),
+    );
+    const hint = document.querySelector(".drop-hint");
+    if (!(hint instanceof HTMLElement))
+      throw new Error("Drop overlay not found");
+    const rect = hint.getBoundingClientRect();
+    for (const type of ["dragover", "drop"])
+      element.dispatchEvent(
+        new DragEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          clientY: rect.top + rect.height * 0.3,
+          dataTransfer: transfer,
+        }),
+      );
+  });
+  await request;
+  await expect(sessionUpload).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toBe("/work/writer/session-drop.txt");
 });
 
 test("a text file opens in a viewer with rendered and raw views and a download link", async ({
