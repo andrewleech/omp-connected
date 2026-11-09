@@ -96,7 +96,9 @@ export function createHub(options: CreateHubOptions = {}): Hub {
       staticPlugin({
         assets: webuiRoot,
         prefix: "/",
-        alwaysStatic: true,
+        // Resolve files per request: a rebuilt bundle gets a new hashed name
+        // and must be served without restarting the hub.
+        alwaysStatic: false,
         indexHTML: true,
         directive: "public",
         maxAge: 86400,

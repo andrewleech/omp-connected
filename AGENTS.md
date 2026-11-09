@@ -20,7 +20,7 @@ Anything that has to change omp itself rather than this repo lives in a fork of 
 
 - One feature or fix per branch, branched from `upstream/main`, so each can become an upstream PR independently. Never push to `can1357/oh-my-pi`.
 - Never commit directly to the integration branch `ompc-fleet`. It is rebuilt from the feature branches by mbm, so direct commits are lost on the next refresh.
-- The omp binary used by `ompc` and the hub's Collab guest are both built from `ompc-fleet`. Build the guest with `COLLAB_WEB_SRC=<fork checkout>/packages/collab-web`; a plain `build:collab` uses the old vendored guest and drops fork features. Restart the hub afterwards, since it registers static files at startup.
+- The omp binary used by `ompc` and the hub's Collab guest are both built from `ompc-fleet`. Build the guest with `COLLAB_WEB_SRC=<fork checkout>/packages/collab-web`; a plain `build:collab` uses the old vendored guest and drops fork features. The hub serves `dist/webui` from disk per request, so rebuilt dashboard and guest bundles need no hub restart; only server code changes do.
 - README.md "Fork build of OMP" describes the build and deploy of both.
 
 ## Using mbm
