@@ -151,6 +151,82 @@ describe("host session management", () => {
 		).toBe("0");
 	});
 
+	test("allocates a suffix around reserved labels and launches the selected name", async () => {
+		sockets.add("project.review-4");
+		await expect(service.start({
+			cwd,
+			name: "review",
+			reservedLabels: ["project.review", "project.review-2", "project.review-3", "unrelated"],
+		})).resolves.toEqual({ ok: true, label: "project.review-4" });
+		expect(await started()).toEqual({
+			args: ["--session-dir", join(root, "history")],
+			cwd,
+			parent: "project.review-4",
+		});
+	});
+
+	test("allocates a numeric suffix for a reserved bare name", async () => {
+		sockets.add("project.3");
+		await expect(service.start({ cwd, name: "", reservedLabels: ["project", "project.2"] })).resolves.toEqual({
+			ok: true,
+			label: "project.3",
+		});
+		expect((await started()).parent).toBe("project.3");
+	});
+
+	test("keeps an unreserved requested name when a reserved list is supplied", async () => {
+		sockets.add("project.chosen");
+		await expect(service.start({ cwd, name: "chosen", reservedLabels: ["project.other"] })).resolves.toEqual({
+			ok: true,
+			label: "project.chosen",
+		});
+		expect((await started()).parent).toBe("project.chosen");
+	});
+
+	test("truncates the requested suffix to fit the combined label", async () => {
+		const name = "a".repeat(56);
+		const allocated = `${"a".repeat(54)}-2`;
+		sockets.add(`project.${allocated}`);
+		await expect(service.start({ cwd, name, reservedLabels: [`project.${name}`] })).resolves.toEqual({
+			ok: true,
+			label: `project.${allocated}`,
+		});
+		expect((await started()).parent).toBe(`project.${allocated}`);
+	});
+
+	test("rejects invalid reserved labels and a basename with no room for a suffix", async () => {
+		await expect(service.start({ cwd, name: "", reservedLabels: ["bad label"] })).rejects.toMatchObject({ code: -32004 });
+		await expect(service.start({ cwd, name: "", reservedLabels: [42] })).rejects.toMatchObject({ code: -32004 });
+		await expect(service.start({ cwd, name: "", reservedLabels: "project" })).rejects.toMatchObject({ code: -32004 });
+		const longCwd = join(root, "a".repeat(64));
+		await mkdir(longCwd);
+		await expect(service.start({ cwd: longCwd, name: "", reservedLabels: ["a".repeat(64)] })).rejects.toMatchObject({
+			code: -32004,
+		});
+	});
+
+	test("saves the allocated name for a resumed conversation", async () => {
+		sockets.add("project.review-2");
+		await expect(service.start({ cwd, name: "review", sessionId: "old", reservedLabels: ["project.review"] })).resolves.toEqual({
+			ok: true,
+			label: "project.review-2",
+		});
+		expect(await started()).toEqual({
+			args: ["--resume", history[0]!.path],
+			cwd,
+			parent: "project.review-2",
+		});
+		expect(JSON.parse(await readFile(join(root, "names", "old.json"), "utf8"))).toMatchObject({ name: "review-2" });
+	});
+
+	test("does not retry when an allocated name collides with a live tmux session", async () => {
+		sockets.add("project.review-2");
+		await service.start({ cwd, name: "review-2" });
+		await expect(service.start({ cwd, name: "review", reservedLabels: ["project.review"] })).rejects.toMatchObject({
+			code: -32002,
+		});
+	});
+
 	test("resumes the authoritative session file with spaces and refuses another launch while it starts", async () => {
 		sockets.add("project..resume");
 		await service.start({ cwd, name: ".resume", sessionId: "old" });

@@ -7,6 +7,7 @@ import type { CollabHost } from "./collab-registry.js";
 import { RpcCode, RpcError } from "./protocol.js";
 
 export const HOST_SESSIONS_FEATURE = "host.sessions.v1";
+export const HOST_SESSIONS_RESERVED_LABELS_FEATURE = "host.sessions.reserved-labels";
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 const NAME_PATTERN = /^[A-Za-z0-9_.][A-Za-z0-9_.-]{0,63}$/;
@@ -184,7 +185,10 @@ export class HostSessions {
 			value.cwd.includes("\0") ||
 			typeof value.name !== "string" ||
 			(value.name !== "" && !NAME_PATTERN.test(value.name)) ||
-			(value.sessionId !== undefined && (typeof value.sessionId !== "string" || !ID_PATTERN.test(value.sessionId)))
+			(value.sessionId !== undefined && (typeof value.sessionId !== "string" || !ID_PATTERN.test(value.sessionId))) ||
+			(value.reservedLabels !== undefined &&
+				(!Array.isArray(value.reservedLabels) ||
+					value.reservedLabels.some((label: unknown) => typeof label !== "string" || !LABEL_PATTERN.test(label))))
 		) {
 			throw new RpcError(-32004, "Invalid path, ompc name or session UUID.");
 		}
@@ -199,17 +203,36 @@ export class HostSessions {
 			if (error instanceof RpcError) throw error;
 			throw new RpcError(-32004, `Cannot open directory: ${(error as Error).message}`);
 		}
-		const label = `${basename(cwd)}${value.name ? `.${value.name}` : ""}`;
+		let name = value.name;
+		let label = `${basename(cwd)}${name ? `.${name}` : ""}`;
 		if (!LABEL_PATTERN.test(label))
 			throw new RpcError(
 				-32004,
 				"The directory name and ompc name together must be 1–64 letters, digits, dots, underscores or hyphens, starting with a letter or digit.",
 			);
+		const reserved = new Set((value.reservedLabels as string[] | undefined) ?? []);
+		if (reserved.has(label)) {
+			const available = 64 - basename(cwd).length - 1;
+			for (let suffix = 2; ; suffix++) {
+				const number = String(suffix);
+				if (number.length > available) {
+					throw new RpcError(RpcCode.Invalid, "The directory name leaves no room for a distinct session name. Choose a shorter directory name.");
+				}
+				const prefix = name.slice(0, Math.max(0, available - number.length - 1));
+				const candidate = prefix ? `${prefix}-${number}` : number;
+				const candidateLabel = `${basename(cwd)}.${candidate}`;
+				if (!reserved.has(candidateLabel)) {
+					name = candidate;
+					label = candidateLabel;
+					break;
+				}
+			}
+		}
 		const release = await this.options.acquireLaunchLock();
 		if (!release) throw new RpcError(-32006, "Another session is being started on this host; retry shortly.");
 		try {
 			const openIds = await this.#openIds();
-			const args = ["--detach", "--new", ...(value.name ? [value.name] : [])];
+			const args = ["--detach", "--new", ...(name ? [name] : [])];
 			const id = value.sessionId as string | undefined;
 			if (id) {
 				if (
@@ -224,13 +247,16 @@ export class HostSessions {
 				args.push("--resume", session.path);
 			} else args.push("--session-dir", await this.options.newSessionDir(cwd));
 			const saved = id ? await this.#saved(id) : undefined;
-			if (id) await this.#save(id, { name: value.name, pendingUntil: Date.now() + 60_000 });
+			if (id) await this.#save(id, { name, pendingUntil: Date.now() + 60_000 });
 			try {
 				await this.#launch(cwd, args);
 			} catch (error) {
 				if (id) {
 					if (saved) await this.#save(id, saved);
 					else await unlink(join(this.#stateDir, `${id}.json`));
+				}
+				if (error instanceof RpcError && error.code === RpcCode.Exists) {
+					throw new RpcError(RpcCode.Exists, `${error.message} Choose another Name or close the existing session and retry.`);
 				}
 				throw error;
 			}

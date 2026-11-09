@@ -94,6 +94,8 @@ export interface CollabMethodResult {
 }
 
 export const HOST_SESSIONS_FEATURE = "host.sessions.v1";
+export const HOST_SESSIONS_RESERVED_LABELS_FEATURE =
+  "host.sessions.reserved-labels";
 
 export interface PastSession {
   sessionId: string;
@@ -106,7 +108,12 @@ export interface PastSession {
 
 export interface HostMethodParams extends CollabMethodParams {
   "host.sessions.list": Record<string, never>;
-  "host.sessions.start": { cwd: string; name: string; sessionId?: string };
+  "host.sessions.start": {
+    cwd: string;
+    name: string;
+    sessionId?: string;
+    reservedLabels?: string[];
+  };
 }
 
 export interface HostMethodResult extends CollabMethodResult {

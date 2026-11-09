@@ -76,6 +76,9 @@ test("a subagent in the same process shares the parent's hub registration instea
 	await subagent.emit("session_start");
 
 	expect(registrations).toHaveLength(1);
+	expect(registrations[0]).toMatchObject({
+		features: expect.arrayContaining(["host.sessions.v1", "host.sessions.reserved-labels"]),
+	});
 	expect(await subagent.identity()).toMatchObject({ registered: true, id: "host:inst-1" });
 
 	// The subagent finishing must not tear down the parent's connection.

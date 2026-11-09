@@ -36,6 +36,387 @@ test("resumes a past conversation with its remembered suffix, excluding it once 
     page.locator('.past-session[data-session-id="past-old"]'),
   ).toBeVisible();
 });
+
+test("shift-selects and resumes past sessions with their own paths and names", async ({
+  page,
+}) => {
+  const launches: { cwd: string; name: string; sessionId: string }[] = [];
+  await page.route("**/api/hosts/writer/sessions", async (route) => {
+    if (route.request().method() === "POST")
+      launches.push(route.request().postDataJSON());
+    await route.continue();
+  });
+  await page.goto("/");
+  const start = page.getByRole("button", {
+    name: "Start session on writer",
+    exact: true,
+  });
+  await start.click();
+  const dialog = page.getByRole("dialog");
+  const recent = dialog.locator('.past-session[data-session-id="past-new"]');
+  const older = dialog.locator('.past-session[data-session-id="past-old"]');
+  await recent.click();
+  await older.click({ modifiers: ["Shift"] });
+  await expect(recent).toHaveAttribute("aria-pressed", "true");
+  await expect(older).toHaveAttribute("aria-pressed", "true");
+  await dialog.getByRole("button", { name: /resume .*sessions/i }).click();
+  await expect(dialog).not.toBeVisible();
+  expect(launches).toHaveLength(2);
+  expect(launches).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        sessionId: "past-new",
+        cwd: "/work/project",
+        name: "review",
+      }),
+      expect.objectContaining({
+        sessionId: "past-old",
+        cwd: "/work/other",
+        name: "",
+      }),
+    ]),
+  );
+  await expect(
+    page.getByRole("button", { name: "project.review", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "other", exact: true }),
+  ).toBeVisible();
+  await start.click();
+  await expect(dialog.locator(".past-session")).toHaveCount(0);
+});
+
+test("resumes sessions with the same path and name under distinct labels", async ({
+  page,
+}) => {
+  const launches: {
+    sessionId: string;
+    cwd: string;
+    name: string;
+    reservedLabels?: string[];
+  }[] = [];
+  await page.route("**/api/hosts/writer/session-history", async (route) => {
+    await route.fulfill({
+      json: {
+        sessions: [
+          {
+            sessionId: "past-new",
+            cwd: "/work/project",
+            title: "Recent conversation",
+            modifiedAt: 1_800_000_000_000,
+            name: "review",
+          },
+          {
+            sessionId: "past-copy",
+            cwd: "/work/project",
+            title: "Recent conversation",
+            modifiedAt: 1_700_000_000_000,
+            name: "review",
+          },
+        ],
+      },
+    });
+  });
+  await page.route("**/api/hosts/writer/sessions", async (route) => {
+    if (route.request().method() === "POST")
+      launches.push(route.request().postDataJSON());
+    await route.continue();
+  });
+  await page.goto("/");
+  await page
+    .getByRole("button", { name: "Start session on writer", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog");
+  const recent = dialog.locator('.past-session[data-session-id="past-new"]');
+  const copy = dialog.locator('.past-session[data-session-id="past-copy"]');
+  await recent.click();
+  await copy.click({ modifiers: ["Shift"] });
+  await expect(recent).toHaveAttribute("aria-pressed", "true");
+  await expect(copy).toHaveAttribute("aria-pressed", "true");
+  await dialog.getByRole("button", { name: /resume .*sessions/i }).click();
+  await expect(dialog).not.toBeVisible();
+  expect(launches).toHaveLength(2);
+  expect(launches[0]).toMatchObject({
+    sessionId: "past-new",
+    cwd: "/work/project",
+    name: "review",
+  });
+  expect(launches[1]).toMatchObject({
+    sessionId: "past-copy",
+    cwd: "/work/project",
+    name: "review",
+    reservedLabels: ["project.review"],
+  });
+  await expect(
+    page.getByRole("button", { name: "project.review", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "project.review-2", exact: true }),
+  ).toBeVisible();
+});
+
+test("retries a rate-limited batch launch before resuming the next session", async ({
+  page,
+}) => {
+  const launches: { sessionId: string }[] = [];
+  await page.route("**/api/hosts/writer/sessions", async (route) => {
+    if (route.request().method() === "POST") {
+      const body = route.request().postDataJSON();
+      launches.push(body);
+      if (launches.length === 1) {
+        await route.fulfill({
+          status: 429,
+          headers: { "Retry-After": "1" },
+          json: { error: "Rate limited" },
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await page.goto("/");
+  await page
+    .getByRole("button", { name: "Start session on writer", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog");
+  await dialog.locator('.past-session[data-session-id="past-new"]').click();
+  await dialog.locator('.past-session[data-session-id="past-old"]').click({
+    modifiers: ["Shift"],
+  });
+  await dialog.getByRole("button", { name: "Resume 2 sessions" }).click();
+  await expect(dialog).not.toBeVisible();
+  expect(launches.map((launch) => launch.sessionId)).toEqual([
+    "past-new",
+    "past-new",
+    "past-old",
+  ]);
+  await expect(
+    page.getByRole("button", { name: "project.review", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "other", exact: true }),
+  ).toBeVisible();
+});
+
+test("shrinks a shift-selected range before resuming", async ({ page }) => {
+  const launches: { sessionId: string }[] = [];
+  await page.route("**/api/hosts/writer/session-history", async (route) => {
+    await route.fulfill({
+      json: {
+        sessions: ["first", "second", "third"].map((id, index) => ({
+          sessionId: id,
+          cwd: `/work/${id}`,
+          title: id,
+          modifiedAt: 1_800_000_000_000 - index,
+        })),
+      },
+    });
+  });
+  await page.route("**/api/hosts/writer/sessions", async (route) => {
+    if (route.request().method() === "POST")
+      launches.push(route.request().postDataJSON());
+    await route.continue();
+  });
+  await page.goto("/");
+  await page
+    .getByRole("button", { name: "Start session on writer", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog");
+  const first = dialog.locator('.past-session[data-session-id="first"]');
+  const second = dialog.locator('.past-session[data-session-id="second"]');
+  const third = dialog.locator('.past-session[data-session-id="third"]');
+  await first.click();
+  await third.click({ modifiers: ["Shift"] });
+  await expect(
+    dialog.getByRole("button", { name: "Resume 3 sessions" }),
+  ).toBeVisible();
+  await second.click({ modifiers: ["Shift"] });
+  await expect(first).toHaveAttribute("aria-pressed", "true");
+  await expect(second).toHaveAttribute("aria-pressed", "true");
+  await expect(third).toHaveAttribute("aria-pressed", "false");
+  await dialog.getByRole("button", { name: "Resume 2 sessions" }).click();
+  await expect(dialog).not.toBeVisible();
+  expect(launches.map((launch) => launch.sessionId)).toEqual([
+    "first",
+    "second",
+  ]);
+});
+
+test("retries only the failed session after a partial multi-resume", async ({
+  page,
+}) => {
+  const launches: { cwd: string; name: string; sessionId: string }[] = [];
+  let failOlder = true;
+  await page.route("**/api/hosts/writer/sessions", async (route) => {
+    if (route.request().method() === "POST") {
+      const body = route.request().postDataJSON();
+      launches.push(body);
+      if (body.sessionId === "past-old" && failOlder) {
+        failOlder = false;
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({
+            error: "Resume failed for older conversation",
+          }),
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await page.goto("/");
+  await page
+    .getByRole("button", { name: "Start session on writer", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog");
+  await dialog.locator('.past-session[data-session-id="past-new"]').click();
+  await dialog.locator('.past-session[data-session-id="past-old"]').click({
+    modifiers: ["Shift"],
+  });
+  await dialog.getByRole("button", { name: /resume .*sessions/i }).click();
+  await expect(dialog.getByRole("status")).toContainText(
+    "Resume failed for older conversation",
+  );
+  await expect(dialog.getByRole("status")).toContainText("past-old");
+  await expect(
+    dialog.locator('.past-session[data-session-id="past-new"]'),
+  ).toHaveCount(0);
+  await expect(dialog).toBeVisible();
+  await expect(
+    dialog.locator('.past-session[data-session-id="past-old"]'),
+  ).toHaveAttribute("aria-pressed", "true");
+  await dialog
+    .getByRole("button", { name: "Resume session", exact: true })
+    .click();
+  await expect(dialog).not.toBeVisible();
+  expect(
+    launches.filter((launch) => launch.sessionId === "past-new"),
+  ).toHaveLength(1);
+  expect(launches.filter((launch) => launch.sessionId === "past-old")).toEqual([
+    expect.objectContaining({
+      cwd: "/work/other",
+      name: "",
+      sessionId: "past-old",
+    }),
+    expect.objectContaining({
+      cwd: "/work/other",
+      name: "",
+      sessionId: "past-old",
+    }),
+  ]);
+  await expect(
+    page.getByRole("button", { name: "project.review", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "other", exact: true }),
+  ).toBeVisible();
+});
+
+for (const { name, retryName } of [
+  { name: "review", retryName: "review" },
+  { name: "", retryName: "" },
+  { name: "review", retryName: "edited" },
+]) {
+  test(`keeps reserved labels when retrying one failed session (${name || "blank"} to ${retryName || "blank"})`, async ({
+    page,
+  }) => {
+    const launches: {
+      cwd: string;
+      name: string;
+      sessionId: string;
+      reservedLabels?: string[];
+    }[] = [];
+    const ids = ["first", "second", "third"];
+    const labels = [
+      name ? `project.${name}` : "project",
+      name ? `project.${name}-2` : "project.2",
+      retryName === name
+        ? name
+          ? `project.${name}-3`
+          : "project.3"
+        : `project.${retryName}`,
+    ];
+    await page.route("**/api/hosts/writer/session-history", async (route) => {
+      await route.fulfill({
+        json: {
+          sessions: ids.map((id, index) => ({
+            sessionId: id,
+            cwd: "/work/project",
+            title: id,
+            modifiedAt: 1_800_000_000_000 - index,
+            name,
+          })),
+        },
+      });
+    });
+    let failSecond = true;
+    await page.route("**/api/hosts/writer/sessions", async (route) => {
+      if (route.request().method() === "POST") {
+        const body = route.request().postDataJSON();
+        launches.push(body);
+        if (body.sessionId === "second" && failSecond) {
+          failSecond = false;
+          await route.fulfill({
+            status: 503,
+            json: { error: "Temporary failure" },
+          });
+          return;
+        }
+      }
+      await route.continue();
+    });
+    await page.goto("/");
+    await page
+      .getByRole("button", { name: "Start session on writer", exact: true })
+      .click();
+    const dialog = page.getByRole("dialog");
+    await dialog.locator('.past-session[data-session-id="first"]').click();
+    await dialog.getByLabel("Name", { exact: true }).fill("stale");
+    await dialog.locator('.past-session[data-session-id="third"]').click({
+      modifiers: ["Shift"],
+    });
+    await dialog.getByRole("button", { name: "Resume 3 sessions" }).click();
+    await expect(dialog.getByRole("status")).toContainText("Temporary failure");
+    await expect(dialog.getByRole("status")).toContainText("second");
+    await expect(dialog.locator(".past-session")).toHaveCount(1);
+    await expect(
+      dialog.locator('.past-session[data-session-id="second"]'),
+    ).toHaveAttribute("aria-pressed", "true");
+    await expect(dialog.getByLabel("Name", { exact: true })).toHaveValue(name);
+    await dialog.getByLabel("Name", { exact: true }).fill(retryName);
+    await dialog
+      .getByRole("button", { name: "Resume session", exact: true })
+      .click();
+    await expect(dialog).not.toBeVisible();
+    expect(launches).toEqual([
+      { sessionId: "first", cwd: "/work/project", name, reservedLabels: [] },
+      {
+        sessionId: "second",
+        cwd: "/work/project",
+        name,
+        reservedLabels: [labels[0]],
+      },
+      {
+        sessionId: "third",
+        cwd: "/work/project",
+        name,
+        reservedLabels: [labels[0]],
+      },
+      {
+        sessionId: "second",
+        cwd: "/work/project",
+        name: retryName,
+        reservedLabels: [labels[0], labels[1]],
+      },
+    ]);
+    for (const label of labels)
+      await expect(
+        page.getByRole("button", { name: label, exact: true }),
+      ).toBeVisible();
+  });
+}
+
 test("forks the active session from its sidebar context menu", async ({
   page,
 }) => {

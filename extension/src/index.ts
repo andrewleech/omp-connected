@@ -4,7 +4,7 @@ import type { Component } from "@oh-my-pi/pi-tui";
 import { LoginManager } from "./auth-login.js";
 import { getCollabRegistry } from "./collab-registry.js";
 import { FileService } from "./files-rpc.js";
-import { HOST_SESSIONS_FEATURE, HostSessions } from "./host-sessions.js";
+import { HOST_SESSIONS_FEATURE, HOST_SESSIONS_RESERVED_LABELS_FEATURE, HostSessions } from "./host-sessions.js";
 import { type AgentSummary, HubTransport } from "./hub-transport.js";
 import { RpcCode, RpcError } from "./protocol.js";
 import { AGENT_MESSAGE_TYPE, type AgentMessage, formatInboundMessage, isReservedIdentity } from "./provenance.js";
@@ -247,6 +247,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 							EXIT_FEATURE,
 							SESSION_FORK_FEATURE,
 							HOST_SESSIONS_FEATURE,
+							HOST_SESSIONS_RESERVED_LABELS_FEATURE,
 							USAGE_FEATURE,
 							AUTH_FEATURE,
 							...(terminal ? [TERMINAL_FEATURE] : []),
