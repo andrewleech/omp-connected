@@ -198,6 +198,98 @@ test("retries a rate-limited batch launch before resuming the next session", asy
   ).toBeVisible();
 });
 
+for (const modifier of ["Control", "Meta"] as const) {
+  test(`${modifier}-click toggles nonadjacent sessions and plain click selects one`, async ({
+    page,
+  }) => {
+    const launches: { sessionId?: string; cwd: string; name: string }[] = [];
+    await page.route("**/api/hosts/writer/session-history", async (route) => {
+      await route.fulfill({
+        json: {
+          sessions: ["first", "second", "third"].map((id, index) => ({
+            sessionId: id,
+            cwd: `/work/${id}`,
+            title: id,
+            modifiedAt: 1_800_000_000_000 - index,
+            name: id === "first" ? "saved" : "",
+          })),
+        },
+      });
+    });
+    await page.route("**/api/hosts/writer/sessions", async (route) => {
+      if (route.request().method() === "POST")
+        launches.push(route.request().postDataJSON());
+      await route.continue();
+    });
+    await page.goto("/");
+    await page
+      .getByRole("button", { name: "Start session on writer", exact: true })
+      .click();
+    const dialog = page.getByRole("dialog");
+    const first = dialog.locator('.past-session[data-session-id="first"]');
+    const second = dialog.locator('.past-session[data-session-id="second"]');
+    const third = dialog.locator('.past-session[data-session-id="third"]');
+
+    await first.click();
+    await third.click({ modifiers: [modifier] });
+    await expect(first).toHaveAttribute("aria-pressed", "true");
+    await expect(second).toHaveAttribute("aria-pressed", "false");
+    await expect(third).toHaveAttribute("aria-pressed", "true");
+    await expect(
+      dialog.getByRole("button", { name: "Resume 2 sessions" }),
+    ).toBeVisible();
+
+    await third.click({ modifiers: [modifier] });
+    await expect(first).toHaveAttribute("aria-pressed", "true");
+    await expect(third).toHaveAttribute("aria-pressed", "false");
+    await expect(
+      dialog.getByRole("button", { name: "Resume session", exact: true }),
+    ).toBeVisible();
+    await expect(dialog.getByLabel("Path", { exact: true })).toHaveValue(
+      "/work/first",
+    );
+    await expect(dialog.getByLabel("Name", { exact: true })).toHaveValue(
+      "saved",
+    );
+
+    await first.click({ modifiers: [modifier] });
+    await expect(first).toHaveAttribute("aria-pressed", "false");
+    await expect(
+      dialog.getByRole("button", { name: "Start session", exact: true }),
+    ).toBeVisible();
+    await expect(dialog.getByLabel("Name", { exact: true })).toHaveValue("");
+    await expect(dialog.getByLabel("Path", { exact: true })).toHaveValue(
+      "/work/first",
+    );
+    await dialog
+      .getByRole("button", { name: "Start session", exact: true })
+      .click();
+    await expect(dialog).not.toBeVisible();
+    expect(launches).toEqual([{ cwd: "/work/first", name: "" }]);
+    launches.length = 0;
+    await page
+      .getByRole("button", { name: "Start session on writer", exact: true })
+      .click();
+
+    await first.click();
+
+    await third.click({ modifiers: [modifier] });
+    await second.click();
+    await expect(first).toHaveAttribute("aria-pressed", "false");
+    await expect(second).toHaveAttribute("aria-pressed", "true");
+    await expect(third).toHaveAttribute("aria-pressed", "false");
+
+    await first.click();
+    await third.click({ modifiers: [modifier] });
+    await dialog.getByRole("button", { name: "Resume 2 sessions" }).click();
+    await expect(dialog).not.toBeVisible();
+    expect(launches.map((launch) => launch.sessionId)).toEqual([
+      "first",
+      "third",
+    ]);
+  });
+}
+
 test("shrinks a shift-selected range before resuming", async ({ page }) => {
   const launches: { sessionId: string }[] = [];
   await page.route("**/api/hosts/writer/session-history", async (route) => {
@@ -416,6 +508,76 @@ for (const { name, retryName } of [
       ).toBeVisible();
   });
 }
+
+test("clears batch reservations when the last failed session is toggled off", async ({
+  page,
+}) => {
+  const launches: Record<string, unknown>[] = [];
+  await page.route("**/api/hosts/writer/session-history", async (route) => {
+    await route.fulfill({
+      json: {
+        sessions: ["first", "second"].map((id, index) => ({
+          sessionId: id,
+          cwd: "/work/project",
+          title: id,
+          modifiedAt: 1_800_000_000_000 - index,
+          name: "saved",
+        })),
+      },
+    });
+  });
+  await page.route("**/api/hosts/writer/sessions", async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    const body = route.request().postDataJSON();
+    launches.push(body);
+    if (body.sessionId === "second") {
+      await route.fulfill({
+        status: 503,
+        json: { error: "Temporary failure" },
+      });
+    } else {
+      await route.fulfill({ json: { ok: true, label: "project.saved" } });
+    }
+  });
+  await page.goto("/");
+  await page
+    .getByRole("button", { name: "Start session on writer", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog");
+  await dialog.locator('.past-session[data-session-id="first"]').click();
+  const second = dialog.locator('.past-session[data-session-id="second"]');
+  await second.click({ modifiers: ["Control"] });
+  await dialog.getByRole("button", { name: "Resume 2 sessions" }).click();
+  await expect(dialog.getByRole("status")).toContainText("Temporary failure");
+  await expect(dialog.getByLabel("Name", { exact: true })).toHaveValue("saved");
+  await second.click({ modifiers: ["Control"] });
+  await expect(dialog.getByLabel("Name", { exact: true })).toHaveValue("");
+  await expect(dialog.getByLabel("Path", { exact: true })).toHaveValue(
+    "/work/project",
+  );
+  await dialog
+    .getByRole("button", { name: "Start session", exact: true })
+    .click();
+  await expect(dialog).not.toBeVisible();
+  expect(launches).toEqual([
+    {
+      sessionId: "first",
+      cwd: "/work/project",
+      name: "saved",
+      reservedLabels: [],
+    },
+    {
+      sessionId: "second",
+      cwd: "/work/project",
+      name: "saved",
+      reservedLabels: ["project.saved"],
+    },
+    { cwd: "/work/project", name: "" },
+  ]);
+});
 
 test("forks the active session from its sidebar context menu", async ({
   page,

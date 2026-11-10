@@ -62,16 +62,7 @@ export class SessionLauncher {
     );
     const actions = el("div", { className: "session-launch-actions" });
     this.#submit.type = "submit";
-    this.#new.onclick = () => {
-      this.#selected.clear();
-      this.#reservedLabels.length = 0;
-      this.#batchRetries.clear();
-      this.#anchor = undefined;
-      this.#range = [];
-      this.#status.textContent = "";
-      this.#name.value = "";
-      this.#syncSelection();
-    };
+    this.#new.onclick = () => this.#clearSelection();
     actions.append(this.#submit, this.#new);
     this.#status.setAttribute("role", "status");
     form.append(actions, this.#status);
@@ -91,7 +82,7 @@ export class SessionLauncher {
       el("h3", { text: "Resume past sessions" }),
       el("p", {
         className: "empty",
-        text: "Shift-click to select a range of sessions.",
+        text: "Ctrl-click (Cmd-click on Mac) to toggle sessions, or Shift-click to select a range.",
       }),
       this.#filter,
       this.#history,
@@ -210,7 +201,8 @@ export class SessionLauncher {
         el("time", { text: new Date(session.modifiedAt).toLocaleString() }),
       );
       row.onmousedown = (event) => {
-        if (event.shiftKey) event.preventDefault();
+        if (event.shiftKey || event.ctrlKey || event.metaKey)
+          event.preventDefault();
       };
       row.onclick = (event) => {
         const anchor = visible.findIndex(
@@ -223,21 +215,47 @@ export class SessionLauncher {
             .slice(Math.min(anchor, clicked), Math.max(anchor, clicked) + 1)
             .map((item) => item.sessionId);
           for (const id of this.#range) this.#selected.add(id);
+        } else if (event.ctrlKey || event.metaKey) {
+          if (this.#selected.has(session.sessionId))
+            this.#selected.delete(session.sessionId);
+          else this.#selected.add(session.sessionId);
+          this.#anchor = session.sessionId;
+          this.#range = [];
         } else {
           this.#selected.clear();
           this.#selected.add(session.sessionId);
           this.#anchor = session.sessionId;
           this.#range = [session.sessionId];
         }
+        if (this.#selected.size === 0) {
+          this.#clearSelection();
+          return;
+        }
         if (this.#selected.size === 1) {
-          this.#path.value = session.cwd;
-          this.#name.value = session.name ?? "";
+          const selected = this.#sessions.find((item) =>
+            this.#selected.has(item.sessionId),
+          );
+          if (selected) {
+            this.#path.value = selected.cwd;
+            this.#name.value = selected.name ?? "";
+          }
         }
         this.#status.textContent = "";
         this.#syncSelection();
       };
       this.#history.append(row);
     }
+    this.#syncSelection();
+  }
+
+  #clearSelection(): void {
+    this.#selected.clear();
+    this.#reservedLabels.length = 0;
+    this.#batchRetries.clear();
+    this.#anchor = undefined;
+    this.#range = [];
+    this.#status.textContent = "";
+    this.#name.value = "";
     this.#syncSelection();
   }
 
