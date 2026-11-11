@@ -21,7 +21,7 @@ button:hover:not(:disabled), button.active { background: #2a5d79; }
 button:disabled { cursor: not-allowed; opacity: .45; }
 select, textarea, .session-launch-form input { border: 1px solid #3c4b59; border-radius: .4rem; background: #111920; color: inherit; padding: .5rem; width: 100%; }
 textarea { min-height: 7rem; resize: vertical; }
-.omp-shell { display: grid; grid-template-columns: minmax(14rem, 19rem) minmax(0, 1fr) minmax(17rem, 24rem); grid-template-rows: auto minmax(0, 1fr); height: 100vh; height: 100dvh; overflow: hidden; }
+.omp-shell { display: grid; grid-template-columns: minmax(14rem, 19rem) minmax(0, 1fr) minmax(17rem, 24rem); grid-template-rows: auto minmax(0, 1fr); inset: 0; overflow: hidden; position: fixed; }
 .topbar { align-items: center; background: #17212b; border-bottom: 1px solid #344453; display: flex; gap: 1rem; grid-column: 1 / -1; justify-content: space-between; padding: .7rem 1rem; }
 .brand { font-weight: 700; letter-spacing: .03em; }
 .status { color: #b7c4cf; font-size: .9rem; margin-left: auto; }
@@ -120,7 +120,7 @@ button.small { font-size: .78rem; padding: .2rem .45rem; }button.danger { border
 .uploads-header { align-items: center; display: flex; justify-content: space-between; }.upload-row { align-items: center; display: grid; font-size: .8rem; gap: .2rem .5rem; grid-template-columns: minmax(0, 1fr) auto auto auto; padding: .25rem 0; }.upload-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.upload-status { color: #acbac7; }.upload-row[data-state="done"] .upload-status { color: #91d9b3; }.upload-row[data-state="error"] .upload-status { color: #ffc776; }.upload-row progress { grid-column: 1 / -1; height: .35rem; width: 100%; }
 @media (max-width: 768px) {
   html { overscroll-behavior-x: none; } /* horizontal swipes drive the drawers, not history navigation */
-  .omp-shell { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); isolation: isolate; position: relative; }
+  .omp-shell { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); isolation: isolate; }
   .topbar { grid-column: 1; gap: .5rem; padding: calc(.55rem + env(safe-area-inset-top)) max(.7rem, env(safe-area-inset-right)) .55rem max(.7rem, env(safe-area-inset-left)); }
   .status { display: none; }
   .drawer-toggle { display: inline-block; flex-shrink: 0; padding: .35rem .5rem; }
