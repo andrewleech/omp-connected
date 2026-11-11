@@ -107,6 +107,7 @@ const writerInfo = {
   thinkingLevel: "medium",
   thinkingLevels: ["off", "low", "medium", "high"],
   contextUsage: { tokens: 42_000, contextWindow: 200_000, percent: 21 },
+  cacheUsage: { hitTokens: 30_000, missTokens: 10_000 },
   models,
 };
 const roleModels = [

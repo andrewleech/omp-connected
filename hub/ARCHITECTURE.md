@@ -106,7 +106,7 @@ interface HostCollabSession {
 An extension that registers with `features: ["session.v1"]` answers the inspector calls for its own omp session. The optional `session.schedule.v1`, `session.exit.v1`, `session.fork.v1` and `session.usage.v1` features advertise scheduled prompts, graceful session exit, current-head session forking and provider quota reports respectively. The hub sends each call to that agent's own connection (`AgentRegistry.callOnAgent`), never to another agent on the same host.
 
 ```ts
-"session.info" {} -> { cwd; pid; sessionName; access: "view" | "control"; idle; model; thinkingLevel; thinkingLevels: string[]; contextUsage; models }
+"session.info" {} -> { cwd; pid; sessionName; access: "view" | "control"; idle; model; thinkingLevel; thinkingLevels: string[]; contextUsage; cacheUsage?: { hitTokens: number; missTokens: number } | null; models }
 "session.usage" {} -> { generatedAt; reports: { provider; fetchedAt; limits: { label; unit; used; limit; remaining; usedFraction; status; window }[] }[] }
 "session.abort" {} -> { ok: true }
 "session.exit" {} -> { ok: true }  // shuts down OMP after its reply is sent; an ompc tmux server exits with its only pane
@@ -121,6 +121,8 @@ An extension that registers with `features: ["session.v1"]` answers the inspecto
 "files.write_abort" { path; uploadId } -> { ok: true }
 "files.mkdir" { path } -> { ok: true }
 ```
+
+`cacheUsage` gives token counts from the newest assistant response on the active branch after the latest compaction: hits are cache reads and misses are input plus cache writes. It is null when the response is unavailable, incomplete, aborted or an error, or when its token counts are invalid. It does not use an older response. The field is absent from older extensions.
 
 Paths are POSIX, relative to the session's working directory at start (realpath'd); the extension refuses absolute paths, NUL bytes, `..` above the root and anything whose realpath (including through a symlink) is outside the root. `session.info` and `session.model_roles` are readable with either access level; every other method, including `session.usage`, needs the session's own Collab share to have `control` access. Usage reports contain quota details but omit account identities and provider-specific raw payloads. `session.exit` calls OMP's graceful shutdown after the RPC reply has been sent, so the dashboard receives an answer before the session disconnects. Uploads go to a temp file `.<name>.omp-upload-<uploadId>` next to the target and are renamed into place on the final chunk; unfinished uploads are discarded after 10 minutes without a chunk and when the session shuts down.
 Error codes and their REST mapping: -32001 not found (404), -32002 exists (409), -32003 forbidden (403), -32004 invalid (400), -32005 changed during a download (409), -32006 busy (409), -32601 unknown method (501), anything else 502. A call with no reply in 15 s answers 504.

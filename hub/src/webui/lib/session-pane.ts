@@ -466,20 +466,16 @@ export class SessionPane {
       ["Host", session.host_id],
       ["Cwd", info?.cwd ?? session.cwd ?? "Unknown"],
     ];
-    if (info) rows.push(["PID", String(info.pid)]);
-    rows.push(
-      ["Guests", String(session.participants ?? 0)],
-      ["Access", info?.access ?? session.access],
-    );
+    rows.push(["Guests", String(session.participants ?? 0)]);
     if (info) {
       rows.push(
-        ["State", info.idle ? "Idle" : "Working"],
         [
           "Model",
           info.model ? `${info.model.name} (${info.model.provider})` : "None",
         ],
         ["Thinking", info.thinkingLevel ?? "Off"],
         ["Context", contextMeter(info)],
+        ["Cache", cacheSummary(info)],
       );
     }
     this.#infoList.replaceChildren(
@@ -696,4 +692,14 @@ function contextMeter(info: SessionInfo): HTMLElement {
   }
   meter.append(el("span", { text: summary.text }));
   return meter;
+}
+
+function cacheSummary(info: SessionInfo): string {
+  const usage = info.cacheUsage;
+  if (!usage) return "Unavailable for the latest response";
+  const { hitTokens, missTokens } = usage;
+  const total = hitTokens + missTokens;
+  const percent =
+    total > 0 ? ` (${Math.round((hitTokens / total) * 100)}% hit rate)` : "";
+  return `Latest response: ${hitTokens.toLocaleString()} hit tokens, ${missTokens.toLocaleString()} miss tokens${percent}`;
 }

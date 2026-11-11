@@ -56,6 +56,7 @@ function harness(
 		pending?: boolean;
 		setModelResult?: boolean;
 		usageReports?: unknown[];
+		branch?: unknown[];
 		/** Behaviour of the fake `authStorage.oauth.login`. */
 		login?: (providerId: string, callbacks: LoginCallbacks) => Promise<LoginIdentity | undefined>;
 	} = {},
@@ -107,6 +108,7 @@ function harness(
 		sessionManager: {
 			getCwd: () => root,
 			getSessionFile: () => path.join(root, "current.jsonl"),
+			getBranch: () => options.branch ?? [],
 		},
 		abort: () => {
 			calls.abort += 1;
@@ -216,12 +218,85 @@ test("session.info reports the session, its model choices and usage, with non-fi
 		thinkingLevel: "medium",
 		thinkingLevels: ["off", "low", "medium", "high"],
 		contextUsage: { tokens: 1200, contextWindow: 200_000, percent: null },
+		cacheUsage: null,
 		models: [
 			{ provider: "anthropic", id: "claude-sonnet", name: "Claude Sonnet" },
 			{ provider: "openai", id: "gpt-plain", name: "GPT Plain" },
 		],
 	});
 });
+
+test("session.info reports cache tokens from the latest assistant response on the active branch", async () => {
+	const { handle } = harness({
+		branch: [
+			{ type: "message", message: { role: "assistant", usage: { input: 10, cacheRead: 20, cacheWrite: 30 } } },
+			{ type: "compaction", summary: "summary" },
+			{ type: "message", message: { role: "assistant", usage: { input: 40, cacheRead: 50, cacheWrite: 60 } } },
+			{ type: "message", message: { role: "assistant", usage: { input: 100, cacheRead: 200, cacheWrite: 300 } } },
+			{ type: "message", message: { role: "user", usage: { input: 1, cacheRead: 1, cacheWrite: 1 } } },
+			{ type: "message", message: { role: "toolResult" } },
+		],
+	});
+	expect(await handle("session.info", {})).toMatchObject({ cacheUsage: { hitTokens: 200, missTokens: 400 } });
+});
+
+test("session.info keeps zero cache counts after a compaction boundary", async () => {
+	const { handle } = harness({
+		branch: [
+			{ type: "message", message: { role: "assistant", usage: { input: 10, cacheRead: 20, cacheWrite: 30 } } },
+			{ type: "compaction", summary: "summary" },
+			{ type: "message", message: { role: "assistant", usage: { input: 0, cacheRead: 0, cacheWrite: 0 } } },
+		],
+	});
+	expect(await handle("session.info", {})).toMatchObject({ cacheUsage: { hitTokens: 0, missTokens: 0 } });
+});
+
+test("session.info does not report cache usage from before a compaction boundary", async () => {
+	const { handle } = harness({
+		branch: [
+			{ type: "message", message: { role: "assistant", usage: { input: 10, cacheRead: 20, cacheWrite: 30 } } },
+			{ type: "compaction", summary: "summary" },
+			{ type: "message", message: { role: "user" } },
+		],
+	});
+	expect(await handle("session.info", {})).toMatchObject({ cacheUsage: null });
+});
+
+for (const stopReason of ["aborted", "error"] as const) {
+	test(`session.info reports no cache usage when the latest assistant response is ${stopReason}`, async () => {
+		const { handle } = harness({
+			branch: [
+				{ type: "message", message: { role: "assistant", usage: { input: 10, cacheRead: 20, cacheWrite: 30 } } },
+				{ type: "message", message: { role: "assistant", stopReason, usage: { input: 0, cacheRead: 0, cacheWrite: 0 } } },
+				{ type: "message", message: { role: "user" } },
+			],
+		});
+		expect(await handle("session.info", {})).toMatchObject({ cacheUsage: null });
+	});
+}
+
+for (const [description, usage] of [
+	["missing", undefined],
+	["null", null],
+	["incomplete", { input: 1, cacheRead: 2 }],
+	["null count", { input: 1, cacheRead: null, cacheWrite: 0 }],
+	["non-finite count", { input: NaN, cacheRead: 2, cacheWrite: 3 }],
+	["infinite count", { input: 1, cacheRead: 2, cacheWrite: Infinity }],
+	["negative count", { input: -1, cacheRead: 2, cacheWrite: 0 }],
+	["overflowing miss count", { input: Number.MAX_VALUE, cacheRead: 2, cacheWrite: Number.MAX_VALUE }],
+] as const) {
+	test(`session.info reports no cache usage when the latest assistant response has ${description} usage`, async () => {
+		const { handle } = harness({
+			branch: [
+				{ type: "message", message: { role: "assistant", usage: { input: 10, cacheRead: 20, cacheWrite: 30 } } },
+				{ type: "message", message: { role: "assistant", usage } },
+				{ type: "message", message: { role: "user" } },
+			],
+		});
+		expect(await handle("session.info", {})).toMatchObject({ cacheUsage: null });
+	});
+}
+
 test("session.usage returns quota values without provider account identity", async () => {
 	const { handle } = harness({
 		usageReports: [

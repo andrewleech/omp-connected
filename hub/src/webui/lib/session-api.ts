@@ -86,6 +86,7 @@ export interface SessionInfo {
   thinkingLevel: string | null;
   thinkingLevels: string[];
   contextUsage: ContextUsage | null;
+  cacheUsage?: { hitTokens: number; missTokens: number } | null;
   models: ModelRef[];
 }
 

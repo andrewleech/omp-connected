@@ -124,6 +124,7 @@ export interface SessionInfo {
 	thinkingLevel: string | null;
 	thinkingLevels: string[];
 	contextUsage: { tokens: number | null; contextWindow: number | null; percent: number | null } | null;
+	cacheUsage?: { hitTokens: number; missTokens: number } | null;
 	models: ModelSummary[];
 }
 export interface SessionUsage {
@@ -215,6 +216,23 @@ function finiteOrNull(value: unknown): number | null {
 	return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function latestCacheUsage(ctx: ExtensionContext): SessionInfo["cacheUsage"] {
+	const branch = ctx.sessionManager.getBranch();
+	for (let i = branch.length - 1; i >= 0; i--) {
+		const entry = branch[i];
+		if (entry.type === "compaction") return null;
+		if (entry.type !== "message" || entry.message.role !== "assistant") continue;
+		if (entry.message.stopReason === "aborted" || entry.message.stopReason === "error") return null;
+		const usage = entry.message.usage;
+		if (!usage) return null;
+		const { input, cacheRead, cacheWrite } = usage;
+		if (![input, cacheRead, cacheWrite].every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0)) return null;
+		const missTokens = input + cacheWrite;
+		return Number.isFinite(missTokens) ? { hitTokens: cacheRead, missTokens } : null;
+	}
+	return null;
+}
+
 export function createSessionRpc(deps: SessionRpcDeps): SessionRequestHandler {
 	const { pi, files } = deps;
 	/** Set while a compaction this handler started is running. */
@@ -257,6 +275,7 @@ export function createSessionRpc(deps: SessionRpcDeps): SessionRequestHandler {
 							percent: finiteOrNull(usage.percent),
 						}
 					: null,
+				cacheUsage: latestCacheUsage(ctx),
 				models: ctx.models.list().map(summarise),
 			};
 		},

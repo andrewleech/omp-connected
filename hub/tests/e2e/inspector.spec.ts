@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+test.use({ locale: "en-US" });
 
 test("Session tab searches available models and switches its model", async ({
   page,
@@ -8,9 +9,22 @@ test("Session tab searches available models and switches its model", async ({
   const pane = page.locator("[data-session-pane]");
 
   await expect(pane.locator('[data-info="guests"]')).toHaveText("2");
-  await expect(pane.locator('[data-info="pid"]')).toHaveText("4242");
+  await expect(
+    pane.locator(
+      '[data-info="pid"], [data-info="access"], [data-info="state"]',
+    ),
+  ).toHaveCount(0);
   await expect(pane.locator('[data-info="context"]')).toContainText(
     "42k / 200k tokens (21%)",
+  );
+  const cache = pane.locator('[data-info="cache"]');
+  await expect(cache).toHaveText(
+    "Latest response: 30,000 hit tokens, 10,000 miss tokens (75% hit rate)",
+  );
+  await expect(pane.locator('[data-info="context"] + dt')).toHaveText("Cache");
+  await expect(pane.locator('[data-info="context"] + dt + dd')).toHaveAttribute(
+    "data-info",
+    "cache",
   );
 
   const modelSearch = pane.getByRole("combobox", { name: "Search models" });
@@ -28,6 +42,30 @@ test("Session tab searches available models and switches its model", async ({
   await expect(modelSearch).toBeEnabled();
   await expect(modelSearch).toHaveValue("GPT B");
 });
+
+for (const [name, cacheUsage] of [
+  ["absent", undefined],
+  ["null", null],
+  ["zero", { hitTokens: 0, missTokens: 0 }],
+] as const) {
+  test(`Session tab handles ${name} cache usage`, async ({ page }) => {
+    await page.route("**/sessions/*/info", async (route) => {
+      const response = await route.fetch();
+      const info = await response.json();
+      if (cacheUsage === undefined) info.cacheUsage = undefined;
+      else info.cacheUsage = cacheUsage;
+      await route.fulfill({ response, json: info });
+    });
+    await page.goto("/");
+    await page.getByRole("button", { name: "Session", exact: true }).click();
+    const cache = page.locator('[data-session-pane] [data-info="cache"]');
+    await expect(cache).toHaveText(
+      name === "zero"
+        ? "Latest response: 0 hit tokens, 0 miss tokens"
+        : "Unavailable for the latest response",
+    );
+  });
+}
 
 test("Session tab shows provider quota windows in a usage popup", async ({
   page,

@@ -456,6 +456,7 @@ export interface SessionInfoResult {
     contextWindow: number | null;
     percent: number | null;
   } | null;
+  cacheUsage?: { hitTokens: number; missTokens: number } | null;
   models: SessionModelRef[];
 }
 export interface SessionUsageLimitResult {
