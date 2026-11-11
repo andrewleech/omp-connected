@@ -149,6 +149,7 @@ button.small { font-size: .78rem; padding: .2rem .45rem; }button.danger { border
 }
 @media (max-width: 380px) { .brand { font-size: .9rem; }.drawer-toggle { padding: .3rem .4rem; } }
 .tail-viewer { display: flex; flex-direction: column; flex: 1; min-height: 0; border: 1px solid #178fb9; border-radius: .4rem; background: #101317; overflow: hidden; font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace; font-size: 12px; line-height: 18px; }
+.collab-pool { display: flex; flex: 1; flex-direction: column; min-height: 0; }.collab-pool[hidden] { display: none; }
 .tail-status { padding: .4rem .7rem; font-size: 11px; color: #9aa2ad; border-bottom: 1px solid rgba(255,255,255,.07); flex-shrink: 0; }.tail-status.ok { color: #89d281; }.tail-status.warning { color: #e4c00f; }
 .tail-scroll { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.15) transparent; }
 .tail-load-more { text-align: center; padding: .35rem; font-size: 11px; color: #0088fa; cursor: pointer; }.tail-load-more:hover { text-decoration: underline; }
@@ -181,7 +182,7 @@ button.small { font-size: .78rem; padding: .2rem .45rem; }button.danger { border
 <main class="omp-shell" data-omp-dashboard data-left-drawer-open="false" data-right-drawer-open="false">
 <header class="topbar"><button type="button" class="drawer-toggle" data-session-drawer-toggle aria-controls="session-drawer" aria-expanded="false">Sessions</button><span class="brand">OMP Connected</span><span class="status" data-status>Loading fleet…</span><span class="topbar-session"><span class="topbar-brand">ompc</span><span class="topbar-sep" aria-hidden="true"></span><span class="topbar-session-name" data-topbar-session>No session</span></span><button type="button" class="drawer-toggle" data-inspector-drawer-toggle aria-controls="inspector-drawer" aria-expanded="false">Inspector</button></header>
 <aside id="session-drawer" class="session-rail" aria-label="Sessions" data-session-rail></aside>
-<section class="workspace" aria-label="Selected OMP session" data-workspace><iframe class="collab-frame" data-collab-frame title="OMP Collab session" referrerpolicy="no-referrer"></iframe></section>
+<section class="workspace" aria-label="Selected OMP session" data-workspace></section>
 <aside id="inspector-drawer" class="inspector" aria-label="Inspector" data-inspector></aside>
 <button type="button" class="drawer-backdrop" data-drawer-backdrop aria-label="Close open panel" hidden></button>
 </main>

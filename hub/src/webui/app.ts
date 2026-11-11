@@ -58,6 +58,8 @@ import {
 
 const SESSION_POLL_MS = 15_000;
 const AGENT_EVENT_REFRESH_MS = 1_000;
+// How long a Collab room stays connected after the user switches away.
+const POOL_TTL_MS = 2 * 60 * 60 * 1000;
 
 interface HostSummary {
   hostId: string;
@@ -205,14 +207,52 @@ function createDashboard(root: HTMLElement): void {
   // Hosts whose latest session listing succeeded.
   let listedHosts = new Set<string>();
   let lastWorkspaceSignature: string | null | undefined;
-  let tailViewer: CollabTailViewer | null = null;
   let collabRequest = 0;
-  let collabFileDropBinding: {
-    frame: HTMLIFrameElement;
+  // Connected Collab rooms by session key. A room stays connected (hidden)
+  // after the user switches away, so returning to it is instant, and is
+  // closed once unused for POOL_TTL_MS.
+  interface PoolEntry {
     key: string;
-    request: number;
+    access: "view" | "control";
+    session: CollabSession;
+    el: HTMLElement;
+    viewer: CollabTailViewer | null;
+    frame: HTMLIFrameElement | null;
     url: string;
-  } | null = null;
+    lastUsed: number;
+  }
+  const pool = new Map<string, PoolEntry>();
+  const poolEl = el("div", { className: "collab-pool" });
+  function poolEntryForFrame(frame: HTMLIFrameElement): PoolEntry | null {
+    for (const entry of pool.values()) if (entry.frame === frame) return entry;
+    return null;
+  }
+  function disposePoolEntry(key: string): void {
+    const entry = pool.get(key);
+    if (!entry) return;
+    pool.delete(key);
+    entry.viewer?.destroy();
+    entry.el.remove();
+  }
+  function sweepPool(): void {
+    const now = Date.now();
+    for (const entry of [...pool.values()])
+      if (entry.key !== state.selected && now - entry.lastUsed > POOL_TTL_MS)
+        disposePoolEntry(entry.key);
+  }
+  // Shows only the selected room. The current iframe alone carries
+  // data-collab-frame so that attribute always names the visible one.
+  function syncPoolVisibility(): void {
+    for (const entry of pool.values()) {
+      const active = entry.key === state.selected;
+      entry.el.style.display = active ? "" : "none";
+      if (entry.frame) {
+        if (active) entry.frame.dataset.collabFrame = "";
+        else delete entry.frame.dataset.collabFrame;
+      }
+    }
+  }
+  window.setInterval(sweepPool, 60_000);
   let leftDrawerOpen = false;
   let rightDrawerOpen = false;
   let drawerTrigger: HTMLElement | null = null;
@@ -437,16 +477,25 @@ function createDashboard(root: HTMLElement): void {
 
   function selectSession(session: CollabSession): void {
     const request = ++collabRequest;
-    // A different session invalidates every in-flight capability result before
-    // its old surface is torn down.
-    tailViewer?.destroy();
-    tailViewer = null;
-    const frame = root.querySelector<HTMLIFrameElement>("[data-collab-frame]");
-    if (frame) frame.src = "about:blank";
-    collabFileDropBinding = null;
-    state.selected = sessionKey(session);
+    const key = sessionKey(session);
+    // A different session invalidates every in-flight capability result.
+    const previous = state.selected && pool.get(state.selected);
+    if (previous) previous.lastUsed = Date.now();
+    sweepPool();
+    state.selected = key;
     unseenIdle.delete(`${session.host_id}:${session.instanceId}`);
     state.selectedSession = session;
+    const cached = pool.get(key);
+    if (cached && cached.session.generation === session.generation) {
+      // A recently used room is still connected; show it as is.
+      cached.lastUsed = Date.now();
+      cached.session = session;
+      state.selectedAccess = cached.access;
+      persist();
+      render();
+      return;
+    }
+    disposePoolEntry(key);
     state.selectedAccess = null;
     persist();
     render();
@@ -551,7 +600,6 @@ function createDashboard(root: HTMLElement): void {
     const session = state.selectedSession;
     const selectedKey = session && sessionKey(session);
     if (!session || !selectedKey || !canRequestAccess(session, access)) return;
-    collabFileDropBinding = null;
     showStatus(`Requesting ${access} access…`);
     try {
       const result = await json<{ access: string; url: string }>(
@@ -573,37 +621,46 @@ function createDashboard(root: HTMLElement): void {
 
       // View mode: use the lightweight tail viewer (no full-history replay).
       // Control mode: use the full Collab iframe (needs the composer UI).
+      disposePoolEntry(selectedKey);
       if (access === "view") {
-        tailViewer?.destroy();
-        const frame = root.querySelector<HTMLIFrameElement>(
-          "[data-collab-frame]",
-        );
-        if (frame) frame.style.display = "none";
-        const workspace = root.querySelector("[data-workspace]");
-        let viewerEl = workspace?.querySelector<HTMLElement>(".tail-viewer");
-        if (!viewerEl) {
-          viewerEl = document.createElement("div");
-          workspace?.appendChild(viewerEl);
-        }
-        tailViewer = new CollabTailViewer(viewerEl);
-        void tailViewer.connect(result.url);
+        const viewerEl = document.createElement("div");
+        poolEl.append(viewerEl);
+        const viewer = new CollabTailViewer(viewerEl);
+        const entry: PoolEntry = {
+          key: selectedKey,
+          access,
+          session,
+          el: viewerEl,
+          viewer,
+          frame: null,
+          url: result.url,
+          lastUsed: Date.now(),
+        };
+        pool.set(selectedKey, entry);
+        void viewer.connect(result.url);
       } else {
-        tailViewer?.destroy();
-        tailViewer = null;
-        root.querySelector(".tail-viewer")?.remove();
-        const frame = root.querySelector<HTMLIFrameElement>(
-          "[data-collab-frame]",
+        const url = collabFrameUrl(
+          result.url,
+          location.origin,
+          session.ompcLabel,
         );
-        if (frame) {
-          frame.style.display = "";
-          const url = collabFrameUrl(
-            result.url,
-            location.origin,
-            session.ompcLabel,
-          );
-          frame.src = url;
-          collabFileDropBinding = { frame, key: selectedKey, request, url };
-        }
+        const frame = document.createElement("iframe");
+        frame.className = "collab-frame";
+        frame.title = "OMP Collab session";
+        frame.referrerPolicy = "no-referrer";
+        const entry: PoolEntry = {
+          key: selectedKey,
+          access,
+          session,
+          el: frame,
+          viewer: null,
+          frame,
+          url,
+          lastUsed: Date.now(),
+        };
+        pool.set(selectedKey, entry);
+        poolEl.append(frame);
+        frame.src = url;
       }
 
       state.selectedAccess = access;
@@ -637,6 +694,7 @@ function createDashboard(root: HTMLElement): void {
         { method: "POST" },
       );
       showStatus(`Exit requested for ${sessionLabel(session)}`, "ok");
+      disposePoolEntry(sessionKey(session));
       void pollSessions().catch((error: unknown) =>
         showStatus((error as Error).message, "warning"),
       );
@@ -911,18 +969,17 @@ function createDashboard(root: HTMLElement): void {
 
   function renderWorkspace(container: Element): void {
     const session = state.selectedSession;
+    syncPoolVisibility();
     const signature = workspaceSignature(session, state.selectedAccess);
     if (signature === lastWorkspaceSignature) return;
     lastWorkspaceSignature = signature;
-    // Preserve live elements from being destroyed by replaceChildren
-    const frame = container.querySelector<HTMLIFrameElement>(
-      "[data-collab-frame]",
-    );
-    const viewerEl = container.querySelector<HTMLElement>(".tail-viewer");
-    container.replaceChildren();
+    // The pool element is never detached: removing an iframe from the
+    // document unloads its Collab guest.
+    if (poolEl.parentElement !== container) container.replaceChildren(poolEl);
+    for (const child of Array.from(container.children))
+      if (child !== poolEl) child.remove();
+    poolEl.hidden = !session;
     if (!session) {
-      tailViewer?.destroy();
-      tailViewer = null;
       container.append(
         el("div", {
           className: "empty workspace-empty",
@@ -950,23 +1007,7 @@ function createDashboard(root: HTMLElement): void {
         }),
       );
       header.append(title);
-      container.append(header);
-    }
-    // Tail viewer active → show it; otherwise show the collab iframe.
-    if (tailViewer && viewerEl) {
-      viewerEl.style.display = "";
-      container.append(viewerEl);
-      if (frame) {
-        frame.style.display = "none";
-        container.append(frame);
-      }
-    } else {
-      const iframeEl = frame ?? document.createElement("iframe");
-      iframeEl.className = "collab-frame";
-      iframeEl.dataset.collabFrame = "";
-      iframeEl.title = "OMP Collab session";
-      iframeEl.referrerPolicy = "no-referrer";
-      container.append(iframeEl);
+      container.prepend(header);
     }
   }
 
@@ -1098,22 +1139,18 @@ function createDashboard(root: HTMLElement): void {
       if (!(frame instanceof HTMLIFrameElement)) return;
       const doc = frame.contentDocument;
       if (!doc?.head) return;
-      const binding = collabFileDropBinding;
-      const session = state.selectedSession;
+      const entry = poolEntryForFrame(frame);
+      const session = entry?.session ?? null;
       const frameIsCurrent = () =>
-        binding !== null &&
-        binding.frame === frame &&
-        binding.request === collabRequest &&
-        binding.url === doc.location.href &&
-        root.querySelector<HTMLIFrameElement>("[data-collab-frame]") ===
-          frame &&
-        state.selectedAccess === "control" &&
+        entry !== null &&
+        doc.location.href === entry.url &&
+        pool.get(entry.key) === entry &&
         !!state.selectedSession &&
-        sessionKey(state.selectedSession) === binding.key &&
+        sessionKey(state.selectedSession) === entry.key &&
         state.selectedSession.features?.includes("files.temp_upload.v1") ===
           true;
       if (
-        binding &&
+        entry &&
         session &&
         frameIsCurrent() &&
         session.features?.includes("files.temp_upload.v1")
@@ -1130,8 +1167,9 @@ function createDashboard(root: HTMLElement): void {
         edgeSwipeOptions(() => frame.getBoundingClientRect().left),
       );
       if (
+        entry &&
         session &&
-        state.selectedAccess === "control" &&
+        entry.access === "control" &&
         doc.location.href !== "about:blank" &&
         session.features?.includes(SCHEDULE_FEATURE)
       )

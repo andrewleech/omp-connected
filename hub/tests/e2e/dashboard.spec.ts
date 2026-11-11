@@ -225,6 +225,32 @@ test("clicking the open session's card keeps its Collab document", async ({
   );
 });
 
+test("switching away and back keeps the previous room connected", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const collab = page.frameLocator("[data-collab-frame]");
+  await expect(collab.locator("[data-native-status-bar]")).toBeVisible();
+  await collab.locator("body").evaluate((body) => {
+    body.dataset.reselectMarker = "kept";
+  });
+  await page.getByRole("button", { name: "viewer view", exact: true }).click();
+  await expect(page.locator(".tail-viewer")).toBeVisible();
+  await expect(page.locator("[data-collab-frame]")).toHaveCount(0);
+
+  let linkRequests = 0;
+  page.on("request", (request) => {
+    if (request.url().includes("/collab/writer-room/link")) linkRequests++;
+  });
+  await page.getByRole("button", { name: "writer", exact: true }).click();
+  await expect(page.locator("[data-collab-frame]")).toBeVisible();
+  expect(linkRequests).toBe(0);
+  await expect(collab.locator("body")).toHaveAttribute(
+    "data-reselect-marker",
+    "kept",
+  );
+});
+
 test("clicking a session whose room failed to open retries it", async ({
   page,
 }) => {
@@ -241,7 +267,7 @@ test("clicking a session whose room failed to open retries it", async ({
   await page.goto("/");
   const frame = page.locator("[data-collab-frame]");
   await expect(page.getByText("relay unavailable")).toBeVisible();
-  await expect(frame).not.toHaveAttribute("src", /fixture-control/);
+  await expect(frame).toHaveCount(0);
 
   await page.getByRole("button", { name: "writer", exact: true }).click();
   await expect(frame).toHaveAttribute(
