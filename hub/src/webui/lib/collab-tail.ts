@@ -754,6 +754,16 @@ export class CollabTailViewer {
     this.#ws?.close();
   }
 
+  /** True while the room socket is connecting or open and the snapshot has not failed. */
+  get live(): boolean {
+    return (
+      !this.#destroyed &&
+      !this.#snapshotFailed &&
+      this.#ws !== null &&
+      this.#ws.readyState <= WebSocket.OPEN
+    );
+  }
+
   destroy(): void {
     this.#destroyed = true;
     this.#decrypts?.close();

@@ -60,6 +60,9 @@ const SESSION_POLL_MS = 15_000;
 const AGENT_EVENT_REFRESH_MS = 1_000;
 // How long a Collab room stays connected after the user switches away.
 const POOL_TTL_MS = 2 * 60 * 60 * 1000;
+// Upper bound on connected rooms, the selected one included; each holds a
+// Collab guest or tail viewer with its decrypted transcript.
+const POOL_MAX = 4;
 
 interface HostSummary {
   hostId: string;
@@ -240,6 +243,20 @@ function createDashboard(root: HTMLElement): void {
       if (entry.key !== state.selected && now - entry.lastUsed > POOL_TTL_MS)
         disposePoolEntry(entry.key);
   }
+  // A tail viewer whose socket closed never reconnects; a control iframe
+  // handles its own reconnects.
+  function roomUsable(entry: PoolEntry | undefined | null): boolean {
+    return !!entry && (entry.viewer ? entry.viewer.live : true);
+  }
+  // Keeps the pool within POOL_MAX by closing the least recently used rooms
+  // other than the selected one.
+  function trimPool(): void {
+    const idle = [...pool.values()]
+      .filter((entry) => entry.key !== state.selected)
+      .sort((a, b) => a.lastUsed - b.lastUsed);
+    while (pool.size > POOL_MAX && idle.length > 0)
+      disposePoolEntry((idle.shift() as PoolEntry).key);
+  }
   // Shows only the selected room. The current iframe alone carries
   // data-collab-frame so that attribute always names the visible one.
   function syncPoolVisibility(): void {
@@ -405,6 +422,15 @@ function createDashboard(root: HTMLElement): void {
       state.sessions = state.hosts.flatMap(
         (host) => byHost.get(host.hostId) ?? [],
       );
+      // Rooms of sessions a responsive host no longer lists are gone.
+      const known = new Set(state.sessions.map(sessionKey));
+      for (const entry of [...pool.values()])
+        if (
+          entry.key !== state.selected &&
+          listed.has(entry.session.host_id) &&
+          !known.has(entry.key)
+        )
+          disposePoolEntry(entry.key);
       reconcileSelection();
       render();
     };
@@ -481,12 +507,21 @@ function createDashboard(root: HTMLElement): void {
     // A different session invalidates every in-flight capability result.
     const previous = state.selected && pool.get(state.selected);
     if (previous) previous.lastUsed = Date.now();
+    // A relaunched room has a new key; its old rooms would only retry.
+    const instancePrefix = `${session.host_id}:${session.instanceId}:`;
+    for (const entry of [...pool.values()])
+      if (entry.key !== key && entry.key.startsWith(instancePrefix))
+        disposePoolEntry(entry.key);
     sweepPool();
     state.selected = key;
     unseenIdle.delete(`${session.host_id}:${session.instanceId}`);
     state.selectedSession = session;
     const cached = pool.get(key);
-    if (cached && cached.session.generation === session.generation) {
+    if (
+      cached &&
+      cached.access === defaultRequestedAccess(session) &&
+      roomUsable(cached)
+    ) {
       // A recently used room is still connected; show it as is.
       cached.lastUsed = Date.now();
       cached.session = session;
@@ -663,6 +698,7 @@ function createDashboard(root: HTMLElement): void {
         frame.src = url;
       }
 
+      trimPool();
       state.selectedAccess = access;
       render();
       showStatus(
@@ -695,6 +731,10 @@ function createDashboard(root: HTMLElement): void {
       );
       showStatus(`Exit requested for ${sessionLabel(session)}`, "ok");
       disposePoolEntry(sessionKey(session));
+      if (state.selected === sessionKey(session)) {
+        state.selectedAccess = null;
+        render();
+      }
       void pollSessions().catch((error: unknown) =>
         showStatus((error as Error).message, "warning"),
       );
@@ -938,7 +978,8 @@ function createDashboard(root: HTMLElement): void {
           const open =
             state.selectedAccess !== null &&
             state.selectedSession !== null &&
-            sessionKey(state.selectedSession) === sessionKey(session);
+            sessionKey(state.selectedSession) === sessionKey(session) &&
+            roomUsable(pool.get(sessionKey(session)));
           if (!open) selectSession(session);
           if (isCompactLayout()) closeDrawers();
         };
@@ -1152,7 +1193,7 @@ function createDashboard(root: HTMLElement): void {
       if (
         entry &&
         session &&
-        frameIsCurrent() &&
+        doc.location.href === entry.url &&
         session.features?.includes("files.temp_upload.v1")
       )
         attachUnsupportedFileDrop(doc, {

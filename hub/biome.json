@@ -15,6 +15,12 @@
     }
   },
   "files": {
-    "ignore": ["node_modules", "dist", "vendor/collab-web"]
+    "ignore": [
+      "node_modules",
+      "dist",
+      "vendor/collab-web",
+      "test-results",
+      "playwright-report"
+    ]
   }
 }
