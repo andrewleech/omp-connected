@@ -676,10 +676,13 @@ function createDashboard(root: HTMLElement): void {
       {
         label: "Copy session name",
         onSelect: () => {
-          void navigator.clipboard.writeText(sessionLabel(session)).then(
-            () => showStatus("Session name copied", "ok"),
-            () => showStatus("Copy failed — clipboard unavailable", "warning"),
-          );
+          void navigator.clipboard
+            .writeText(`${sessionLabel(session)}:${session.host_id}`)
+            .then(
+              () => showStatus("Session name copied", "ok"),
+              () =>
+                showStatus("Copy failed — clipboard unavailable", "warning"),
+            );
         },
       },
       {

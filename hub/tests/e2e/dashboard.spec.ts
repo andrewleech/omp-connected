@@ -41,6 +41,22 @@ test.describe("without a picked session", () => {
   });
 });
 
+test("copies the session name with its host from the session rail", async ({
+  page,
+}) => {
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.goto("/");
+  await page.getByRole("button", { name: "writer", exact: true }).click({
+    button: "right",
+  });
+  await page
+    .getByRole("button", { name: "Copy session name", exact: true })
+    .click();
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toBe("writer:writer");
+});
+
 test("exit requires confirmation and removes the session only after acceptance", async ({
   page,
 }) => {
