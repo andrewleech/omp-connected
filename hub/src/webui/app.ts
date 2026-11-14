@@ -59,7 +59,7 @@ import {
 const SESSION_POLL_MS = 15_000;
 const AGENT_EVENT_REFRESH_MS = 1_000;
 // How long a Collab room stays connected after the user switches away.
-const POOL_TTL_MS = 2 * 60 * 60 * 1000;
+const POOL_TTL_MS = 6 * 60 * 60 * 1000;
 // Upper bound on connected rooms, the selected one included; each holds a
 // Collab guest or tail viewer with its decrypted transcript.
 const POOL_MAX = 10;
