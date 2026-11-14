@@ -57,6 +57,17 @@ export function isReservedAgentHostId(hostId: string): boolean {
   return RESERVED_HOST_ID_RE.test(hostId);
 }
 
+const OMPC_ADDRESS_RE = /^ompc\((.+)\)$/;
+
+/** Strip the `ompc(...)` wrapper from a pasted address; other forms pass through. */
+function unwrapOmpcAddress(address: string): string {
+  return OMPC_ADDRESS_RE.exec(address.trim())?.[1] ?? address;
+}
+
+function qualifiedAddress(entry: Pick<AgentEntry, "label" | "hostId">): string {
+  return `ompc(${entry.label}:${entry.hostId})`;
+}
+
 /** How long a disconnected agent's entry (and its queued mailbox) survives
  *  before being purged. Long enough to ride out a reconnect (network blip,
  *  extension reload) without losing queued messages; short enough that a
@@ -656,9 +667,14 @@ export class AgentRegistry {
     };
   }
 
-  private resolveEntry(address: string): ResolvedEntry {
+  private resolveEntry(rawAddress: string): ResolvedEntry {
+    const address = unwrapOmpcAddress(rawAddress);
     const exact = this.agents.get(address);
     if (exact) return { kind: "found", entry: exact };
+    const instance = [...this.agents.values()].find(
+      (e) => `${e.label}:${e.hostId}#${e.instanceId}` === address,
+    );
+    if (instance) return { kind: "found", entry: instance };
     const qualified = [...this.agents.values()].filter(
       (e) => `${e.label}:${e.hostId}` === address,
     );
@@ -773,7 +789,7 @@ export class AgentRegistry {
   private displayName(
     entry: Pick<AgentEntry, "label" | "hostId" | "instanceId">,
   ): string {
-    return `${entry.label}:${entry.hostId} (${entry.instanceId})`;
+    return `ompc(${entry.label}:${entry.hostId}#${entry.instanceId})`;
   }
 
   private messageSender(
@@ -782,7 +798,7 @@ export class AgentRegistry {
     const entry = this.agents.get(id);
     if (!entry) return { from: id };
     return {
-      from: `${entry.label}:${entry.hostId}`,
+      from: qualifiedAddress(entry),
       fromId: id,
       fromDisplayName: this.displayName(entry),
     };

@@ -155,13 +155,13 @@ export type DashboardEvent =
 // ---------------------------------------------------------------------------
 // Agent-to-agent messaging.
 // Canonical agent identity is `${hostId}:${instanceId}`. Recipient addresses
-// accept that canonical ID, `${label}:${hostId}`, or an unambiguous label.
+// accept that canonical ID, `ompc(${label}:${hostId})`, `ompc(${label}:${hostId}#${instanceId})`, or an unambiguous label (the `ompc(...)` wrapper is optional).
 // See cc-pi-bridge/planning/20260920_research_wire-protocol-spec.md.
 // ---------------------------------------------------------------------------
 
 export interface AgentSummary {
   id: string; // canonical: `${hostId}:${instanceId}`
-  displayName: string; // `${label}:${hostId} (${instanceId})`
+  displayName: string; // `ompc(${label}:${hostId}#${instanceId})`
   hostId: string;
   instanceId: string;
   label: string; // extension-reported ompc session name, else basename(cwd)
@@ -182,7 +182,7 @@ export type AgentMessageType = "message" | "reply";
 
 export interface AgentMessage {
   messageId: string; // server-assigned monotonic, decimal string
-  from: string; // registered agent: `${label}:${hostId}`; operator: `operator@<hub-host>`
+  from: string; // registered agent: `ompc(${label}:${hostId})`; operator: `operator@<hub-host>`
   fromId?: string; // canonical registered agent ID for exact replies; absent for operator
   fromDisplayName?: string; // registered agent display name, includes instance ID
   to: string;
@@ -262,7 +262,7 @@ export interface AgentRegisterResult {
 }
 
 export interface AgentSendParams {
-  to: string; // canonical ID, qualified friendly address, or unambiguous label
+  to: string; // canonical ID, `ompc(...)` address, or unambiguous label
   content: string;
   replyTo?: string;
   idempotencyKey: string; // client-supplied, reused verbatim on retry
@@ -335,7 +335,7 @@ export interface AgentQueryEventsParams {
   event?: string; // dot-prefix filter
   since?: number; // epoch ms, exclusive
   limit?: number;
-  agent?: string; // filter by canonical ID, qualified friendly address, or label
+  agent?: string; // filter by canonical ID, `ompc(...)` address, or label
 }
 
 export interface AgentQueryEventsResult {

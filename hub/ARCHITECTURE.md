@@ -228,9 +228,11 @@ REST routes built on top of the same live registry:
   sends as `operator@<hub-host>` (dashboard-only; the dashboard is never
   a registered agent connection, so it can only send as this reserved
   principal, never spoof a real agent's identity); `:id` accepts the
-  canonical ID `${hostId}:${instanceId}`, the qualified friendly address
-  `${label}:${hostId}`, or an unambiguous label. Ambiguous addresses return
-  every matching display name and canonical ID.
+  canonical ID `${hostId}:${instanceId}`, the qualified address
+  `ompc(${label}:${hostId})`, the instance address
+  `ompc(${label}:${hostId}#${instanceId})` (also the `displayName`), or an
+  unambiguous label; the `ompc(...)` wrapper is optional on input. Ambiguous
+  addresses return every matching display name and canonical ID.
 - `GET /` — the fleet dashboard webui.
 - `GET /manifest.webmanifest`, `GET /sw.js` — PWA manifest and service
   worker, served `cache-control: no-cache` (outside the static plugin's

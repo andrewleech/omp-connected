@@ -460,7 +460,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		name: "ompc_identity",
 		label: "OMP Connected Identity",
 		description:
-			"Return this session's current agent-messaging identity, once registered with the hub. Use displayName for human-readable references and id for routing.",
+			"Return this session's current agent-messaging identity, once registered with the hub. displayName is an `ompc(label:host#instance)` address: paste it verbatim to refer to this session; id is the canonical routing ID.",
 		parameters: Type.Object({}),
 		approval: "read",
 		async execute() {
@@ -514,7 +514,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		pi.registerTool({
 			name,
 			label,
-			description: `Call omp-hub ${method}. Use displayName for human-readable references, the qualified friendly address for normal routing, and fromId for exact replies when present.`,
+			description: `Call omp-hub ${method}. Agents are addressed as \`ompc(label:host)\` or \`ompc(label:host#instance)\`; pass these verbatim from displayName/from. Use fromId for exact replies when present.`,
 			parameters,
 			approval: readOnly ? "read" : "write",
 			async execute(_toolCallId, params) {

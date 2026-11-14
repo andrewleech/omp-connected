@@ -56,6 +56,26 @@ describe("AgentRegistry — identity resolution", () => {
     });
   });
 
+  test("ompc(...) addresses resolve, and the instance form disambiguates", () => {
+    const registry = new AgentRegistry();
+    const first = registerAgent(registry, { instanceId: "inst-1" });
+    const second = registerAgent(registry, { instanceId: "inst-2" });
+
+    expect(registry.resolve("ompc(api:user@hub-host#inst-1)")).toEqual({
+      kind: "found",
+      agent: first,
+    });
+    expect(registry.resolve("ompc(api:user@hub-host#inst-2)")).toEqual({
+      kind: "found",
+      agent: second,
+    });
+    expect(registry.resolve("ompc(api:user@hub-host)").kind).toBe("ambiguous");
+    expect(registry.resolve("ompc(user@hub-host:inst-1)")).toEqual({
+      kind: "found",
+      agent: first,
+    });
+  });
+
   test("a single live qualified match wins over a stale disconnected entry", () => {
     const registry = new AgentRegistry();
     const staleConn = fakeConn();
@@ -124,12 +144,12 @@ describe("AgentRegistry — identity resolution", () => {
       expect.arrayContaining([
         {
           id: "user@hub-host:inst-1",
-          displayName: "api:user@hub-host (inst-1)",
+          displayName: "ompc(api:user@hub-host#inst-1)",
           cwd: "/home/user/api",
         },
         {
           id: "user@worker-host:inst-2",
-          displayName: "api:user@worker-host (inst-2)",
+          displayName: "ompc(api:user@worker-host#inst-2)",
           cwd: "/srv/api",
         },
       ]),
@@ -174,7 +194,7 @@ describe("AgentRegistry — registration", () => {
 
     expect(summary).toEqual({
       id: "user@hub-host:inst-1",
-      displayName: "api:user@hub-host (inst-1)",
+      displayName: "ompc(api:user@hub-host#inst-1)",
       hostId: "user@hub-host",
       instanceId: "inst-1",
       label: "api",
@@ -274,9 +294,9 @@ describe("AgentRegistry — mailbox", () => {
       id: result.messageId,
       method: "agent.message",
       params: {
-        from: "worker:user@worker-host",
+        from: "ompc(worker:user@worker-host)",
         fromId: "user@worker-host:worker-1",
-        fromDisplayName: "worker:user@worker-host (worker-1)",
+        fromDisplayName: "ompc(worker:user@worker-host#worker-1)",
         content: "hello",
       },
     });
@@ -513,7 +533,7 @@ describe("AgentRegistry — teams", () => {
       members: [
         {
           id: "user@hub-host:inst-1",
-          displayName: "api:user@hub-host (inst-1)",
+          displayName: "ompc(api:user@hub-host#inst-1)",
           label: "api",
           status: "online",
         },
@@ -570,9 +590,9 @@ describe("AgentRegistry — teams", () => {
     expect(frame.id).toBe(result.messageId);
     expect(frame.params).toMatchObject({
       messageId: result.messageId,
-      from: "a:user@hub-host",
+      from: "ompc(a:user@hub-host)",
       fromId: "user@hub-host:a",
-      fromDisplayName: "a:user@hub-host (a)",
+      fromDisplayName: "ompc(a:user@hub-host#a)",
     });
   });
 
@@ -598,7 +618,7 @@ describe("AgentRegistry — teams", () => {
     expect(summary.remainingMembers).toEqual([
       {
         id: "user@hub-host:a",
-        displayName: "a:user@hub-host (a)",
+        displayName: "ompc(a:user@hub-host#a)",
         label: "a",
         status: "offline",
       },
