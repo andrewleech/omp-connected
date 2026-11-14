@@ -62,7 +62,7 @@ const AGENT_EVENT_REFRESH_MS = 1_000;
 const POOL_TTL_MS = 2 * 60 * 60 * 1000;
 // Upper bound on connected rooms, the selected one included; each holds a
 // Collab guest or tail viewer with its decrypted transcript.
-const POOL_MAX = 4;
+const POOL_MAX = 10;
 
 interface HostSummary {
   hostId: string;
