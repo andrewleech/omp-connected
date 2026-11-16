@@ -102,6 +102,8 @@ Keep approved requirements, interface contracts, architecture decisions, test pr
 
 See the [source inventory](20261116_agent-orchestration-sources.md) for links and limitations. Useful precedents are Anthropic's parallel research orchestration, Shopify's executable verification of findings, Stripe's human merge review, Uber's attribution chain and Shopify's shared knowledge practices. These sources describe different environments; none establishes the delivery gain for this project.
 
+The [distilled research and capability map](20261116_fleet-research-and-capabilities.md) connects these lessons to existing ompc primitives, external tools and proposed project workflow additions.
+
 Do not use Anthropic's 90.2% internal research-evaluation improvement as a coding speedup. Do not use unresolved podcast figures as slide headlines. Product capability claims, first-party success accounts and independently measured project outcomes must remain distinct.
 
 ## How to substantiate acceleration
