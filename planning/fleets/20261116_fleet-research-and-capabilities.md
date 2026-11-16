@@ -80,6 +80,10 @@ A fleet can reduce engineer touch time as well as overlap work: workers implemen
 
 Use the baseline's **76.4 pre-hardware** and **25.0 hardware-associated Engineer-day** categories to locate opportunities, not as two sequential calendar blocks. Model actual worker, target and human-review availability. Account separately for Principal engineer oversight, infrastructure/model costs, omitted scope and setup work.
 
+### Additional setup scope
+
+The user confirmed on 2026-11-17 that the fleet plan includes an additional [fleet setup and commissioning ticket](20261117_fleet-setup-ticket.md): a computer for the hub and main development agents, with additional computers where needed for distributed hardware access/control. Add its one-off effort and equipment costs to the fleet estimate. Attach execution hosts, target access, capacity and occupancy requirements to existing tickets; do not count shared provisioning repeatedly. Main development capacity and individual hardware stations can become ready at different times.
+
 ## Proposed additions, ordered by delivery need
 
 These are proposed requirements, not commitments to add every item to ompc itself. Prefer a project workflow over a new general-purpose service unless enforcement or recovery requires a platform feature.
