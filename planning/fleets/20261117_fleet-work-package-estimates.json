@@ -1,0 +1,57 @@
+{
+  "written": "2026-11-17",
+  "status": "Initial judgement estimates for the target scenario; not measured performance. Engineer days include briefing, implementation intervention, integration and acceptance; principal days cover engineering assurance and decisions. Agent durations are occupied execution slots, not human effort.",
+  "columns": ["model_id", "work_package", "engineer_days", "principal_days", "agent_execution_days", "independent_agent_review_days", "target_active_days", "fixed_observation_kind"],
+  "principal_effort_definition": "Rows are raw allowances; scenario model applies the explicit 1.5 human-review policy multiplier. This is human every-merge approval and engineering decisions, separate from agent cross-review. Stretch must not reduce human review below that policy allowance.",
+  "physical_work_definition": "Physical active and operator effort are held constant across primary scenarios. Operator effort is additional to Engineer/Principal work and has no recovered baseline for a claimed saving. Extended offline/replay observation is covered in the system-soak procedure; short per-feature fault/recovery runs remain active target checks.",
+  "station_type_by_model_id": {
+    "sensor-drivers": "dev_board", "actuator-drivers": "dev_board", "storage": "dev_board", "misc-io": "dev_board", "bringup": "dev_board", "ota": "dev_board",
+    "pressure": "prototype", "vpd": "prototype", "irrigation": "prototype", "low-media": "prototype", "zone-config": "prototype", "swap": "prototype", "recipes": "prototype", "lighting": "prototype",
+    "disconnect": "prototype", "resume": "prototype", "identity": "dev_board", "alarms": "prototype", "events": "prototype", "api": "dev_board", "pairing": "dev_board",
+    "self-test": "prototype", "provisioning": "production_fixture", "integration": "prototype", "system-test": "prototype", "dry-out": "prototype"
+  },
+  "operator_days_by_model_id": {
+    "sensor-drivers": 0.10, "actuator-drivers": 0.15, "storage": 0.05, "misc-io": 0.10, "bringup": 0.25, "ota": 0.10,
+    "pressure": 0.25, "vpd": 0.20, "irrigation": 0.15, "low-media": 0.10, "zone-config": 0.05, "swap": 0.10, "recipes": 0.05, "lighting": 0.10,
+    "disconnect": 0.20, "resume": 0.15, "identity": 0.05, "alarms": 0.10, "events": 0.10, "api": 0.05, "pairing": 0.05,
+    "self-test": 0.25, "provisioning": 0.20, "integration": 0.50, "system-test": 0.50, "dry-out": 0.50
+  },
+  "rows": [
+    ["scheduler", "Scheduler", 0.4, 0.15, 0.4, 0.1, 0, null],
+    ["host-simulation", "Host simulation", 0.6, 0.2, 0.8, 0.25, 0, null],
+    ["sensor-drivers", "Sensor drivers and validity", 0.5, 0.15, 0.6, 0.2, 0.25, null],
+    ["actuator-drivers", "Actuator drivers", 0.4, 0.15, 0.5, 0.2, 0.25, null],
+    ["storage", "Storage", 0.25, 0.1, 0.4, 0.15, 0.1, null],
+    ["misc-io", "Miscellaneous I/O", 0.3, 0.1, 0.4, 0.15, 0.2, null],
+    ["bringup", "Board bring-up", 0.6, 0.2, 0.5, 0.2, 0.5, null],
+    ["ota", "OTA and revert", 0.45, 0.2, 0.6, 0.2, 0.25, null],
+    ["pressure", "Pressure loop", 0.9, 0.3, 1.0, 0.4, 1.0, null],
+    ["vpd", "VPD controller", 0.8, 0.3, 1.0, 0.4, 0.5, null],
+    ["irrigation", "Irrigation and air exchange", 0.65, 0.2, 0.7, 0.3, 0.5, null],
+    ["low-media", "Low-media detector", 0.6, 0.2, 0.7, 0.3, 0.5, null],
+    ["zone-config", "Zone configuration", 0.25, 0.1, 0.35, 0.1, 0.1, null],
+    ["swap", "Swap mode", 0.25, 0.1, 0.35, 0.1, 0.15, null],
+    ["recipes", "Recipe engine", 0.8, 0.25, 1.0, 0.3, 0.25, null],
+    ["lighting", "Lighting", 0.4, 0.15, 0.5, 0.2, 0.25, null],
+    ["recipe-store", "Recipe store, import and export", 0.4, 0.15, 0.5, 0.2, 0, null],
+    ["disconnect", "Disconnect and safe state", 0.6, 0.25, 0.7, 0.3, 0.5, null],
+    ["resume", "Resume", 0.5, 0.2, 0.6, 0.25, 0.5, null],
+    ["identity", "Identity and registration", 0.4, 0.15, 0.5, 0.2, 0.15, null],
+    ["alarms", "Alarms", 0.35, 0.15, 0.4, 0.2, 0.25, null],
+    ["events", "Event log and offline queue", 0.5, 0.2, 0.7, 0.25, 0.25, null],
+    ["api", "REST API and ICD", 0.6, 0.25, 0.8, 0.3, 0.1, null],
+    ["pairing", "Pairing and security", 0.5, 0.3, 0.6, 0.3, 0.15, null],
+    ["self-test", "Commissioning self-test", 0.5, 0.2, 0.6, 0.25, 0.5, null],
+    ["provisioning", "Provisioning and end-of-line", 0.4, 0.15, 0.5, 0.2, 0.5, null],
+    ["integration", "Prototype integration", 0.9, 0.3, 0.8, 0.4, 1.0, null],
+    ["system-test", "System test and soak", 0.9, 0.4, 0.5, 0.4, 0.5, "system_soak_workdays"],
+    ["dry-out", "Dry-out confirmation", 0.6, 0.25, 0.4, 0.25, 0.25, "dry_out_observation_workdays"],
+    ["release-records", "Release and design records", 0.4, 0.3, 0.4, 0.2, 0, null]
+  ],
+  "estimate_rationale": {
+    "platform_and_interfaces": "Reuse existing MicroPython platform, bootloader and project conventions assumed by the source. Workers implement bounded contracts; engineer time covers decisions and corrections rather than manual authorship of every change.",
+    "control_and_lifecycle": "Larger human and target allowances for control tuning, sensor behaviour, safe state and recovery; mocked logic evidence does not replace target acceptance.",
+    "verification": "Independent agent review consumes its own execution slot. Principal review and engineer acceptance remain explicit. Physical observation allowances are added separately and not accelerated by scenario execution multipliers.",
+    "limitations": "No measured token-to-output throughput, defect distribution or project-specific calibration is available. These are an aggressive, inspectable hypothesis to revise using the first execution wave. Review effort is not inferred from source speed-up labels."
+  }
+}

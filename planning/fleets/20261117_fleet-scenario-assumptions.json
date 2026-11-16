@@ -1,0 +1,100 @@
+{
+  "written": "2026-11-17",
+  "status": "Planning assumptions, not observed performance or approved commitments",
+  "baseline_engineer_days": 101.4,
+  "baseline_principal_days": 15.2,
+  "baseline_report_elapsed_weeks": 21.5,
+  "time_basis": "Working days, eight-hour capacity day, five working days per week; no assumed overnight or weekend productivity gain",
+  "comparison_scope": "The 30 sized original tickets plus explicitly additional fleet setup. Original ERP link, phone UI and release verification remain unsized and outside like-for-like savings, with dependencies retained in a separate scope register.",
+  "scenario_parameter_meaning": "Execution/rework multipliers apply to new judgement estimates of agent and human work, not to original Engineer days. Capacity is an assumed available resource, not measured throughput.",
+  "recurring_fleet_coordination": {
+    "engineer_fte_reserved": 0.10,
+    "principal_fte_reserved": 0.02,
+    "rule": "Reserve these within each scenario's assigned human capacity. Schedule task/setup phases using remaining capacity. Add reserved FTE times scenario elapsed working days to human effort and savings calculations as explicit recurring coordination/operations effort, including waiting periods. Per-ticket effort covers task-specific work, not this cross-fleet reserve."
+  },
+  "role_pool_rule": "Engineer, Principal and operator pools assume independently available capacity, not separate full-time hires. If roles share a person, allocations must fit individual availability and conflicting assignments must be prevented before approving dates.",
+  "physical_resources": {
+    "dev_board_ready_workday": 5,
+    "prototype_ready_workday": 10,
+    "production_fixture_ready_workday": 10,
+    "prototype_slots": 1,
+    "production_fixture_slots": 1,
+    "operator_fte": 0.25,
+    "rule": "Identical physical readiness and prototype/fixture counts in all primary scenarios. Scenario target_slots counts basic development-board stations only. One prototype/plant pool is held exclusively for integration, control acceptance, dry-out and soak; a separate fixture supports provisioning. Sensitivities vary hardware readiness separately."
+  },
+  "human_review_policy": {
+    "principal_review_estimate_multiplier": 1.5,
+    "minimum_review_human_multiplier": 1.0,
+    "rule": "Principal ticket effort covers human approval of every merge plus engineering decisions. Increase raw ticket allowances by 50% for initial policy; never reduce review effort for stretch. Also show a sensitivity retaining 15.2 Principal days of ticket review before setup and recurring coordination."
+  },
+  "physical_duration_rule": "Target active, fixed observation and hands-on operator durations are never reduced by software scenario multipliers. Physical acceptance Engineer effort is not reduced for stretch.",
+  "decision_latency_workdays": 2,
+  "decision_latency_rule": "A common initial two-working-day contract/permission allowance gates product briefing and can overlap environment setup. It does not gate every setup activity or imply all stakeholder questions are answered. Sensitivity ten days; unresolved later decisions remain additional risk.",
+  "scenarios": {
+    "cautious": {
+      "agent_slots": 3,
+      "target_slots": 1,
+      "engineer_fte": 0.6,
+      "principal_fte": 0.25,
+      "execution_multiplier": 1.4,
+      "human_multiplier": 1.3,
+      "hardware_ready_workday": 5,
+      "main_computer_ready_workday": 0,
+      "description": "Restricted human capacity and one basic board station; same prototype/fixture readiness as other scenarios"
+    },
+    "target": {
+      "agent_slots": 6,
+      "target_slots": 2,
+      "engineer_fte": 0.8,
+      "principal_fte": 0.35,
+      "execution_multiplier": 1.0,
+      "human_multiplier": 1.0,
+      "hardware_ready_workday": 5,
+      "main_computer_ready_workday": 0,
+      "description": "Six execution slots, two basic board stations, one shared prototype and one production fixture"
+    },
+    "stretch": {
+      "agent_slots": 10,
+      "target_slots": 3,
+      "engineer_fte": 1.0,
+      "principal_fte": 0.45,
+      "execution_multiplier": 0.8,
+      "human_multiplier": 0.85,
+      "hardware_ready_workday": 5,
+      "main_computer_ready_workday": 0,
+      "description": "Higher usable software concurrency and human capacity; same prototype/fixture count and readiness"
+    }
+  },
+  "fixed_physical_duration_allowances": {
+    "system_soak_workdays": 5,
+    "dry_out_observation_workdays": 2,
+    "status": "Unconfirmed allowances held constant across scenarios, not source requirements, measured durations or permission to shorten actual tests"
+  },
+  "setup_target_estimates": {
+    "main_environment": {"engineer_days": 5.5, "principal_days": 2.0, "agent_execution_days": 0.5},
+    "per_target_station": {"engineer_days": 0.5, "principal_days": 0.1, "agent_execution_days": 0.25},
+    "activities": [
+      {"id": "main-config", "engineer_days": 2.0, "principal_days": 0.5, "agent_execution_days": 0.5, "gate": "host"},
+      {"id": "governance", "engineer_days": 1.0, "principal_days": 0.5, "agent_execution_days": 0, "gate": "host"},
+      {"id": "security", "engineer_days": 0.5, "principal_days": 0.25, "agent_execution_days": 0, "gate": "host"},
+      {"id": "durable-records", "engineer_days": 1.0, "principal_days": 0.25, "agent_execution_days": 0, "gate": "host"},
+      {"id": "exclusive-access", "engineer_days": 0.5, "principal_days": 0.25, "agent_execution_days": 0, "gate": "target"},
+      {"id": "forecast-analysis", "engineer_days": 0.5, "principal_days": 0.25, "agent_execution_days": 0, "gate": "after-first-wave"}
+    ],
+    "status": "Judgement allowances include configuration plus governance/authority assignment, security boundary review, versioned task/evidence/reservation records, controlled target access and first-wave forecast analysis. Main effort comprises original configuration E2/P0.5 plus governance E1/P0.5, durable records E1/P0.25, security E0.5/P0.25, exclusivity/access E0.5/P0.25 and forecast analysis E0.5/P0.25. Enforce exclusivity through dedicated target-owning host accounts and serialised access, not ompc session leases. Suitable machine reuse assumed; purchasing lead time, quotes and generic platform development excluded. Target commissioning waits for each resource type's ready date."
+  },
+  "cost_basis": {
+    "currency_rates": null,
+    "equipment_quotes": null,
+    "model_consumption_rates": null,
+    "rule": "Report effort savings and break-even allowance algebraically. Do not invent currency savings. Include setup, extra equipment, model costs and ongoing operations when rates become available."
+  },
+  "unconfirmed_conditions": [
+    "Main computer capacity and model/provider quotas support the proposed concurrent sessions",
+    "Target slots represent distinct usable hardware and attached peripherals, not several agents sharing one target",
+    "Physical test durations and hardware delivery dates require supplier and test-owner confirmation",
+    "Human capacity includes project briefing, review, integration and acceptance; external stakeholder decision delays are not known",
+    "Only existing ompc primitives plus a documented project workflow are assumed; generic platform feature development must be added explicitly if required",
+    "Original personal-agent productivity assumption is unresolved; savings compare with the user-confirmed 101.4-day estimate, not a measured control"
+  ]
+}

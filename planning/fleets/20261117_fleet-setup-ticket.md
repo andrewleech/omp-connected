@@ -1,7 +1,7 @@
 # Fleet setup and commissioning
 
 Written: 2026-11-17
-Status: proposed additional ticket; not yet sized or entered into the source project tracker.
+Status: proposed additional ticket with provisional forecast allowances; not approved or entered into the source project tracker.
 Source: user direction to add fleet setup to the accelerated project plan.
 Owner: unassigned; project lead to assign before scheduling.
 
@@ -56,3 +56,9 @@ These are planned acceptance checks, not results already observed.
 ## Estimate inputs still required
 
 The setup owner supplies human effort by activity, machine availability or procurement lead time, equipment costs, expected initial concurrency and recurring operating costs. The project lead confirms the required initial capacity and which distributed stations are needed for each delivery wave. The fleet schedule includes setup and commissioning without adding their effort again to every dependent ticket.
+
+## Provisional estimate for scenario modelling
+
+The [scenario assumptions](20261117_fleet-scenario-assumptions.json) now allocate **5.5 Engineer days and 2.0 Principal days** to shared setup activities, plus **0.5 Engineer day and 0.1 Principal day per physical station** before scenario adjustments. The target configuration has two basic development-board stations, one prototype/plant station and one production fixture: **7.5 Engineer days and 2.4 Principal days** of one-off setup allowance. These are judgement estimates, not measured effort or procurement quotes. Station count is not computer count.
+
+Shared activities include main configuration, governance, security review, durable task/evidence records, exclusive target access and first-wave forecast analysis. Host readiness waits only for its enabling activities; exclusive access gates hardware, and forecast analysis follows initial product work. The shared aggregate is a checksum, not a second charge above its component activities. See the [estimate and schedule](20261117_fleet-estimate-and-schedule.md) for scenario-adjusted totals and readiness milestones.
