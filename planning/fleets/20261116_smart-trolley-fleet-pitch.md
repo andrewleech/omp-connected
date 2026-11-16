@@ -7,13 +7,13 @@ Status: proposal framing, not an approved delivery plan or revised estimate.
 
 ## Executive proposition
 
-Replan delivery around independently verifiable work packages executed by a project-specific agent fleet, with engineers directing architecture, resolving ambiguity and approving consequential changes. Use developer machines for parallel software work and dedicated hardware-in-the-loop agents for target build, deployment and test. Preserve named human accountability and release acceptance.
+Use the **101.4 Engineer-day traditional plan** as the comparison baseline. The objective is a dramatic reduction in delivery time through a project-specific agent fleet, with engineers directing architecture, resolving ambiguity and approving consequential changes. Use developer machines for parallel software work and dedicated hardware-in-the-loop agents for target build, deployment and test. Preserve named human accountability and release acceptance.
 
 The proposed gain is shorter time to accepted outcomes through parallel execution and earlier feedback. Agent count, generated code and token consumption are not delivery measures. Published success stories establish useful design precedents, not a project acceleration factor.
 
 ## What the traditional report actually establishes
 
-The draft report models about **21.5 weeks elapsed**, with a headline of **117 person-days**. It is not yet an approved or complete baseline. Its schedule model includes Principal engineer 40%, Engineer 100% and Test engineer 50%, with a stated team load of 50%. That differs from the user's simpler one/two-engineer framing and must be reconciled before comparing staffing or savings.
+The user confirms **101.4 Engineer days** as the traditional-plan baseline for this pitch. The report separately includes **15.2 Principal engineer days** and models about **21.5 weeks elapsed** under its draft staffing assumptions. Its rounded **117 person-day** headline combines roles and is not the baseline for the engineering-work comparison. Keep engineering effort, human oversight and calendar delivery time separate when presenting the proposed reduction.
 
 | Baseline fact | Consequence for the pitch |
 |---|---|
