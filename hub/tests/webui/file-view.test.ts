@@ -4,7 +4,6 @@ import {
   decodeText,
   directFileUrl,
   opensInViewer,
-  renderHtmlDocument,
   renderMarkdownDocument,
   resolveRelative,
   viewKind,
@@ -46,7 +45,7 @@ describe("direct file URLs", () => {
         "reports/owner review.html",
       ),
     ).toBe(
-      "https://hub.test:4816/api/hosts/h/sessions/instance-1/files/download?path=reports%2Fowner+review.html&inline=1",
+      "https://hub.test:4816/?filePreview=%2Fapi%2Fhosts%2Fh%2Fsessions%2Finstance-1&path=reports%2Fowner+review.html",
     );
   });
 });
@@ -125,29 +124,5 @@ describe("renderMarkdownDocument", () => {
     expect(doc).toContain(
       'src="https://hub.test/api/hosts/h/sessions/s/files/download?path=logo.png&amp;inline=1"',
     );
-  });
-});
-
-describe("renderHtmlDocument", () => {
-  const policy = "Content-Security-Policy";
-
-  test("puts the policy inside <head>, or creates one, without disturbing the doctype", () => {
-    const withHead = renderHtmlDocument(
-      "<!doctype html><html><head><title>x</title></head><body>b</body></html>",
-    );
-    expect(withHead.startsWith("<!doctype html><html><head><meta")).toBe(true);
-    expect(withHead).toContain(policy);
-
-    const noHead = renderHtmlDocument(
-      "<!doctype html><html><body>b</body></html>",
-    );
-    expect(noHead).toContain(`<html><head><meta http-equiv="${policy}"`);
-
-    const fragment = renderHtmlDocument("<p>hi</p>");
-    expect(fragment.startsWith("<meta")).toBe(true);
-    expect(fragment.endsWith("<p>hi</p>")).toBe(true);
-
-    const doctypeOnly = renderHtmlDocument("<!DOCTYPE html>\n<p>hi</p>");
-    expect(doctypeOnly.startsWith("<!DOCTYPE html><meta")).toBe(true);
   });
 });

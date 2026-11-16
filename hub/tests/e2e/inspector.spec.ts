@@ -400,3 +400,90 @@ test("a text file opens in a viewer with rendered and raw views and a download l
   expect((await download).suggestedFilename()).toBe("blob.dat");
   await expect(viewer).toBeHidden();
 });
+
+test("opening a preview in a browser tab keeps the viewer controls", async ({
+  page,
+}) => {
+  await page.route("**/api/config", (route) =>
+    route.fulfill({
+      json: { publicOrigin: new URL(route.request().url()).origin },
+    }),
+  );
+  await page.goto("/");
+  await page.getByRole("button", { name: "Files", exact: true }).click();
+  await page.locator('[data-name="README.md"] a.file-name').click();
+  const viewer = page.locator("[data-file-viewer]");
+  const popupPromise = page.waitForEvent("popup");
+  await viewer
+    .getByRole("link", { name: "Open file in a browser tab" })
+    .click();
+  const popup = await popupPromise;
+  const browserViewer = popup.locator("[data-file-viewer]");
+  await expect(
+    browserViewer
+      .frameLocator("iframe")
+      .getByRole("heading", { name: "Hello" }),
+  ).toBeVisible();
+  await expect(
+    browserViewer.getByRole("link", { name: "Download" }),
+  ).toHaveAttribute("href", /\/files\/download\?path=README\.md$/);
+  await browserViewer.getByRole("button", { name: "Raw" }).click();
+  await expect(browserViewer.locator("pre")).toContainText("# Hello");
+  await popup.reload();
+  await expect(
+    browserViewer
+      .frameLocator("iframe")
+      .getByRole("heading", { name: "Hello" }),
+  ).toBeVisible();
+});
+
+test("HTML preview runs clipboard buttons in an isolated frame", async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  let ticks = 0;
+  await page.route("**/preview-tick", (route) => {
+    ticks++;
+    return route.fulfill({ status: 204 });
+  });
+  await page.route(
+    "**/files/download?path=assets%2Fpreview-test.js&inline=1",
+    (route) =>
+      route.fulfill({
+        contentType: "text/javascript",
+        body: "document.body.dataset.loaded = 'yes'; setInterval(() => fetch('/preview-tick', {mode: 'no-cors'}), 100)",
+      }),
+  );
+  await page.route("**/files/download?path=assets%2Fdashboard.html", (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: `<button onclick="navigator.clipboard.writeText('copied')">Copy</button><script src="preview-test.js"></script><script>try { parent.document.title = 'escaped'; } catch (e) {}</script>`,
+    }),
+  );
+  await page.goto(
+    "/?filePreview=%2Fapi%2Fhosts%2Fwriter%2Fsessions%2Fwriter-room&path=assets%2Fdashboard.html",
+  );
+  const viewer = page.locator("[data-file-viewer]");
+  await expect(viewer.locator("iframe")).toHaveAttribute(
+    "sandbox",
+    "allow-scripts",
+  );
+  const frame = viewer.frameLocator("iframe");
+  await expect(frame.locator("body")).toHaveAttribute("data-loaded", "yes");
+  await frame.getByRole("button", { name: "Copy" }).click();
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toBe("copied");
+  await expect(page).toHaveTitle("dashboard.html");
+  await viewer.getByRole("button", { name: "Source" }).click();
+  await expect(viewer.locator("pre")).toContainText(
+    "navigator.clipboard.writeText",
+  );
+  await expect.poll(() => ticks).toBeGreaterThan(0);
+  await viewer.getByRole("button", { name: "Close" }).click();
+  await expect(viewer.locator("iframe")).not.toHaveAttribute("srcdoc");
+  const stoppedAt = ticks;
+  await page.waitForTimeout(500);
+  expect(ticks).toBe(stoppedAt);
+});

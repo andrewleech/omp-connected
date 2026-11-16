@@ -18,6 +18,7 @@ import { collabFrameUrl } from "./lib/collab-link";
 import { CollabTailViewer } from "./lib/collab-tail";
 import { copyText, el } from "./lib/dom";
 import { type EdgeSwipeOptions, attachEdgeSwipe } from "./lib/edge-swipe";
+import { FileViewer } from "./lib/file-viewer";
 import { FilesPane } from "./lib/files-pane";
 import { ModelRolesPane } from "./lib/model-roles-pane";
 import {
@@ -1392,8 +1393,27 @@ function createDashboard(root: HTMLElement): void {
     .catch((error) => showStatus(error.message, "warning"));
 }
 
-const root = document.querySelector<HTMLElement>("[data-omp-dashboard]");
-if (root) createDashboard(root);
+const params = new URLSearchParams(location.search);
+const previewBase = params.get("filePreview");
+const previewPath = params.get("path");
+if (
+  previewBase &&
+  previewPath !== null &&
+  /^\/api\/hosts\/[^/]+\/sessions\/[^/]+$/.test(previewBase)
+) {
+  document.querySelector("[data-omp-dashboard]")?.remove();
+  const name = previewPath.split("/").pop() || previewPath;
+  document.title = name;
+  void new FileViewer().open({
+    name,
+    path: previewPath,
+    apiBase: new URL(previewBase, location.origin).href,
+    publicOrigin: Promise.resolve(null),
+  });
+} else {
+  const root = document.querySelector<HTMLElement>("[data-omp-dashboard]");
+  if (root) createDashboard(root);
+}
 
 // Offline fallback page for the installed app (see sw.js). Installability
 // itself only needs the manifest, so a failed registration is harmless.

@@ -2,10 +2,7 @@
 // in it, decoding them, and building the sandboxed documents shown for the
 // rendered view.
 //
-// File contents come from the session's machine, so nothing here may run
-// them: the viewer shows every document in an iframe with an empty `sandbox`
-// attribute (no scripts, opaque origin), and each document also carries a
-// Content-Security-Policy that only allows inline styles and images.
+// Markdown cannot run scripts. HTML runs scripts in an opaque-origin sandbox.
 
 import { marked } from "marked";
 import { joinPath, normalisePath } from "./file-paths";
@@ -47,16 +44,15 @@ export function opensInViewer(name: string, size: number): boolean {
   return !BINARY_EXTENSIONS.has(extension(name));
 }
 
-/** A bookmarkable direct-download URL on the hub's public origin. */
+/** A bookmarkable viewer URL on the hub's public origin. */
 export function directFileUrl(
   apiBase: string,
   publicOrigin: string,
   path: string,
 ): string {
-  const apiPath = new URL(apiBase).pathname;
-  const url = new URL(`${apiPath}/files/download`, publicOrigin);
+  const url = new URL("/", publicOrigin);
+  url.searchParams.set("filePreview", new URL(apiBase).pathname);
   url.searchParams.set("path", path);
-  url.searchParams.set("inline", "1");
   return url.href;
 }
 
@@ -190,25 +186,4 @@ export function renderMarkdownDocument(
   }) as string;
   const origin = new URL(images.apiBase).origin;
   return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">${cspMeta(`${origin} data:`)}<meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)}</title><style>${RENDERED_CSS}</style></head><body>${body}</body></html>`;
-}
-
-/**
- * The HTML file itself with a restrictive policy added, so it renders as it
- * would in a browser without running script or loading anything remote.
- */
-export function renderHtmlDocument(text: string): string {
-  const meta = cspMeta("data:");
-  const head = /<head(\s[^>]*)?>/i.exec(text);
-  if (head) {
-    const at = head.index + head[0].length;
-    return text.slice(0, at) + meta + text.slice(at);
-  }
-  const html = /<html(\s[^>]*)?>/i.exec(text);
-  if (html) {
-    const at = html.index + html[0].length;
-    return `${text.slice(0, at)}<head>${meta}</head>${text.slice(at)}`;
-  }
-  const doctype = /^\s*<!doctype[^>]*>/i.exec(text);
-  const at = doctype ? doctype[0].length : 0;
-  return text.slice(0, at) + meta + text.slice(at);
 }

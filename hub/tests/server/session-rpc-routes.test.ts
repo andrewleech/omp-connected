@@ -578,6 +578,26 @@ describe("session-rpc-routes: download", () => {
     ]);
   });
 
+  test("opaque and cross-origin pages cannot read inline downloads via CORS", async () => {
+    const registry = new AgentRegistry();
+    registerSessionAgent(
+      registry,
+      fileHandler({ "secret.js": patternBytes(10) }),
+    );
+    const app = sessionRpcRoutes(registry);
+
+    for (const origin of ["null", "http://evil.example"]) {
+      const response = await app.handle(
+        new Request(`${BASE}/inst-1/files/download?path=secret.js&inline=1`, {
+          headers: { origin },
+        }),
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get("access-control-allow-origin")).toBeNull();
+      await response.arrayBuffer();
+    }
+  });
+
   test("a zero-byte file downloads as an empty body", async () => {
     const registry = new AgentRegistry();
     registerSessionAgent(registry, fileHandler({ empty: new Uint8Array(0) }));

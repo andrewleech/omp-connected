@@ -1,14 +1,13 @@
-// The modal that shows a text file from the Files tab: rendered (Markdown and
-// HTML) or raw, with a download link. Documents go into an iframe with an
-// empty sandbox, see file-view.ts.
+// The file viewer shows rendered Markdown or HTML, or raw text, with a download.
+// Rendered documents use an opaque-origin sandbox, see file-view.ts.
 
 import { button, el } from "./dom";
 import {
   type ViewKind,
   decodeText,
   directFileUrl,
-  renderHtmlDocument,
   renderMarkdownDocument,
+  resolveRelative,
   viewKind,
 } from "./file-view";
 
@@ -21,6 +20,33 @@ export interface ViewTarget {
   apiBase: string;
   /** Public hub origin, outside the installed PWA origin. */
   publicOrigin: Promise<string | null>;
+}
+/** Map static relative resource references to the session file API. */
+function renderHtmlDocument(
+  text: string,
+  apiBase: string,
+  dir: string,
+): string {
+  const document = new DOMParser().parseFromString(text, "text/html");
+  for (const element of document.querySelectorAll(
+    "script[src], img[src], link[href], audio[src], video[src], source[src], video[poster]",
+  )) {
+    for (const attribute of ["src", "href", "poster"]) {
+      const value = element.getAttribute(attribute);
+      if (!value || value.startsWith("/") || value.includes("?")) continue;
+      const path = resolveRelative(dir, value);
+      if (path) {
+        const fragment = value.includes("#")
+          ? value.slice(value.indexOf("#"))
+          : "";
+        element.setAttribute(
+          attribute,
+          `${apiBase}/files/download?path=${encodeURIComponent(path)}&inline=1${fragment}`,
+        );
+      }
+    }
+  }
+  return `<!doctype html>${document.documentElement.outerHTML}`;
 }
 
 type Mode = "rendered" | "raw";
@@ -89,8 +115,9 @@ export class FileViewer {
     this.#frame.className = "file-viewer-frame";
     this.#frame.title = "Rendered file";
     this.#frame.referrerPolicy = "no-referrer";
-    // An empty sandbox: no scripts, forms, popups or same-origin access.
+    // The sandbox never permits forms, popups or same-origin access.
     this.#frame.setAttribute("sandbox", "");
+    this.#frame.allow = "clipboard-write *";
     this.#body = el("div", { className: "file-viewer-body" });
     this.#body.append(this.#status, this.#raw, this.#frame);
 
@@ -104,6 +131,7 @@ export class FileViewer {
       this.#abort = null;
       this.#openInNewWindow.removeAttribute("href");
       this.#openInNewWindow.hidden = true;
+      this.#frame.removeAttribute("srcdoc");
       this.#raw.textContent = "";
     });
     document.body.append(this.#dialog);
@@ -123,6 +151,10 @@ export class FileViewer {
     this.#modes.hidden = this.#kind === "text";
     this.#raw.textContent = "";
     this.#frame.removeAttribute("srcdoc");
+    this.#frame.setAttribute(
+      "sandbox",
+      this.#kind === "html" ? "allow-scripts" : "",
+    );
     this.#showStatus("Loading…");
     this.#rawButton.textContent = this.#kind === "html" ? "Source" : "Raw";
     if (!this.#dialog.open) this.#dialog.showModal();
@@ -153,16 +185,16 @@ export class FileViewer {
     }
 
     this.#raw.textContent = text;
+    const dir = target.path.includes("/")
+      ? target.path.slice(0, target.path.lastIndexOf("/"))
+      : "";
     if (this.#kind === "markdown") {
-      const dir = target.path.includes("/")
-        ? target.path.slice(0, target.path.lastIndexOf("/"))
-        : "";
       this.#frame.srcdoc = renderMarkdownDocument(text, target.name, {
         apiBase: target.apiBase,
         dir,
       });
     } else if (this.#kind === "html") {
-      this.#frame.srcdoc = renderHtmlDocument(text);
+      this.#frame.srcdoc = renderHtmlDocument(text, target.apiBase, dir);
     }
     this.#setMode(this.#kind === "text" ? "raw" : "rendered");
     const origin = await target.publicOrigin;

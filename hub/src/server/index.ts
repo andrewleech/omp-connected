@@ -37,6 +37,35 @@ export interface Hub {
   stop(): void;
 }
 
+/** Reject cross-origin browser mutations and WebSocket upgrades. */
+export function allowsMutationOrigin(
+  request: Request,
+  publicOrigin?: string | null,
+): boolean {
+  const upgrade = request.headers
+    .get("upgrade")
+    ?.split(",")
+    .some((value) => value.trim().toLowerCase() === "websocket");
+  if (!upgrade && ["GET", "HEAD", "OPTIONS"].includes(request.method))
+    return true;
+  const origin = request.headers.get("origin");
+  if (origin === null) {
+    const site = request.headers.get("sec-fetch-site");
+    return site === null || site === "same-origin" || site === "none";
+  }
+  if (origin === "null") return false;
+  try {
+    const parsed = new URL(origin);
+    if (parsed.origin !== origin) return false;
+    return (
+      origin === new URL(request.url).origin ||
+      (publicOrigin != null && origin === new URL(publicOrigin).origin)
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function createHub(options: CreateHubOptions = {}): Hub {
   const env = loadConfig();
   const port = options.port ?? env.port;
@@ -51,6 +80,12 @@ export function createHub(options: CreateHubOptions = {}): Hub {
   );
 
   const app = new Elysia()
+    .onRequest(({ request, set }) => {
+      if (!allowsMutationOrigin(request, env.publicOrigin)) {
+        set.status = 403;
+        return "same-origin request required";
+      }
+    })
     .get("/api/config", () => ({ publicOrigin: env.publicOrigin }))
     .get("/health", () => ({
       status: "ok",
