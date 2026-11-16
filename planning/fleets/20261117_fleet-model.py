@@ -629,9 +629,12 @@ def main():
                 override={label:value}
                 model=schedule_scenario("target",target,estimates,assumptions,source_by_id,graph,overrides=override)
             sensitivity_models[f"{label}-{value}"]=model
-            sensitivities[label].append({"value":value,**package_result("target",model)})
+            summary=package_result("target",model)
+            del summary["schedule"], summary["ticket_summary"]
+            sensitivities[label].append({"value":value,**summary})
     stress_model=schedule_scenario("target",target,estimates,assumptions,source_by_id,graph,contingency=1.25)
     stress=package_result("target_1_25_contingency",stress_model)
+    del stress["schedule"], stress["ticket_summary"]
     validate({**sensitivity_models,"target_1_25_contingency":stress_model},
              source_by_id,excluded,estimates,assumptions)
     check(round(sum(source_days(source_by_id[s]) for s in TICKET_SOURCE_IDS.values()),1)==101.5,
