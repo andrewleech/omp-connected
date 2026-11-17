@@ -6,6 +6,8 @@
 - Upstream RPC PR inspected: [#18646](https://github.com/can1357/oh-my-pi/pull/18646), head `25b43b43e8d13b3d59502a5fcad931ff74943676`, open at writing
 - ompweb inspected: [ompweb-dev/ompweb](https://github.com/ompweb-dev/ompweb), main `e99dac06ef9483ccddf24123e478a67909ed4918`
 
+Revalidated 2026-11-17: fetched `upstream/main` at `bf9a9fbd40`; PR #18646 remains open at `25b43b43e8d13b3d59502a5fcad931ff74943676`. Implementation starts on `collab-whole-form-ask` from that upstream revision. The isolated fleet checkout could not fetch upstream due to an unresolved delta pack, so the feature worktree uses the primary fork checkout; the isolated checkout remains the fleet integration source.
+
 ## Goal and scope
 
 A control guest sees and answers the complete Ask form, including explanatory text, in one dialog, with the same answers, defaults and validation as the terminal. The terminal remains independently usable. Implement in the OMP fork's Collab host, wire and browser guest. The hub and relay remain opaque to the form payload. Do not edit vendored or built guest files by hand.
@@ -61,3 +63,13 @@ Keep one independently upstreamable feature branch off `upstream/main`; never co
 - Local terminal, cancellation, timeout, access checks, multiple guests, reconnect and mixed-version behaviour meet the lifecycle requirements above, backed by focused tests and browser evidence.
 - No duplicate shared validator remains after #18646 integration. If that PR is still open at delivery, the temporary helper and explicit reconciliation record remain identifiable.
 - The final feature branch, test results, upstream status, build source and any unverified scenarios are recorded here with dated revisions.
+
+## Implementation record
+
+2026-11-17: fork branch `collab-whole-form-ask`, commit `ee90164927`, is based on upstream `bf9a9fbd40`. PR #18646 remains open at `25b43b43e8d13b3d59502a5fcad931ff74943676`; `packages/coding-agent/src/collab/form-validation.ts` is the isolated validator to reconcile with the merged RPC implementation as described in step 5.
+
+Focused tests with Bun 1.4.4 passed: 88 coding-agent tests across guest requests, host registry and form validation; 46 Collab web tests across client, composer and form rendering. After the final host replay fix, 75 host and guest request tests passed. The Collab web production build bundled 128 modules. Lint passed for the checked changed files. Coding-agent package-wide type checking was blocked by existing lint warnings outside the changed files; Collab web type checking reported errors in imported `packages/ai` files.
+
+Browser verification used the real guest, Collab host and local relay with a test context. Desktop and 390 × 844 mobile views showed the explanatory text, defaults and controls; a custom Other answer returned the expected named data. A separate local dashboard fixture embedded the real guest and connected it to the same kind of local host and relay; submission returned the expected data. No live hub was used. The dashboard smoke routed its fixture's guest requests and link to the real local guest and host.
+
+Independent review led to fixes for mixed-version late joins, reconnects, multiple-guest transition races, replay admission, form retries, radio defaults and untrusted remote images. Remote Ask images are not automatically loaded; supported inline raster images remain available. Fleet integration and deployment are separate from the feature commit.
