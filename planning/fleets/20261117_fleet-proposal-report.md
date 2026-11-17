@@ -141,7 +141,7 @@ The first wave should deliver independent software packages through review and i
 ## Deliverables and recalculation
 
 - [Ticket-level estimate and schedule](20261117_fleet-estimate-and-schedule.md), [machine-readable results](20261117_fleet-model-results.json) and [phase schedule CSV](20261117_fleet-task-schedule.csv).
-- [Presentation source](20261117_fleet-pitch-content.md), [editable PowerPoint](20261117_fleet-pitch.pptx) and [PDF presentation](20261117_fleet-pitch.pdf).
+- [Presentation generator](20261117_build-fleet-pitch.py), [generated slide content](20261117_fleet-pitch-content.md), [editable PowerPoint](20261117_fleet-pitch.pptx) and [PDF presentation](20261117_fleet-pitch.pdf).
 - [Source ticket inputs](20261117_traditional-ticket-inputs.json), [scenario assumptions](20261117_fleet-scenario-assumptions.json) and [new work-package allowances](20261117_fleet-work-package-estimates.json).
 
 Recalculate the model with `uv run planning/fleets/20261117_fleet-model.py`. Rebuild the deck with `uv run planning/fleets/20261117_build-fleet-pitch.py --skill-dir /path/to/pi-pptx/skills`, using the PI template assets supplied by that skill. Re-export the updated deck to PDF using PowerPoint or LibreOffice. Changes to requirements, scope, resource dates or estimate assumptions require a new model run and refreshed pitch figures.
