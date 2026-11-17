@@ -66,11 +66,18 @@ export class FileViewer {
   #abort: AbortController | null = null;
   #kind: ViewKind = "text";
 
-  constructor() {
+  /** `standalone`: the viewer fills a browser tab of its own, with no close. */
+  constructor(standalone = false) {
     this.#dialog = el("dialog", {
       className: "file-viewer",
     }) as HTMLDialogElement;
     this.#dialog.dataset.fileViewer = "";
+    if (standalone) {
+      this.#dialog.classList.add("standalone");
+      this.#dialog.addEventListener("cancel", (event) =>
+        event.preventDefault(),
+      );
+    }
     this.#dialog.setAttribute("aria-labelledby", "file-viewer-title");
     this.#title = el("h2", { className: "file-viewer-title" });
     this.#title.id = "file-viewer-title";
@@ -99,6 +106,7 @@ export class FileViewer {
     this.#download.textContent = "Download";
     const close = button("Close", "small");
     close.addEventListener("click", () => this.#dialog.close());
+    close.hidden = standalone;
     const header = el("header", { className: "file-viewer-header" });
     header.append(
       this.#title,

@@ -420,6 +420,13 @@ test("opening a preview in a browser tab keeps the viewer controls", async ({
   const popup = await popupPromise;
   const browserViewer = popup.locator("[data-file-viewer]");
   await expect(
+    browserViewer.getByRole("button", { name: "Close" }),
+  ).toBeHidden();
+  const box = await browserViewer.boundingBox();
+  const size = popup.viewportSize();
+  expect(box?.width).toBe(size?.width);
+  expect(box?.height).toBe(size?.height);
+  await expect(
     browserViewer
       .frameLocator("iframe")
       .getByRole("heading", { name: "Hello" }),
@@ -481,7 +488,7 @@ test("HTML preview runs clipboard buttons in an isolated frame", async ({
     "navigator.clipboard.writeText",
   );
   await expect.poll(() => ticks).toBeGreaterThan(0);
-  await viewer.getByRole("button", { name: "Close" }).click();
+  await viewer.evaluate((dialog: HTMLDialogElement) => dialog.close());
   await expect(viewer.locator("iframe")).not.toHaveAttribute("srcdoc");
   const stoppedAt = ticks;
   await page.waitForTimeout(500);

@@ -1404,7 +1404,7 @@ if (
   document.querySelector("[data-omp-dashboard]")?.remove();
   const name = previewPath.split("/").pop() || previewPath;
   document.title = name;
-  void new FileViewer().open({
+  void new FileViewer(true).open({
     name,
     path: previewPath,
     apiBase: new URL(previewBase, location.origin).href,
