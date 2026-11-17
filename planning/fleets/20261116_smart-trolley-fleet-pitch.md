@@ -7,30 +7,30 @@ Status: proposal framing, not an approved delivery plan or revised estimate.
 
 ## Executive proposition
 
-Use the **101.4 Engineer-day traditional plan** as the comparison baseline. The objective is a dramatic reduction in delivery time through a project-specific agent fleet, with engineers directing architecture, resolving ambiguity and approving consequential changes. Use developer machines for parallel software work and dedicated hardware-in-the-loop agents for target build, deployment and test. Preserve named human accountability and release acceptance.
+Use a project-specific agent fleet to reduce the **101.4 Engineer-day traditional plan**. The [17 November proposal report](20261117_fleet-proposal-report.md) forecasts **28.7 Engineer days over 11.0 working weeks** in its target scenario, including setup and coordination for the 30 sized tickets. Principal review and additional operator effort are separate; unsized work remains outside that finish.
 
-The proposed gain is shorter time to accepted outcomes through parallel execution and earlier feedback. Agent count, generated code and token consumption are not delivery measures. Published success stories establish useful design precedents, not a project acceleration factor.
+Engineers direct architecture, resolve ambiguity and approve consequential changes. Parallel software workers deliver bounded packages; dedicated hardware-owning agents build, program and test identified targets under human authority. Measure accepted outcomes, human effort and elapsed time rather than agent count, generated code or token consumption.
 
-## What the traditional report actually establishes
+## Traditional baseline
 
-The user confirms **101.4 Engineer days** as the traditional-plan baseline for this pitch. The report separately includes **15.2 Principal engineer days** and models about **21.5 weeks elapsed** under its draft staffing assumptions. Its rounded **117 person-day** headline combines roles and is not the baseline for the engineering-work comparison. Keep engineering effort, human oversight and calendar delivery time separate when presenting the proposed reduction.
+The user confirms **101.4 Engineer days** as the comparison baseline. The report separately includes **15.2 Principal engineer days** and about **21.5 elapsed weeks** under draft staffing assumptions. The rounded **117 person-day** headline combines roles. Keep engineering effort, oversight and calendar time separate.
 
 | Baseline fact | Consequence for the pitch |
 |---|---|
-| 30 sized tickets remain draft; ERP link, phone UI and release verification are unsized and excluded from totals | Do not promise delivery of the full scope against the headline estimate |
-| AX-mini software, ERP-side software, PC recipe-authoring/fleet-view software and air-generation plant are outside the estimate | Keep the fleet comparison within the same included scope; account for external dependencies separately |
-| 76.4 Engineer days are classified before hardware; 25.0 with hardware | There is a substantial host-development opportunity, but these effort categories are not the elapsed critical path |
-| Schedule totals are 101.4 Engineer days and 15.2 Principal engineer days; headline rounded role figures are 101.5 and 15.5 | Preserve the discrepancy until the estimate owner reconciles it |
-| Hardware dates and soak duration are unset | A faster coding lane alone cannot establish the delivery date |
-| 12 of 40 evidenced entries rest on AI inference alone | Resolve those claims with accountable humans rather than multiplying them across agents |
-| The estimate's AI-assistance basis is unconfirmed; individual tickets carry undefined speed-up labels | Establish a confirmed personal-agent baseline so any measured gain separates personal-agent assistance from fleet orchestration |
-| The laboratory-equipment, non-medical-device process basis is inferred and unconfirmed; no completed hazard analysis is supplied | Confirm applicable assurance requirements before sizing review effort or comparing schedules |
+| 30 sized tickets remain draft; ERP link, phone UI and release verification are unsized and excluded from totals | Compare the sized scope; resolve the unsized work before forecasting the full release |
+| AX-mini software, ERP-side software, PC recipe-authoring/fleet-view software and air-generation plant are outside the estimate | Keep the same exclusions and account for external dependencies separately |
+| 76.4 Engineer days are classified before hardware; 25.0 with hardware | Host development offers parallel work; these effort categories do not define the elapsed critical path |
+| Schedule totals are 101.4 Engineer days and 15.2 Principal engineer days; headline rounded role figures are 101.5 and 15.5 | The estimate owner must reconcile the discrepancy |
+| Hardware dates and soak duration are unset | Faster coding alone cannot establish a delivery date |
+| 12 of 40 evidenced entries rest on AI inference alone | Accountable humans must resolve those claims before dependent work proceeds |
+| The estimate's AI-assistance basis is unconfirmed; tickets have undefined speed-up labels | Confirm the personal-agent baseline to distinguish its contribution from fleet orchestration |
+| The laboratory-equipment, non-medical-device process basis is inferred and unconfirmed; no completed hazard analysis is supplied | Confirm assurance requirements before sizing review effort or comparing schedules |
 
-These figures and their source locators are in the [baseline extraction](20261116_smart-trolley-traditional-baseline.md). They describe a forecast, not observed performance.
+The [baseline extraction](20261116_smart-trolley-traditional-baseline.md) records the figures and source locators. The source is a forecast, not observed performance.
 
 ## Project-specific candidate execution lanes
 
-The following is a proposal derived from the extracted dependencies, not a replacement estimate. Preserve genuine predecessor dependencies unless an engineer explicitly revises the contracts.
+Run packages as their dependencies become ready. Preserve the recovered predecessors unless an engineer revises the contracts.
 
 | Lane | Candidate work | Readiness and acceptance boundary |
 |---|---|---|
@@ -41,15 +41,15 @@ The following is a proposal derived from the extracted dependencies, not a repla
 | Target execution | Board bring-up, target driver checks, self-test and provisioning | Reserve identified hardware and peripherals under a named human authority; capture physical fault and channel evidence |
 | Integration and acceptance | Prototype integration, dry-out confirmation, offline/recovery tests, soak and release evidence | Converge on a tested revision; retain physical elapsed tests and authorised release review |
 
-Start by showing whether the fleet can advance several ready host-testable packages while a dedicated target owner produces independent board evidence. The project already proposes a host simulation harness; reuse that foundation rather than assuming hardware is required for every task. Conversely, fail-safe venting with software stopped, actual dry-out behaviour and full channel commissioning require physical evidence.
+Start with several ready host-testable packages and independent board evidence from a target owner when hardware is available. Reuse the proposed host simulation harness. Fail-safe venting with software stopped, actual dry-out behaviour and full channel commissioning still need physical evidence.
 
-Hardware supply remains an external dependency involving Mechanical, Electrical, Systems and the client. Assign a supplier and delivery date for each PCBA, prototype trolley, production fixture and required pump/air source. Agent ownership means operational reservation, not control over procurement or hardware readiness. Assign a named human accountable for the permitted physical actions on each target before unattended operation.
+Hardware supply depends on Mechanical, Electrical, Systems and the client. Assign a supplier and date to each PCBA, prototype trolley, production fixture and required pump/air source. A target owner reserves and operates equipment; procurement and readiness remain external dependencies. A named human must approve permitted physical actions before unattended operation.
 
 ## What changes from the traditional approach
 
-The user describes a current plan based on one or two engineers, each working with one personal coding agent. The proposal changes the unit of delegation from a person's ongoing assistant session to a bounded work package with a contract, an owner and acceptance evidence. Engineers can direct several independent work packages while hardware owners execute target tests. Concurrency remains bounded by interface readiness, physical hardware, integration capacity and human review.
+The user describes one or two engineers, each with one personal coding agent. The fleet assigns bounded work packages with contracts, owners and acceptance evidence. Interfaces, hardware, integration and human review bound concurrency.
 
-This is a proposed project-specific use of omp-connected. Coordinator behaviour, signal-triggered dispatch, cross-review routing, scheduling, hardware reservations, durable memory and approval enforcement are requirements to verify or provide, not capabilities established by this brief.
+The project must provide or verify coordinator behaviour, signal-triggered dispatch, cross-review routing, scheduling, hardware reservations, durable memory and approval enforcement. These requirements are not established omp-connected capabilities.
 
 ## Audience decisions
 
@@ -59,21 +59,19 @@ This is a proposed project-specific use of omp-connected. Coordinator behaviour,
 | PMs | How to replace the sequential schedule with dependency-driven execution | Work-package dependency graph, readiness criteria, resource constraints, accepted milestones and an updated critical path |
 | Software RGM | Whether the approach retains the required engineering assurance | Explicit human authorities, traceability, independent review, target evidence, controlled changes and unchanged release acceptance obligations |
 
-The RGM role and its authority must be confirmed from project governance. This brief does not infer a regulatory classification from the audience title.
+Project governance must confirm the software RGM's role and authority. The title does not establish a regulatory classification.
 
 ## Proposed operating model
 
-One project coordinator maintains the dependency graph, interface decisions, current integration state and evidence index. It launches workers against independent scopes with sufficient context and clear acceptance conditions. Split by deliverable and context boundary rather than forcing every task through a long chain of specialist agents.
+Use one coordinator to maintain dependencies, interface decisions, integration state and the evidence index. Split work by deliverable and context boundary rather than sending every task through a chain of specialists.
 
-Implementation workers own isolated branches or worktrees. Cross-review uses a separate agent, preferably a different model where useful, and checks behaviour against requirements and runnable evidence. Different models can still share blind spots; model diversity does not establish independence or correctness by itself.
+Workers use isolated branches or worktrees. A separate reviewer checks behaviour against requirements and runnable evidence. A different model may help cross-review, but models can share blind spots. A controlled integration lane accepts reviewed work, runs the relevant checks and publishes a known tested revision. Limit dispatch to available integration and human-review capacity.
 
-Hardware agents have explicit ownership of identified boards, debug probes and attached peripherals. A lease or equivalent enforced reservation prevents concurrent programming, reset or peripheral reconfiguration of the same target. Each result records the source revision, firmware image, board identity, configuration, test procedure and outcome. Software workers request hardware jobs rather than accessing a shared target outside its owner. Hardware quantity and availability constrain concurrency.
-
-A controlled integration lane accepts reviewed work, runs relevant integration checks and publishes a known tested revision. Increased worker output must not become an unbounded integration or human-review queue.
+Each hardware agent owns identified boards, probes and peripherals. Enforce reservations for programming, reset and peripheral changes; software workers request target jobs through that owner. The [execution and assurance plan](20261117_fleet-execution-and-assurance.md) defines access, evidence and recovery controls. The [setup ticket](20261117_fleet-setup-ticket.md) defines commissioning.
 
 ## Human review proposal
 
-These are proposed policy levels, not permissions granted by this document. Start with human review of every merge. Reduce review only for explicitly approved classes after project evidence supports the change.
+Start with human review of every merge. The policy below needs human approval; any later reduction applies only to explicitly approved classes supported by project evidence.
 
 | Level | Permitted agent work | Human boundary |
 |---|---|---|
@@ -82,11 +80,11 @@ These are proposed policy levels, not permissions granted by this document. Star
 | Bounded automation | Execute approved repeatable jobs, such as a build or test on a reserved target, within defined limits | Human approves the job class and limits; unexpected effects or out-of-scope actions stop for review |
 | Release or consequential action | Assemble evidence and recommend a disposition | Authorised human approves release and any action classified as consequential by project policy |
 
-Hardware access does not imply permission to perform every physical action. Define permitted operating conditions, reset/flash permissions, stop conditions and escalation before unattended runs. Apply the project's actual safety and change-control rules once identified.
+Before unattended runs, approve operating conditions, reset/flash permissions, stop conditions and escalation under the project's safety and change-control rules.
 
 ## Signals and shared memory
 
-Use signals to reduce waiting, not to create uncontrolled new scope.
+Use signals to dispatch ready work within its existing scope:
 
 | Signal | Proposed action | Boundary and evidence |
 |---|---|---|
@@ -96,28 +94,28 @@ Use signals to reduce waiting, not to create uncontrolled new scope.
 | Reserved hardware becomes available | Hardware owner executes the next authorised job | Confirm target identity, software revision and operating conditions |
 | Requirement or interface changes | Coordinator identifies affected work and stale evidence | Human resolves scope and contract changes before dependent work proceeds |
 
-Keep approved requirements, interface contracts, architecture decisions, test procedures, hardware inventory and accepted findings in a shared, versioned project record. Attach provenance and revision to conclusions. Give workers the relevant context slice rather than copying every source into every prompt. Keep confidential project context within approved systems. Do not promote unreviewed worker summaries into authoritative requirements or decisions.
+Keep approved requirements, interfaces, architecture decisions, procedures, hardware inventory and accepted findings in shared, versioned records. Give each conclusion provenance and a revision. Confidential inputs stay within approved systems. Worker summaries remain working notes until reviewed.
 
 ## Evidence behind the strategy
 
-See the [source inventory](20261116_agent-orchestration-sources.md) for links and limitations. Useful precedents are Anthropic's parallel research orchestration, Shopify's executable verification of findings, Stripe's human merge review, Uber's attribution chain and Shopify's shared knowledge practices. These sources describe different environments; none establishes the delivery gain for this project.
+The [source inventory](20261116_agent-orchestration-sources.md) records precedents and their limits: Anthropic's parallel research orchestration, Shopify's executable verification and shared knowledge, Stripe's human merge review and Uber's attribution chain. These accounts concern different environments and do not establish this project's delivery gain.
 
-The [distilled research and capability map](20261116_fleet-research-and-capabilities.md) connects these lessons to existing ompc primitives, external tools and proposed project workflow additions.
-
-Do not use Anthropic's 90.2% internal research-evaluation improvement as a coding speedup. Do not use unresolved podcast figures as slide headlines. Product capability claims, first-party success accounts and independently measured project outcomes must remain distinct.
+The [distilled research and capability map](20261116_fleet-research-and-capabilities.md) separates existing ompc primitives, external tools and proposed workflow additions. Anthropic's **90.2%** internal research-evaluation improvement is not a coding-speed multiplier. Unresolved podcast figures are excluded from the pitch. Keep product claims, first-party accounts and independently measured project results distinct.
 
 ## How to substantiate acceleration
 
-Select real baseline work that exercises both parallel software delivery and target integration. Keep the original acceptance criteria and record all human intervention, failed attempts, rework, model spend and infrastructure use. Compare accepted outcomes against the baseline's stated assumptions. A forecast estimate is a comparator, not an observed control experiment.
+Use real product work that exercises parallel software delivery and target integration. Keep the original acceptance criteria and record human intervention, failed attempts, rework, model spend and infrastructure use. Compare accepted outcomes with the baseline's stated assumptions.
 
-Measure elapsed time from ready to accepted, engineer hours per accepted outcome, integration/review waiting time, defect escapes, rework and hardware utilisation. Include setup and assurance effort. Report costs separately from elapsed time.
+Measure ready-to-accepted elapsed time, Engineer hours per accepted outcome, review/integration waiting, defect escapes, rework and hardware utilisation. Include setup and assurance effort. Report costs separately from elapsed time.
 
-Recalculate the schedule from the dependency graph and resource limits. Do not divide total estimated effort by the number of agents. Required sequential decisions, hardware availability, review capacity and release gates may dominate the new critical path. A measured result supports only the work classes actually exercised; extrapolation to other classes must remain explicit.
+Recalculate from dependencies and finite resources. Sequential decisions, hardware, review capacity and release gates may set the finish. A measured result applies to the work classes exercised; any extrapolation needs an explicit basis.
 
-## Information needed for a quantified pitch
+## Inputs and decisions
 
-The [baseline extraction](20261116_smart-trolley-traditional-baseline.md) records the source scope, units, staffing model, dependencies and stated verification activities. Open items include engineer-reviewed estimates; sizing of phone UI, ERP link and release verification; an agreed team, rates and AI-assistance basis; hardware dates and soak durations; assurance requirements; and release acceptance authority. The fleet proposal also needs the hardware inventory, access constraints, approved model/data services, review capacity, ownership rules and budget limits. Numerical scenarios can inform these decisions using explicit assumptions and sensitivities; they remain forecasts until confirmed and calibrated against delivery evidence.
+The [baseline extraction](20261116_smart-trolley-traditional-baseline.md) records scope, units, staffing, dependencies and verification activities. The quantified report's [decision table](20261117_fleet-proposal-report.md#decisions-and-first-execution-wave) assigns accountable roles and closure evidence.
+
+Open inputs include engineer-reviewed estimates; sizing of phone UI, ERP link and release verification; agreed staffing, rates and AI-assistance basis; hardware dates and soak durations; assurance requirements and release authority. Fleet inputs also need an inventory, access constraints, approved model/data services, review capacity, ownership rules and budget limits. Scenarios use assumptions and sensitivities until these inputs are confirmed and delivery evidence is available.
 
 ## Quantified planning package, 2026-11-17
 
-The [proposal report](20261117_fleet-proposal-report.md) and [ticket-level estimate and schedule](20261117_fleet-estimate-and-schedule.md) extend this framing into an explicit forecast. The [scenario inputs](20261117_fleet-scenario-assumptions.json) separate software concurrency, human review, hands-on operator capacity and typed physical resources. Fleet setup is additional scope, and shared prototype/fixture availability is held constant across the primary scenarios. The [presentation source](20261117_fleet-pitch-content.md) and [PowerPoint deck](20261117_fleet-pitch.pptx) provide the executive/PM/software RGM pitch. These forecasts cover the 30 sized tickets plus setup, before the three unsized items and product release verification.
+The [proposal report](20261117_fleet-proposal-report.md) and [ticket-level estimate and schedule](20261117_fleet-estimate-and-schedule.md) provide the forecast. The [scenario inputs](20261117_fleet-scenario-assumptions.json) separate software concurrency, human review, hands-on operator capacity and typed physical resources. Setup is additional scope; shared prototype/fixture availability stays constant across primary scenarios. The [presentation source](20261117_fleet-pitch-content.md) and [PowerPoint deck](20261117_fleet-pitch.pptx) provide the executive/PM/software RGM pitch.

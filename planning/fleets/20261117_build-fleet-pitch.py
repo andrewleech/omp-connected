@@ -90,13 +90,6 @@ def milestone_rows(result: dict) -> list[tuple[str, str]]:
     return sorted(rows, key=lambda row: float(row[1].replace(",", "")))
 
 
-def summary_line(result: dict) -> str:
-    summary = result.get("ticket_summary", {})
-    if isinstance(summary, str):
-        return summary
-    if isinstance(summary, dict):
-        return "; ".join(f"{key.replace('_', ' ')}: {value}" for key, value in summary.items())
-    return str(summary)
 
 
 def slide(index: int, template: int, body: str, notes: str, title: str, *placeholders: tuple[str, str]) -> str:
@@ -112,14 +105,6 @@ def slide(index: int, template: int, body: str, notes: str, title: str, *placeho
 def content_for(results: dict, operator_days: float) -> str:
     target = scenario(results, "target")
     target_totals = totals(target)
-    selected_milestones = milestone_rows(target)
-    comparison_notes = (
-        "All-in role totals are utilized effort forecasts: product effort plus one-off setup and recurring coordination. These comparisons are not automatic cash or staffing savings; operator effort is separate and has no recovered baseline for an operator saving. "
-        "Traditional source schedule reports 101.4 Engineer days and 15.2 Principal days at 21.5 weeks; its headline rounds Engineer days to 101.5 and combined effort to 117 person-days. "
-        "The baseline has different and unagreed staffing/focus, so this is a scenario comparison, not equal-resource empirical speedup. "
-        "ERP, phone UI and release verification are unsized and excluded. Source: " + SOURCES["baseline"]
-    )
-    table1_notes = comparison_notes + " Model summaries: " + "; ".join(f"{key}: {summary_line(scenario(results, key))}" for key, _ in SCENARIOS)
     setup_principal_days = float(target_totals["setup_principal_days"])
     setup_days = float(target_totals["setup_engineer_days"])
     engineer_effort_delta = 101.4 - all_in_days(target_totals, "engineer")
@@ -127,34 +112,134 @@ def content_for(results: dict, operator_days: float) -> str:
     elapsed_cut = (1.0 - float(target["makespan_weeks"]) / 21.5) * 100
     target_week = float(target["makespan_weeks"])
     target_day = float(target["makespan_workdays"])
-    ms_names = ", ".join(name for name, _ in selected_milestones)
-
+    comparison_notes = (
+        "The comparison covers the same 30 sized work packages, with fleet setup added. "
+        "Engineer and Principal effort includes setup and ongoing coordination. "
+        f"Operator work adds {num(operator_days)} days; the source gives no operator effort baseline. "
+        "The traditional estimate is 101.4 Engineer days and 15.2 Principal days. Its draft schedule is 21.5 weeks. "
+        "The displayed ticket values sum to 101.5 Engineer days, and the rounded combined headline is 117 person-days. "
+        "The source team and focus assumptions are unagreed, so elapsed comparisons remain provisional. "
+        "ERP link, phone UI and release verification are unsized and excluded. Source: " + SOURCES["baseline"]
+    )
     sections = [
         "# Smart Trolley fleet delivery proposal\n\n## Metadata\n- author: Andrew Leech\n- date: 17 November 2026\n",
-        slide(1, 1, "", "Proposal only. No fleet has been commissioned and no delivery acceleration has been measured.", "Smart Trolley fleet [yellow]delivery[/yellow]", ("subtitle", "Executive proposal"), ("date", "17 November 2026"), ("author", "Andrew Leech"), ("client", "Exec / PM / software RGM")),
+        slide(
+            1, 1, "",
+            "I propose a project-specific agent fleet to reduce development effort and elapsed delivery time. "
+            "The figures are forecasts awaiting calibration against project work; the fleet has not been commissioned.",
+            "Smart Trolley fleet [yellow]delivery[/yellow]",
+            ("subtitle", "Development proposal"), ("date", "17 November 2026"),
+            ("author", "Andrew Leech"), ("client", "Exec / PM / software RGM"),
+        ),
         slide(
             2, 15, "",
-            f"Target: {num(target_day)} working days, {num(target_week)} weeks. "
-            f"Engineer effort reduction {num(engineer_effort_delta)} days; Principal effort reduction {num(principal_effort_delta)} days. "
-            f"Elapsed comparison {num(elapsed_cut)}% below the draft source schedule. "
-            f"Setup E{num(setup_days)}/P{num(setup_principal_days)} is included once. "
-            "These are judgement estimates, not measured performance or automatic cash/staffing savings. "
-            "Human approval of every merge and a common initial decision allowance remain in the model. "
-            "Three unsized tickets remain outside this pre-release-verification endpoint.",
-            "Target forecast: testable [blue]hypothesis[/blue]",
+            f"The target is {num(target_day)} working days, or {num(target_week)} weeks, for the sized scope and setup. "
+            f"Engineer effort falls by {num(engineer_effort_delta)} days and Principal effort by {num(principal_effort_delta)} days. "
+            f"The elapsed forecast is {num(elapsed_cut)}% below the source's draft schedule. "
+            f"One-off setup includes {num(setup_days)} Engineer days and {num(setup_principal_days)} Principal days. "
+            "The plan retains human approval of every merge and an initial allowance for decisions.",
+            "Target delivery [blue]forecast[/blue]",
             ("key_message", f"Target scenario\n{num(target_day)} working days\n{num(target_week)} weeks"),
-            ("body", "- Parallel bounded implementation and cross-review\n- Dedicated target owners and explicit operator effort\n- Setup, human review and coordination included\n- Calibrate with the first delivery wave"),
+            ("body", "- Parallel implementation with independent cross-review\n- Hardware agents run approved build/program/test cycles\n- Engineer decisions and human review retained\n- Setup and ongoing coordination included"),
         ),
-        slide(3, 4, "Editable scenario table is added by the generator.", table1_notes, "Scenario [blue]comparison[/blue]"),
-        slide(4, 4, "Editable milestone table is added by the generator.", "Milestones are evidence gates at relative working days from the modeled start, not calendar commitments. The final endpoint means 30 sized packages plus setup, before release verification. The table maps model milestone names to readable labels and retains relative workday offsets. No calendar dates are inferred. Hardware readiness, procurement and external decisions can shift actual availability. Preserve mandatory physical test durations. Model names: " + ms_names + ".", "Target [blue]milestones[/blue]"),
-        slide(5, 5, "**Coordinator**\n- Maintains durable task/dependency state\n- Assigns ready work and resolves resource conflicts\n- Does not approve requirements or release", "", "Roles and [blue]accountability[/blue]", ("body_1", "**Delivery and assurance**\n- Deliverable workers own isolated bounded outputs and evidence\n- Independent reviewers are separate from producers\n- Stable hardware owners retain target authority and reservations")),
-        slide(6, 5, "**ompc provides**\n- Agent/host discovery, messages, teams and session controls\n- Host session launch where supported\n- Session prompt queues and event visibility", "Existing ompc features are not a native project scheduler or durable task ledger. Mailboxes, events and session queues are not durable across all failures. Session launch leases do not reserve or lock physical hardware. Source: planning/fleets/20261116_fleet-research-and-capabilities.md.", "Use ompc; add project [blue]workflow[/blue]", ("body_1", "**Project workflow adds**\n- Versioned task contracts, dependencies and recovery records\n- Owned branches/worktrees and controlled integration\n- Independent review dispositions and revision-linked evidence\n- Stable target inventory, owners and enforced reservations")),
-        slide(7, 4, "- **Read-only:** agents investigate; humans decide requirements and scope\n- **Supervised:** isolated implementation and independent review; human approves every merge\n- **Bounded automation:** only explicitly approved repeatable jobs and limits\n- **Consequential decisions:** human approval for safety, physical exceptions, acceptance and release\n\nStart with human review of every merge. Expand only named low-risk classes after evidence and approval.", "Proposed controls, not permissions currently granted. Independent agent review supports but does not replace human judgement. Human authority is required for requirements/interface choices, safety interpretations, physical-operation exceptions, consequential evidence acceptance and release. Sources: project execution and assurance plan; Stripe human merge review: " + SOURCES["stripe"] + "; Shopify executable verification: " + SOURCES["shopify"], "Assurance stays [blue]human-led[/blue]"),
-        slide(8, 5, f"**Capacity assumptions**\n- One main hub/development computer\n- Optional distributed computers only where access/capacity needs them\n- Local GPU not assumed; model location/provider remains open\n- Slots/boards: 3/1, 6/2, 10/3 across scenarios; unconfirmed\n- Operator: {num(operator_days)} days at 0.25 FTE; additional, not counted as savings", "All primary scenarios use development-board readiness at workday 5, one prototype ready at workday 10 and one production fixture ready at workday 10. Scenario order is cautious/target/stretch: 3/6/10 agent slots and 1/2/3 basic development-board stations. One prototype and one fixture are shared across scenarios; stretch does not imply extra prototype trolleys. Setup effort covers the main environment and commissioning of boards, prototype and fixture once. Counts and dates remain unconfirmed. Operator effort is a separate forecast role with no recovered traditional baseline, so no operator saving is claimed. Session launch leases do not reserve hardware. Physical durations are not scenario-scaled. Source: planning/fleets/20261117_fleet-setup-ticket.md and planning/fleets/20261117_fleet-scenario-assumptions.json.", "Hardware is a [blue]constraint[/blue]", ("body_1", "**Preserve physical work**\n- Prototype dry-out confirmation and safe disconnect\n- Offline logging/replay and outage recovery\n- Every-channel commissioning, including forced faults\n- Integration, soak and release verification\n\nFleet concurrency does not shorten required physical tests or soak.")),
-        slide(9, 5, "**Anthropic**\nParallel research orchestration is a decomposition precedent, not delivery evidence.\n- Reported 90.2% gain was on an internal research evaluation\n- It is not a coding-speed or project schedule claim\n- First-party report; different operating context", "Sources are mostly first-party company accounts, not independent comparative trials. Anthropic: " + SOURCES["anthropic"] + "; Shopify: " + SOURCES["shopify"] + "; Stripe: " + SOURCES["stripe"] + "; Uber attribution: " + SOURCES["uber"] + ". Use examples as operating precedents only; they do not establish this project's throughput, quality, cost or acceleration.", "Evidence informs the [blue]method[/blue]", ("body_1", "**Shopify and Stripe**\nShopify describes executable verification of proposed findings; Stripe describes human review before merge.\n\n**Apply here**\nTrack accepted outcomes, human touch time, review/integration wait, rework, defects, target occupancy and cost. One wave calibrates assumptions; it does not prove a project-wide acceleration factor.")),
-        slide(10, 5, "**Forecast basis**\n- Role totals are utilized effort, not automatic cash savings\n- Setup and coordination are included once\n- Released capacity depends on actual allocation\n- Operator effort is separate; no baseline saving is claimed", "Rates, equipment quotes and model consumption costs are missing. The role days in the comparison are utilized effort forecasts, not cash savings or proof of reduced staffing. Variable-use cost basis: actual Engineer/Principal effort days × agreed role rates, plus operator_days × operator rate and equipment/model/operating costs. Booked full-window capacity envelope: makespan_workdays × assigned Engineer FTE × Engineer rate + makespan_workdays × assigned Principal FTE × Principal rate + makespan_workdays × 0.25 operator FTE × operator rate + equipment/model/operating costs. Baseline staffing/focus and charging basis are unagreed; do not claim savings until they are comparable.", "Economics: effort now, costs [blue]open[/blue]", ("body_1", "**Like-for-like limits**\n- Original 30 sized tickets only; 3 unsized tickets excluded\n- ERP link, phone UI and release verification remain unsized\n- AX-mini, ERP-side, PC recipe/fleet-view and air-generation software excluded\n- External decisions and hardware dates remain unknown\n\nA reduced estimate is not a full release forecast.")),
-        slide(11, 4, "Editable sensitivity table is added by the generator.", "Each row changes one target assumption; values are calculated forecasts, not confidence percentiles. Human review, operator availability, physical duration and rework matter more than extra worker slots in this model. More workers do not establish more output. Machine capacity, provider quotas, real hardware dates and stakeholder decisions still need confirmation. ERP link, phone UI and release verification remain unsized, so no full product release date is shown.", "What moves the [blue]timeline[/blue]"),
-        slide(12, 15, "", "Requested decision: agree a scenario and available capacity; name the coordinator, integration owner, independent reviewers and stable target owners; confirm the main computer and distinct board, prototype and fixture resources needed for the first wave; start bounded host-testable work, one integration/review cycle and target work when stations are commissioned; record observed effort, elapsed time, rework, waits, target occupancy and cost; revise the forecast from evidence. Do not approve an unqualified release date or claim measured acceleration.", "Decision [blue]requested[/blue]", ("key_message", "Agree the scenario, capacity, hardware and named ownership. Start one measured delivery wave."), ("body", "- Confirm target assumptions and missing costs\n- Name accountable decision and acceptance owners\n- Start host work while station setup proceeds\n- Reforecast using observed evidence")),
+        slide(
+            3, 4, "Compare the sized scope, with fleet setup included.", comparison_notes,
+            "Compare the delivery [blue]options[/blue]",
+        ),
+        slide(
+            4, 4, "Acceptance gates use working days from the start of the plan.",
+            "Each gate requires accepted evidence. The final gate covers 30 sized work packages and setup. "
+            "Hardware supply, procurement and unresolved decisions can move the dates. "
+            "Physical test durations remain subject to approval by the test authority.",
+            "Target delivery [blue]milestones[/blue]",
+        ),
+        slide(
+            5, 5,
+            "**Coordination**\n- Keep task state and dependencies in shared records\n- Assign ready work and manage resource conflicts\n- Route scope and release decisions to human owners",
+            "The project lead assigns the coordinator, integration owner, reviewers and hardware owners. "
+            "Each worker owns a bounded deliverable, its branch and its evidence. "
+            "The reviewer is separate from the producer. A stable hardware owner controls access to each station.",
+            "Give each task an [blue]owner[/blue]",
+            ("body_1", "**Delivery and review**\n- Workers own one deliverable and its evidence\n- A separate agent reviews each change\n- A named agent controls each hardware station"),
+        ),
+        slide(
+            6, 5,
+            "**ompc provides**\n- Find agents and sessions across machines\n- Send direct and team messages\n- Start and control sessions on connected, capable hosts\n- Queue prompts and inspect session events",
+            "Use ompc's existing session and messaging functions. Host launch requires a capable connected extension and local control access. "
+            "Keep task, evidence and reservation records outside the hub: its mailbox and event history are in memory. "
+            "Queued prompts belong to the session and are lost when that session shuts down or changes conversation. "
+            "Physical access needs its own reservation controls; ompc's launch leases cover sessions. "
+            "Source: planning/fleets/20261116_fleet-research-and-capabilities.md.",
+            "Use ompc for [blue]coordination[/blue]",
+            ("body_1", "**Project workflow adds**\n- Record tasks, dependencies and decisions durably\n- Give workers separate worktrees and control integration\n- Record reviews, approvals and test evidence\n- Reserve identified hardware through its owner"),
+        ),
+        slide(
+            7, 4,
+            "- **Investigation:** agents gather evidence; humans decide requirements and scope\n"
+            "- **Implementation:** agents build and cross-review; a human approves every merge\n"
+            "- **Automation:** run only approved repeatable jobs within recorded limits\n"
+            "- **Consequential decisions:** humans approve safety changes, physical exceptions, acceptance and release",
+            "Any later exemption needs an approved low-risk change class, "
+            "operating evidence and a way to withdraw that permission. Human authority covers requirements, interfaces, "
+            "safety interpretations, physical-operation exceptions, consequential evidence acceptance and release. "
+            "Agent checks provide evidence for those decisions. Sources: the execution and assurance plan; "
+            "Stripe: " + SOURCES["stripe"] + "; Shopify: " + SOURCES["shopify"],
+            "Keep [blue]people[/blue] accountable",
+        ),
+        slide(
+            8, 5,
+            "**Resources**\n- One main hub/development computer\n- Other computers where hardware access or capacity requires them\n"
+            "- Cautious/target/stretch: 3/6/10 execution slots and 1/2/3 boards\n"
+            f"- Operator: {num(operator_days)} days at 0.25 FTE",
+            "The counts are planning assumptions. All three scenarios use boards ready at workday 5, one prototype ready at day 10 "
+            "and one production fixture ready at day 10. Each station needs its own board, probe, peripherals and approved access. "
+            "Extra sessions cannot share a target destructively. "
+            "Setup is counted once. Local GPU inference is not assumed; check the chosen machine and provider capacity before committing. "
+            "Active physical test and observation durations are the same in every primary scenario. "
+            "Sources: planning/fleets/20261117_fleet-setup-ticket.md and planning/fleets/20261117_fleet-scenario-assumptions.json.",
+            "Plan around the [blue]hardware[/blue]",
+            ("body_1", "**Required checks**\n- Dry-out and fail-safe disconnect behaviour\n- Offline logging/replay and outage recovery\n- Every channel, including forced faults\n- Integration, soak and release verification\n\nRetain approved physical test durations."),
+        ),
+        slide(
+            9, 5,
+            "**Anthropic**\n- A lead agent delegates parallel research\n- Split work at useful task and context boundaries\n- Size the worker pool to independent work",
+            "These are mainly first-party accounts. Anthropic's 90.2% result was an improvement on its internal research evaluation, "
+            "not a coding-speed multiplier. Shopify describes tests that check proposed findings. Stripe retains human merge review. "
+            "Use those practices and measure this project's results. Anthropic: " + SOURCES["anthropic"] +
+            "; Shopify: " + SOURCES["shopify"] + "; Stripe: " + SOURCES["stripe"] +
+            "; Uber's attribution chain: " + SOURCES["uber"] + ".",
+            "Use the published [blue]lessons[/blue]",
+            ("body_1", "**Shopify and Stripe**\n- Test proposed findings and reproduce uncertain results\n- Keep human review before merge\n- Track accepted work, rework, defects and cost"),
+        ),
+        slide(
+            10, 5,
+            "**Engineer capacity**\n- Count setup and coordination once\n- Use released time on other work\n- Price operator effort separately\n- Confirm rates, model spend and equipment quotes",
+            "Price actual effort where people can use their remaining time elsewhere. If the project reserves them for the full window, "
+            "price elapsed workdays times assigned FTE times the daily rate for each role. Add operator work, equipment and model/service costs. "
+            "Confirm the source staffing, focus and charging basis before claiming a cash saving. "
+            "The comparison excludes the unsized ERP link, phone UI and release verification. "
+            "Original exclusions remain: AX-mini software, ERP-side software, PC recipe-authoring/fleet-view software and air-generation plant.",
+            "Count [blue]effort[/blue] and cost separately",
+            ("body_1", "**Cost basis**\n- Charge actual effort where capacity can be reused\n- Price the full allocation if people are reserved\n- Keep unsized work outside the savings comparison\n- Confirm external hardware and decision dates"),
+        ),
+        slide(
+            11, 4, "Review effort, operator availability and physical duration drive the forecast.",
+            "Each row changes one target assumption. These are sensitivity cases, not confidence percentiles. "
+            "Extra worker slots alone do not shorten the modelled target schedule. "
+            "Confirm machine capacity, provider quotas, physical readiness and stakeholder decisions before agreeing dates.",
+            "What moves the [blue]timeline[/blue]",
+        ),
+        slide(
+            12, 15, "",
+            "Agree the working scenario and resource allocations. Assign the coordinator, integration owner, independent reviewers, "
+            "hardware owners and human decision authorities. Confirm the main computer, target inventory and initial budget. "
+            "Start bounded host work while stations are commissioned, then include a real target cycle. "
+            "Record effort, elapsed time, rework, defects, waiting, target occupancy and cost. Update the remaining forecast from those results. "
+            "The decision covers resources and the first wave. It sets no release date and claims no measured acceleration.",
+            "Approve the first [blue]wave[/blue]",
+            ("key_message", "Agree the resources and owners.\nStart the first delivery wave."),
+            ("body", "- Assign decision, review and acceptance owners\n- Confirm machines, stations and budget\n- Start host work while station setup proceeds\n- Update the forecast from delivery results"),
+        ),
     ]
     return "\n".join(sections) + "\n"
 
@@ -231,29 +316,29 @@ def build(skill_dir: Path) -> None:
     CONTENT_PATH.write_text(content_for(results, operator_days), encoding="utf-8")
     subprocess.run([sys.executable, str(builder), str(CONTENT_PATH), str(template), str(PPTX_PATH)], check=True)
     prs = Presentation(PPTX_PATH)
-    table_rows = [["Scenario", "Engineer effort days¹", "Principal effort days", "Elapsed weeks", "Basis"]]
-    table_rows.append(["Traditional baseline", "101.4*", "15.2", "21.5", "Draft estimate"])
+    table_rows = [["Scenario", "Engineer days", "Principal days", "Elapsed weeks", "Basis"]]
+    table_rows.append(["Traditional baseline", "101.4", "15.2", "21.5", "Draft estimate"])
     table_rows.extend(
         [label, num(all_in_days(totals(scenario(results, key)), "engineer")),
          num(all_in_days(totals(scenario(results, key)), "principal")),
-         num(float(scenario(results, key)["makespan_weeks"])), "Judgement estimate"]
+         num(float(scenario(results, key)["makespan_weeks"])), "Forecast"]
         for key, label in SCENARIOS
     )
     table_rows.append([
-        f"Note: E/P include setup and coordination. Baseline schedule is 101.4 E; headline rounds to 101.5. Operator effort {num(operator_days)} days/scenario; baseline not recorded. ERP, phone UI and release verification are unsized/excluded.",
+        f"Note: Engineer/Principal totals include setup and coordination. Operator work adds {num(operator_days)} days; its source baseline is unavailable. ERP link, phone UI and release verification are unsized and excluded.",
         "", "", "", "",
     ])
     replace_body_with_table(prs.slides[2], table_rows)
-    replace_body_with_table(prs.slides[3], [["Target gate", "Relative workday"]] + [[name, day] for name, day in milestone_rows(scenario(results, "target"))])
+    replace_body_with_table(prs.slides[3], [["Acceptance gate", "Working day"]] + [[name, day] for name, day in milestone_rows(scenario(results, "target"))])
     def sensitivity_weeks(key, value):
         return num(next(item["makespan_weeks"] for item in results["sensitivities"][key] if item["value"] == value))
     sensitivity_rows = [
         ["Change from target", "Forecast weeks"],
-        ["Human ticket review retains the original 15.2 Principal days", sensitivity_weeks("baseline_ticket_principal_days", 15.2)],
-        ["Operator availability halved to 0.125 FTE", sensitivity_weeks("operator_fte", 0.125)],
-        ["Human/execution allowances increased by 25%", num(results["target_contingency_1_25"]["makespan_weeks"])],
-        ["Soak allowance increased from five to ten working days", sensitivity_weeks("system_soak_workdays", 10)],
-        ["Execution slots increased to ten", sensitivity_weeks("agent_slots", 10)],
+        ["Retain 15.2 Principal days for ticket review", sensitivity_weeks("baseline_ticket_principal_days", 15.2)],
+        ["Halve operator availability to 0.125 FTE", sensitivity_weeks("operator_fte", 0.125)],
+        ["Increase human/agent work allowances by 25%", num(results["target_contingency_1_25"]["makespan_weeks"])],
+        ["Increase the soak allowance from five to ten working days", sensitivity_weeks("system_soak_workdays", 10)],
+        ["Allow ten concurrent agent jobs", sensitivity_weeks("agent_slots", 10)],
         ["ERP link, phone UI and release verification", "Unsized / excluded"],
     ]
     replace_body_with_table(prs.slides[10], sensitivity_rows)

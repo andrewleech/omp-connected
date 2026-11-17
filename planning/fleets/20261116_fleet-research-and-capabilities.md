@@ -2,13 +2,13 @@
 
 Written: 2026-11-16
 Repository baseline: `71fe4ae`.
-Purpose: inform a project-specific omp-connected fleet that aims to reduce delivery time dramatically against the **101.4 Engineer-day** traditional software plan.
+Purpose: inform a project-specific omp-connected fleet intended to reduce delivery time against the **101.4 Engineer-day** traditional software plan.
 
 ## Planning conclusion
 
-Use ompc as the fleet connection and visibility layer, with a project coordinator assigning bounded work to software workers and dedicated hardware owners. Build concurrency around ready deliverables and shared interface contracts. Retain independent evidence-based review and explicit human authority over consequential decisions. Treat hardware availability, integration throughput and review capacity as scheduling resources.
+Use ompc for fleet connection and visibility. A project coordinator should assign bounded work to software workers and dedicated hardware owners. Schedule concurrency around ready deliverables and shared interface contracts. Keep evidence-based review independent, and retain explicit human authority over consequential decisions. Treat hardware availability, integration throughput and review capacity as scheduling resources.
 
-This is a synthesis of earlier research and a source-level capability assessment, not a runtime verification of a deployed fleet. The [source inventory](20261116_agent-orchestration-sources.md) records the external links and confidence limits; the [transcript notes](20261116_agent-orchestration-evidence.md) preserve timestamps. The [project baseline](20261116_smart-trolley-traditional-baseline.md) and [pitch brief](20261116_smart-trolley-fleet-pitch.md) hold the project-specific scope and proposal.
+This synthesis combines earlier research with a source-level capability assessment. It does not verify a deployed fleet at runtime. The [source inventory](20261116_agent-orchestration-sources.md) records external links and confidence limits; the [transcript notes](20261116_agent-orchestration-evidence.md) preserve timestamps. The [project baseline](20261116_smart-trolley-traditional-baseline.md) and [pitch brief](20261116_smart-trolley-fleet-pitch.md) define project scope and the proposal.
 
 ## Research distilled into operating decisions
 
@@ -22,30 +22,30 @@ This is a synthesis of earlier research and a source-level capability assessment
 | Signals can remove manual dispatch delays | [Runlayer Agents](https://www.runlayer.com/blog/runlayer-agents): event/webhook/schedule product capability claim | Trigger bounded tasks from readiness, test failures, review readiness and hardware availability; define permitted actions and escalation for each signal |
 | Harness improvement can compound across runs | [Warp scoring](https://www.warp.dev/blog/using-llm-as-a-judge-scoring-to-measure-your-software-factory): scoring and proposed skill changes, not independent proof of benefit | Record recurring failure causes and propose reviewed improvements to procedures. Measure accepted outcomes and rework rather than trusting judge scores alone |
 
-These are mostly first-party reports. Do not present Anthropic's 90.2% research-evaluation result as a development speedup, use token volume as productivity, or promote unresolved podcast numbers into pitch claims. Different reviewer models can share errors; diversity supplements runnable evidence and human accountability.
+Most sources are first-party reports. Anthropic's 90.2% result is from a research evaluation, not a development-speed benchmark. Token volume is not a productivity measure, and unresolved podcast figures should not become pitch claims. Different reviewer models can share errors, so use model diversity alongside runnable evidence and human accountability.
 
 ## Shared context and memory design
 
-“Content maxing” is useful as access to relevant project knowledge, not an instruction to fill every context window. Give agents approved retrieval access to design inputs, requirements, source, interface contracts, recorded target behaviour and decisions. Keep sensitive material within approved services.
+Treat “content maxing” as access to relevant project knowledge, not as an instruction to fill every context window. Give agents approved access to design inputs, requirements, source, interface contracts, recorded target behaviour and decisions. Keep sensitive material within approved services.
 
-Separate authoritative records from working memory. Approved requirements and interface decisions need provenance, an owner and a revision. Agent observations need the source revision, target/configuration where applicable and evidence links. Mark interpretations as such. A changed interface invalidates dependent assumptions and may require rerunning evidence. Shared summaries help navigation but cannot silently override primary records.
+Separate authoritative records from working memory. Approved requirements and interface decisions need provenance, an owner and a revision. Agent observations need the source revision, target or configuration where applicable, and evidence links. Mark interpretations as interpretations. A changed interface invalidates dependent assumptions and may require evidence to be rerun. Shared summaries help navigation but must not silently override primary records.
 
-For this project, prioritise the scheduler/simulation contract, driver interfaces, state recovery, recipe semantics, fault behaviour and API contract. These unblock parallel work. Resolve the report's AI-inference-only claims through the accountable humans rather than distributing them as established facts.
+Prioritise the scheduler/simulation contract, driver interfaces, state recovery, recipe semantics, fault behaviour and API contract. These unblock parallel work. Accountable humans must resolve the report's AI-inference-only claims before the fleet treats them as established facts.
 
 ## Existing ompc capabilities versus fleet additions
 
-The source inspection covered the README, both architecture documents and the implementing registry, extension and session RPC code at the repository baseline above. “Not established” means the inspected implementation does not supply the proposed workflow; it does not prohibit implementing it with agents and project records.
+The source inspection covered the README, both architecture documents and the implementing registry, extension and session RPC code at the repository baseline above. “Not established” means the inspected implementation does not provide the proposed workflow; agents and project records could still implement it.
 
 | Area | Existing capability | What the fleet plan must provide |
 |---|---|---|
 | Multi-machine visibility | Live agent/host discovery, grouped dashboard sessions, activity and session controls | Ready-work and blocked-work views tied to project tasks, not just live sessions |
 | Coordination | Direct/team messages, team membership, agent identities, mailboxes and queryable events | Work contracts, assignment, dependencies, completion criteria and reconciliation |
-| Worker launch | Start/resume sessions on hosts through an online capable extension and a local control-shared Collab session; local tmux launch/reattach | Capacity-aware dispatch and worker configuration. This does not provision an offline machine or launch arbitrarily over SSH |
-| Model and agent configuration | Dashboard/session RPCs expose configured agent roles and read/edit model-role assignments on capable runtimes; model/thinking and compaction controls are also available | Choose producer/reviewer models and budgets deliberately. Role configuration does not itself assign work or enforce independent review |
-| Prompt scheduling | Up to 20 delayed or next-idle prompts per session | Cross-session event-to-task rules and dependency scheduling. Session queues are in memory: they survive a hub restart while the session stays alive, but not session shutdown or conversation change |
+| Worker launch | Start or resume sessions on hosts through an online capable extension and a local control-shared Collab session; local tmux launch or reattach | Capacity-aware dispatch and worker configuration. This does not provision an offline machine or launch arbitrarily over SSH |
+| Model and agent configuration | Dashboard/session RPCs expose configured agent roles and allow model-role assignments to be read or edited on capable runtimes; model/thinking and compaction controls are also available | Choose producer/reviewer models and budgets deliberately. Role configuration does not assign work or enforce independent review |
+| Prompt scheduling | Up to 20 delayed or next-idle prompts per session | Cross-session event-to-task rules and dependency scheduling. Session queues are in memory. They survive a hub restart while the session stays alive, but not session shutdown or conversation change |
 | Context access | Per-session working-directory files and context-usage display | Shared project knowledge, provenance, freshness and access policy |
 | Human interaction | Dashboard viewing/control and underlying tool approval categories | Producer/reviewer separation, review queue, explicit acceptance and human approval records |
-| Hardware | Workers can use whatever authorised external tools their host/session supplies | Target compatibility, inventory, exclusive reservations and physical-action policy. Existing session ownership/launch leases do not lock hardware |
+| Hardware | Workers can use authorised external tools supplied by their host/session | Target compatibility, inventory, exclusive reservations and physical-action policy. Existing session ownership/launch leases do not lock hardware |
 | Evidence and observability | File upload/download, bounded event history, session token/context and supported provider quota information | Durable revision-bound evidence, attribution through delegated work and delivery/cost metrics |
 | Project separation | Shared dashboard session groups | Actual project access boundaries and policy enforcement. Grouping sessions is not security isolation |
 
@@ -58,35 +58,35 @@ The source inspection covered the README, both architecture documents and the im
 - Session-owned prompt queues: [scheduled prompts](../../extension/src/scheduled-prompts.ts) and [extension handlers](../../extension/src/index.ts), lines 292–370.
 - Files: [session RPC routes](../../hub/src/server/session-rpc-routes.ts), lines 620–758. File transfer alone does not establish artifact integrity, approval or provenance.
 
-The hub architecture documents shared-token agent registration without independently verifying claimed host/session identity, and no dashboard-user authentication. Do not assume this provides the access or attribution controls needed for a separate confidential project. Define the deployment trust boundary and assess required access controls before connecting project sources and hardware. Session groups are documented persistent state; the live message/event records are not a durable audit trail.
+The hub architecture documents shared-token agent registration without independent verification of claimed host/session identity. It also documents no dashboard-user authentication. Do not assume these controls provide the access or attribution a separate confidential project needs. Define the deployment trust boundary and assess required access controls before connecting project sources and hardware. Session groups are documented persistent state; live message and event records are not a durable audit trail.
 
 ### What can be used without a new orchestration platform
 
-An existing coordinator session can use messages and teams to direct already connected workers, and use supported host launch to start more sessions. Versioned task records and existing repository/CI controls can carry dependencies, review dispositions and evidence. This is an agent-driven workflow assembled from available primitives, not a native ompc dependency scheduler.
+An existing coordinator session can use messages and teams to direct connected workers, and supported host launch to start more sessions. Versioned task records and existing repository/CI controls can carry dependencies, review dispositions and evidence. This workflow uses available primitives and agent coordination; ompc does not provide a native dependency scheduler.
 
-The immediate additions should close specific gaps: recoverable task state, ownership of work and targets, bounded dispatch, and reviewable evidence. Add generic scheduling or memory services only when the project workflow needs them. Preserve useful existing launch, messaging and dashboard functionality instead of rebuilding it.
+Prioritise additions that close specific gaps: recoverable task state, ownership of work and targets, bounded dispatch, and reviewable evidence. Add generic scheduling or memory services only when the project workflow needs them. Retain useful launch, messaging and dashboard functionality rather than rebuilding it.
 
 ## Boundaries between products and project workflow
 
-The local omp runtime's subagent facilities, model selection and tool permissions are distinct from omp-connected's cross-session connection layer. Mounted hardware tools are an external capability. Their presence in one session does not establish fleet-wide installation, project-board compatibility, exclusive target ownership or unattended-operation approval.
+The local omp runtime's subagent facilities, model selection and tool permissions are separate from omp-connected's cross-session connection layer. Mounted hardware tools are external capabilities. Their presence in one session does not establish fleet-wide installation, compatibility with the project board, exclusive target ownership or approval for unattended operation.
 
-The mounted pod tool descriptions include target programming, reset/debug access, persistent REPL sessions and bench I/O/capture. Their contracts include a single-client REPL and stale USB/IP export handling after target re-enumeration. This reference does not claim those paths have been exercised on the trolley hardware. A project hardware worker needs the correct target/toolchain, stable device identity, authorised operating conditions and a reservation that other workers respect or cannot bypass.
+Mounted pod tool descriptions include target programming, reset/debug access, persistent REPL sessions and bench I/O/capture. Their contracts include a single-client REPL and stale USB/IP export handling after target re-enumeration. These paths have not been shown to run on the trolley hardware. A project hardware worker needs the correct target/toolchain, stable device identity, authorised operating conditions and a reservation that other workers respect or cannot bypass.
 
 ## Practical application to the 101.4-day plan
 
-Advance independent host-testable software packages while hardware owners establish target evidence. Reuse the proposed host simulator and mocks; do not wait for the full trolley to implement every control, recipe or lifecycle behaviour. Preserve predecessor contracts and converge on a tested integration revision.
+Advance independent host-testable software packages while hardware owners establish target evidence. Reuse the proposed host simulator and mocks; implement control, recipe and lifecycle behaviour without waiting for the full trolley. Preserve predecessor contracts and converge on a tested integration revision.
 
-A fleet can reduce engineer touch time as well as overlap work: workers implement and investigate, reviewers challenge evidence, and target owners run repeated build/flash/test cycles without an engineer manually relaying each step. This is the acceleration mechanism to quantify. It does not remove physical soak duration or unresolved client decisions.
+A fleet can reduce engineer touch time and overlap work. Workers implement and investigate, reviewers challenge evidence, and target owners run repeated build/flash/test cycles without an engineer relaying each step. Measure this as the acceleration mechanism. It does not remove physical soak duration or unresolved client decisions.
 
-Use the baseline's **76.4 pre-hardware** and **25.0 hardware-associated Engineer-day** categories to locate opportunities, not as two sequential calendar blocks. Model actual worker, target and human-review availability. Account separately for Principal engineer oversight, infrastructure/model costs, omitted scope and setup work.
+Use the baseline's **76.4 pre-hardware** and **25.0 hardware-associated Engineer-day** categories to identify opportunities, not as sequential calendar blocks. Model actual worker, target and human-review availability. Account separately for Principal engineer oversight, infrastructure/model costs, omitted scope and setup work.
 
 ### Additional setup scope
 
-The user confirmed on 2026-11-17 that the fleet plan includes an additional [fleet setup and commissioning ticket](20261117_fleet-setup-ticket.md): a computer for the hub and main development agents, with additional computers where needed for distributed hardware access/control. Add its one-off effort and equipment costs to the fleet estimate. Attach execution hosts, target access, capacity and occupancy requirements to existing tickets; do not count shared provisioning repeatedly. Main development capacity and individual hardware stations can become ready at different times.
+The user confirmed on 2026-11-17 that the fleet plan includes an additional [fleet setup and commissioning ticket](20261117_fleet-setup-ticket.md): a computer for the hub and main development agents, plus additional computers where needed for distributed hardware access/control. Add its one-off effort and equipment costs to the fleet estimate. Attach execution hosts, target access, capacity and occupancy requirements to existing tickets; do not count shared provisioning more than once. Main development capacity and individual hardware stations can become ready at different times.
 
 ## Proposed additions, ordered by delivery need
 
-These are proposed requirements, not commitments to add every item to ompc itself. Prefer a project workflow over a new general-purpose service unless enforcement or recovery requires a platform feature.
+These are proposed requirements, not commitments to add every item to ompc. Prefer a project workflow over a new general-purpose service unless enforcement or recovery requires a platform feature.
 
 | Need | Smallest useful provision | Why it matters |
 |---|---|---|
@@ -101,4 +101,4 @@ These are proposed requirements, not commitments to add every item to ompc itsel
 
 ## What the plan should measure
 
-Track ready-to-accepted elapsed time, engineer intervention, review and integration waiting, defect escapes, rework, hardware occupancy and cost. Link these to accepted work packages and revisions. Use a representative real execution wave to calibrate the aggressive schedule, including software concurrency and target integration. Do not require a separate research programme before starting useful work, and do not extrapolate one successful worker run into a project-wide multiplier.
+Track ready-to-accepted elapsed time, engineer intervention, review and integration waiting, defect escapes, rework, hardware occupancy and cost. Link each measure to accepted work packages and revisions. Use a representative execution wave to calibrate the aggressive schedule, including software concurrency and target integration. Useful work can start before a separate research programme; do not extrapolate one successful worker run into a project-wide multiplier.

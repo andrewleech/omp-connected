@@ -511,32 +511,32 @@ def validate(models, source_by_id, excluded, estimates, assumptions):
 
 
 def build_report(scenarios, sensitivities, contingency, assumptions, estimates, source_by_id, excluded):
-    lines=["# Fleet estimate and deterministic schedule","",
-      "Planning estimate only. No estimate or capacity represents measured performance. Day values are working-day offsets from each scenario start, not calendar dates. One week is five workdays.",
-      "System soak allowance is 5 workdays and dry-out observation is 2 workdays. These are unconfirmed physical allowances, not source requirements or permission to shorten a test. Extended offline logging and ordered replay are included in the system-soak procedure.","",
-      "The 30 source cards display 101.5 Engineer days. The authoritative schedule baseline is 101.4 Engineer days. Preserve this 0.1-day discrepancy without normalization. Principal baseline is separately 15.2 days.",
-      "The source's 21.5-week duration is a draft comparator with different staffing assumptions, not an observed equal-capacity control.","",
+    lines=["# Fleet effort estimate and delivery schedule","",
+      "Forecast for the 30 sized work packages plus fleet setup. ERP link, phone UI and release verification remain unsized and excluded. The estimates need calibration against project work.",
+      "Times are working-day offsets from the start of each scenario. One week is five working days. The test authority must confirm the five-day soak and two-day dry-out observation allowances. The soak procedure also covers extended offline logging and ordered replay.","",
+      "The source ticket values sum to 101.5 Engineer days. The savings comparison uses the schedule total of 101.4 Engineer days and 15.2 Principal days, retaining the source's 0.1-day discrepancy.",
+      "The source's 21.5-week forecast uses different staffing assumptions. An equal-capacity comparison needs an agreed staffing and loading basis.","",
       "## Scenario inputs","",
       "| Scenario | Agent slots | Dev boards | Engineer assigned/effective FTE | Principal assigned/effective FTE | Execution / human multiplier |",
       "|---|---:|---:|---:|---:|---:|"]
     for name,s in scenarios.items():
         p=s["inputs"]
         lines.append(f"| {name} | {p['agent_slots']} | {p['target_slots']} | {s['assigned_engineer_fte']:.2f}/{s['effective_engineer_phase_fte']:.2f} | {s['assigned_principal_fte']:.2f}/{s['effective_principal_phase_fte']:.2f} | {p['execution_multiplier']:.2f} / {p['human_multiplier']:.2f} |")
-    lines += ["","All scenarios additionally use one prototype/plant station, one production fixture and independently available operator capacity of 0.25 FTE. Physical readiness is held constant.","",
+    lines += ["","Every scenario includes one prototype/plant station, one production fixture and 0.25 FTE of operator capacity. Hardware readiness is the same across scenarios.","",
       "## Scenario results","",
-      "| Scenario | Engineer days, all-in | Principal days, all-in | Operator days | Working days | Weeks | Engineer days saved | Indicative elapsed reduction |",
+      "| Scenario | Engineer days, total | Principal days, total | Operator days | Working days | Weeks | Engineer days saved | Indicative elapsed reduction |",
       "|---|---:|---:|---:|---:|---:|---:|---:|"]
     for name,s in scenarios.items():
         t=s["totals"]
         lines.append(f"| {name} | {t['engineer_days']:.2f} | {t['principal_days']:.2f} | {t['operator_days']:.2f} | {s['makespan_workdays']:.2f} | {s['makespan_weeks']:.2f} | {s['engineer_days_saved']:.2f} | {s['elapsed_reduction_percent']:.1f}% |")
-    lines += ["","### Effort accounting","",
+    lines += ["","### Effort breakdown","",
       "| Scenario | Product E / P | Setup E / P | Coordination E / P | Agent slot-days | Physical slot-days |",
       "|---|---:|---:|---:|---:|---:|"]
     for name,s in scenarios.items():
         t=s["totals"]
         lines.append(f"| {name} | {t['product_engineer_days']:.2f} / {t['product_principal_days']:.2f} | {t['setup_engineer_days']:.2f} / {t['setup_principal_days']:.2f} | {t['coordination_engineer_days']:.2f} / {t['coordination_principal_days']:.2f} | {t['agent_slot_days']:.2f} | {t['target_slot_days']:.2f} |")
-    lines += ["","Savings use 101.4 Engineer and 15.2 Principal baseline role totals, with product, setup and coordination effort in the new estimate. Operator effort is additional and has no recovered baseline, so it has no claimed saving. The 21.5-week source schedule uses different staffing assumptions and is not an equal-capacity measured comparator.","",
-      "Principal ticket estimates apply the explicit 1.5 human-review multiplier; the stretch scenario does not reduce this below the base policy. Engineer and Principal phase calendars use assigned FTE minus coordination reserves. Coordination effort is reserved FTE multiplied by elapsed workdays, including waits. Operator effort uses its separate 0.25 FTE pool.","",
+    lines += ["","Savings compare total forecast effort with the 101.4 Engineer-day and 15.2 Principal-day baseline. Totals include product work, setup and coordination. Operator effort is additional; the source gives no operator total for a savings comparison.","",
+      "Principal ticket estimates use the 1.5 human-review allowance in every scenario. Engineer and Principal task capacity excludes the coordination reserve. Coordination effort is charged over the delivery window, including waits. Operator capacity is a separate 0.25 FTE pool.","",
       "## Per-ticket source and target estimate","",
       "| Target row | Source ID | Source Engineer days | Target Engineer days | Target Principal days at 1.5 policy | Agent production days | Independent agent review days | Target active days | Operator days | Station | Rationale category |","|---|---|---:|---:|---:|---:|---:|---:|---:|---|---|"]
     categories={"scheduler":"foundation","host-simulation":"host harness","sensor-drivers":"drivers","actuator-drivers":"drivers","storage":"foundation","misc-io":"drivers","bringup":"hardware bring-up","ota":"firmware update","pressure":"control","vpd":"control","irrigation":"control","low-media":"control","zone-config":"configuration","swap":"lifecycle","recipes":"lifecycle","lighting":"control","recipe-store":"storage","disconnect":"safety/lifecycle","resume":"safety/lifecycle","identity":"identity","alarms":"fault handling","events":"offline data","api":"interface","pairing":"security","self-test":"physical acceptance","provisioning":"production acceptance","integration":"integration","system-test":"system verification","dry-out":"physical observation","release-records":"records"}
@@ -544,10 +544,10 @@ def build_report(scenarios, sensitivities, contingency, assumptions, estimates, 
     for r in estimates["rows"]:
         tid=r[0]; sid=TICKET_SOURCE_IDS[tid]
         lines.append(f"| {r[1]} (`{tid}`) | `{sid}` | {source_days(source_by_id[sid]):.1f} | {r[2]:.2f} | {r[3]*assumptions['human_review_policy']['principal_review_estimate_multiplier']:.2f} | {r[4]:.2f} | {r[5]:.2f} | {r[6]:.2f} | {operators.get(tid,0):.2f} | {stations.get(tid,'host')} | {categories[tid]} |")
-    lines += ["","Ticket Engineer effort is split into 25% briefing, 50% host acceptance and 25% target acceptance when target work exists; otherwise 25% briefing and 75% host acceptance. Principal review gates host acceptance. Target active work has a 1.0 multiplier floor; fixed observations and operator durations are not scenario-scaled. Principal target-ticket effort applies the human-review policy multiplier.","",
+    lines += ["","Engineer effort is split into 25% briefing, 50% host acceptance and 25% target acceptance where target work is required. Host-only tickets use 25% briefing and 75% host acceptance. Principal review precedes host acceptance. Active physical tests, fixed observation periods and operator work retain their base durations across scenarios.","",
       "## Setup and physical resources","",
-      f"Setup aggregate: Engineer {assumptions['setup_target_estimates']['main_environment']['engineer_days']:.2f}, Principal {assumptions['setup_target_estimates']['main_environment']['principal_days']:.2f}, agent {assumptions['setup_target_estimates']['main_environment']['agent_execution_days']:.2f} days, before scenario multipliers. Every dev-board, prototype and production-fixture station is commissioned after matching hardware readiness, with per-station estimates E {assumptions['setup_target_estimates']['per_target_station']['engineer_days']:.2f}, P {assumptions['setup_target_estimates']['per_target_station']['principal_days']:.2f}, agent {assumptions['setup_target_estimates']['per_target_station']['agent_execution_days']:.2f} days.",
-      f"One prototype pool ({assumptions['physical_resources']['prototype_slots']} slot, ready day {assumptions['physical_resources']['prototype_ready_workday']}) is shared by control, integration, soak and dry-out. One production fixture (ready day {assumptions['physical_resources']['production_fixture_ready_workday']}) supports provisioning. Dev-board stations are ready day {assumptions['physical_resources']['dev_board_ready_workday']}; their count varies by scenario. Operator capacity is {assumptions['physical_resources']['operator_fte']:.2f} FTE. Setup effort is separate from product effort.",""]
+      f"Shared setup allows {assumptions['setup_target_estimates']['main_environment']['engineer_days']:.2f} Engineer, {assumptions['setup_target_estimates']['main_environment']['principal_days']:.2f} Principal and {assumptions['setup_target_estimates']['main_environment']['agent_execution_days']:.2f} agent days before scenario adjustments. Commissioning each board, prototype or production-fixture station adds {assumptions['setup_target_estimates']['per_target_station']['engineer_days']:.2f} Engineer, {assumptions['setup_target_estimates']['per_target_station']['principal_days']:.2f} Principal and {assumptions['setup_target_estimates']['per_target_station']['agent_execution_days']:.2f} agent days after its hardware is ready.",
+      f"Control, integration, soak and dry-out share one prototype pool ({assumptions['physical_resources']['prototype_slots']} slot, ready day {assumptions['physical_resources']['prototype_ready_workday']}). Provisioning uses a production fixture ready at day {assumptions['physical_resources']['production_fixture_ready_workday']}. Development boards are ready at day {assumptions['physical_resources']['dev_board_ready_workday']}; their number varies by scenario. Operator capacity is {assumptions['physical_resources']['operator_fte']:.2f} FTE. Setup and product effort are counted separately.",""]
     lines += ["","| Setup activity | Gate | Engineer days | Principal days | Agent days |",
               "|---|---|---:|---:|---:|"]
     for activity in assumptions["setup_target_estimates"]["activities"]:
@@ -556,7 +556,7 @@ def build_report(scenarios, sensitivities, contingency, assumptions, estimates, 
     for name,s in scenarios.items():
         m=s["milestones"]
         lines.append(f"| {name} | {m['main_setup_complete']:.2f} | {m['first_host_acceptance']:.2f} | {m['last_host_acceptance']:.2f} | {m['first_target_complete']:.2f} | {m['integration_target']:.2f} | {m['system_test_including_soak']:.2f} | {m['dryout_including_observation']:.2f} | {m['sized_scope_complete']:.2f} |")
-    lines += ["","Sized scope means all 30 sized tickets and fleet setup. It is not full release.","","## Resource-limited ticket timeline","","| Scenario | Ticket | Host accepted | Target complete |","|---|---|---:|---:|"]
+    lines += ["","## Ticket schedule with resource limits","","| Scenario | Ticket | Host accepted | Target complete |","|---|---|---:|---:|"]
     for name,s in scenarios.items():
         for tid,t in sorted(s["ticket_summary"].items(),key=lambda kv:(kv[1]["complete_day"],kv[0])):
             target="not applicable" if t["target_complete_day"] is None else f"{t['target_complete_day']:.2f}"
@@ -566,26 +566,30 @@ def build_report(scenarios, sensitivities, contingency, assumptions, estimates, 
       "|---|---|---:|---:|---|"]
     for row in scenarios["target"]["schedule"]:
         lines.append(f"| {row['ticket']} | {row['phase']} | {row['start']:.2f} | {row['finish']:.2f} | {row['resource']} |")
-    lines += ["","Each schedule record also includes blocking predecessors and resource wait in the JSON output.","",
-      "### Dependency and resource bounds","",
+    lines += ["","The JSON records identify blocking predecessors and resource waits.","",
+      "### Dependency and resource limits","",
       "| Scenario | Dependency-only path workdays | Resource-constrained makespan workdays | Resource bottlenecks |",
       "|---|---:|---:|---|"]
     for name,s in scenarios.items():
         bottlenecks=", ".join(f"{k}: {v['occupied_calendar_workdays']:.2f} occupied workdays/{v['slots']} slots" for k,v in s["resource_bottlenecks"].items())
         lines.append(f"| {name} | {s['dependency_only_critical_path_workdays']:.2f} | {s['makespan_workdays']:.2f} | {bottlenecks} |")
-    lines += ["","## Sensitivities","","Each row changes one input from target. Hardware readiness offsets move dev-board, prototype and production-fixture dates together. Physical active and fixed observation durations are not reduced below base durations.","","| Sensitivity | Value | Engineer days total | Principal days total | Agent slot-days | Target slot-days | Workdays | Weeks |","|---|---:|---:|---:|---:|---:|---:|---:|"]
+    lines += ["","## Sensitivities","","Each case changes one target assumption. A hardware offset moves all three resource-readiness dates together. Active physical tests keep their base durations; the soak sensitivity extends observation from five to ten working days.","","| Sensitivity | Value | Engineer days total | Principal days total | Agent slot-days | Target slot-days | Workdays | Weeks |","|---|---:|---:|---:|---:|---:|---:|---:|"]
     for label,items in sensitivities.items():
         for item in items:
             s=item
             lines.append(f"| {label} | {item['value']} | {s['totals']['engineer_days']:.2f} | {s['totals']['principal_days']:.2f} | {s['totals']['agent_slot_days']:.2f} | {s['totals']['target_slot_days']:.2f} | {s['makespan_workdays']:.2f} | {s['makespan_weeks']:.2f} |")
-    lines += ["","The baseline-review sensitivity sets sized-ticket Principal effort to 15.2 days before setup and coordination. No test-role saving is computed because the source lists Test Engineer at 0.5 FTE but does not provide a role effort total.","",
-      f"Explicit 1.25 human and execution contingency stress result: Engineer {contingency['totals']['engineer_days']:.2f} days, Principal {contingency['totals']['principal_days']:.2f} days, makespan {contingency['makespan_workdays']:.2f} workdays ({contingency['makespan_weeks']:.2f} weeks). This is not a probability and does not alter the base scenario estimates.","",
-      "## Exclusions, limitations and break-even","",]
+    lines += ["","The review sensitivity retains 15.2 Principal days for sized-ticket work, then adds setup and coordination. The source lists 0.5 FTE of Test Engineer capacity but gives no role effort total for a savings comparison.","",
+      f"With human and execution allowances at 1.25 times the base, the forecast is {contingency['totals']['engineer_days']:.2f} Engineer days, {contingency['totals']['principal_days']:.2f} Principal days and {contingency['makespan_workdays']:.2f} working days ({contingency['makespan_weeks']:.2f} weeks). This stress case is separate from the base scenarios and carries no probability estimate.","",
+      "## Exclusions and cost basis","",]
     for row in excluded:
-        lines.append(f"- `{row['source_id']}`: {row['title']}, unsized and excluded from estimates; source dependencies remain in the extracted input.")
-    lines += ["","Full release is not represented. ERP link, phone UI and release verification are unsized and excluded. Break-even allowance = saved Engineer days × Engineer day rate + saved Principal days × Principal day rate - operator days × operator rate - incremental equipment/model/other operating costs. Setup and recurring coordination are already included in forecast role days; do not subtract them twice. No rates or quotes were available, so no currency estimate is stated.","","## Deterministic schedule method","","Earliest-feasible-start list scheduling dispatches ready work without reserving human capacity for distant work ahead of nearer ready jobs; longest remaining downstream duration and stable task ID break ties. Each Engineer and Principal is one fractional-FTE calendar. Agent production and independent review share the same N-slot pool in sequential phases. Each station type is its own physical pool; operator is a separate fractional-FTE resource. Physical reservations cover manual preparation and the immediately following run on the same slot, while operator capacity is held only for the manual prefix. Dry-out evidence precedes integrated prototype acceptance as an explicit early-risk-reduction policy; alarms, events and self-test target acceptance also gate integration. Blocking predecessors and resource waits are in the JSON records; the CSV lists phase timing and resource. The dependency-only path excludes resource contention and dates; this feasible schedule is not an optimality proof.","","The 21.5-week baseline has different staffing assumptions and is not an equal-capacity observed comparator. Test Engineer 0.5 FTE appears in source staffing, but test-role total effort is unknown, so no test-role savings are claimed."]
-    lines += ["","For jobs with the same earliest feasible start, station commissioning takes priority before the downstream-duration tie-break, so added resources are made usable rather than left until the end. Initial contract-decision latency can overlap environment setup and gates product briefing, not every setup activity.",
-              "Sensitivities also change the dispatch order. A shorter heuristic schedule under a tighter input is evidence that the schedule can be improved, not evidence that delaying decisions or reducing capacity is beneficial. Do not interpret such local reversals as causal savings."]
+        lines.append(f"- `{row['source_id']}`: {row['title']}, unsized and excluded. Source dependencies are retained in the input.")
+    lines += ["","The break-even allowance is saved Engineer days × Engineer rate + saved Principal days × Principal rate - operator days × operator rate - incremental equipment, model and other operating costs. Setup and coordination are already included in forecast role days. Rates and quotes are needed before calculating a currency saving.",
+              "","## Scheduling method","",
+              "The model assigns ready work at its earliest feasible start. At a common start time, station commissioning takes priority, followed by the longest remaining dependency chain and a stable task ID.",
+              "Engineer, Principal and operator work each have a fractional-FTE calendar. Implementation and independent agent review run in sequence through the same worker pool. Each hardware type has its own pool.",
+              "A target reservation covers manual preparation and the following run on the same commissioned station. The operator is occupied only during manual preparation. Integration waits for dry-out evidence, alarms, events and self-test target acceptance. Dry-out before integration is an added risk-reduction policy.",
+              "The initial decision allowance gates product briefing and can overlap environment setup. JSON records show predecessors and resource waits; the CSV gives phase times and resources.",
+              "The dependency-only path omits resource contention and readiness dates. The calculated schedule is feasible; optimality has not been established. A shorter schedule under a tighter input shows that dispatch order can improve. It provides no evidence that delays or reduced capacity save time."]
     return "\n".join(lines)
 
 

@@ -1,10 +1,10 @@
-# Fleet estimate and deterministic schedule
+# Fleet effort estimate and delivery schedule
 
-Planning estimate only. No estimate or capacity represents measured performance. Day values are working-day offsets from each scenario start, not calendar dates. One week is five workdays.
-System soak allowance is 5 workdays and dry-out observation is 2 workdays. These are unconfirmed physical allowances, not source requirements or permission to shorten a test. Extended offline logging and ordered replay are included in the system-soak procedure.
+Forecast for the 30 sized work packages plus fleet setup. ERP link, phone UI and release verification remain unsized and excluded. The estimates need calibration against project work.
+Times are working-day offsets from the start of each scenario. One week is five working days. The test authority must confirm the five-day soak and two-day dry-out observation allowances. The soak procedure also covers extended offline logging and ordered replay.
 
-The 30 source cards display 101.5 Engineer days. The authoritative schedule baseline is 101.4 Engineer days. Preserve this 0.1-day discrepancy without normalization. Principal baseline is separately 15.2 days.
-The source's 21.5-week duration is a draft comparator with different staffing assumptions, not an observed equal-capacity control.
+The source ticket values sum to 101.5 Engineer days. The savings comparison uses the schedule total of 101.4 Engineer days and 15.2 Principal days, retaining the source's 0.1-day discrepancy.
+The source's 21.5-week forecast uses different staffing assumptions. An equal-capacity comparison needs an agreed staffing and loading basis.
 
 ## Scenario inputs
 
@@ -14,17 +14,17 @@ The source's 21.5-week duration is a draft comparator with different staffing as
 | target | 6 | 2 | 0.80/0.70 | 0.35/0.33 | 1.00 / 1.00 |
 | stretch | 10 | 3 | 1.00/0.90 | 0.45/0.43 | 0.80 / 0.85 |
 
-All scenarios additionally use one prototype/plant station, one production fixture and independently available operator capacity of 0.25 FTE. Physical readiness is held constant.
+Every scenario includes one prototype/plant station, one production fixture and 0.25 FTE of operator capacity. Hardware readiness is the same across scenarios.
 
 ## Scenario results
 
-| Scenario | Engineer days, all-in | Principal days, all-in | Operator days | Working days | Weeks | Engineer days saved | Indicative elapsed reduction |
+| Scenario | Engineer days, total | Principal days, total | Operator days | Working days | Weeks | Engineer days saved | Indicative elapsed reduction |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | cautious | 38.20 | 16.62 | 4.40 | 86.95 | 17.39 | 63.20 | 19.1% |
 | target | 28.72 | 12.65 | 4.40 | 55.15 | 11.03 | 72.68 | 48.7% |
 | stretch | 25.35 | 12.21 | 4.40 | 46.87 | 9.37 | 76.05 | 56.4% |
 
-### Effort accounting
+### Effort breakdown
 
 | Scenario | Product E / P | Setup E / P | Coordination E / P | Agent slot-days | Physical slot-days |
 |---|---:|---:|---:|---:|---:|
@@ -32,9 +32,9 @@ All scenarios additionally use one prototype/plant station, one production fixtu
 | target | 15.70 / 9.15 | 7.50 / 2.40 | 5.52 / 1.10 | 26.55 | 34.05 |
 | stretch | 13.87 / 9.15 | 6.80 / 2.12 | 4.69 / 0.94 | 21.44 | 34.05 |
 
-Savings use 101.4 Engineer and 15.2 Principal baseline role totals, with product, setup and coordination effort in the new estimate. Operator effort is additional and has no recovered baseline, so it has no claimed saving. The 21.5-week source schedule uses different staffing assumptions and is not an equal-capacity measured comparator.
+Savings compare total forecast effort with the 101.4 Engineer-day and 15.2 Principal-day baseline. Totals include product work, setup and coordination. Operator effort is additional; the source gives no operator total for a savings comparison.
 
-Principal ticket estimates apply the explicit 1.5 human-review multiplier; the stretch scenario does not reduce this below the base policy. Engineer and Principal phase calendars use assigned FTE minus coordination reserves. Coordination effort is reserved FTE multiplied by elapsed workdays, including waits. Operator effort uses its separate 0.25 FTE pool.
+Principal ticket estimates use the 1.5 human-review allowance in every scenario. Engineer and Principal task capacity excludes the coordination reserve. Coordination effort is charged over the delivery window, including waits. Operator capacity is a separate 0.25 FTE pool.
 
 ## Per-ticket source and target estimate
 
@@ -71,12 +71,12 @@ Principal ticket estimates apply the explicit 1.5 human-review multiplier; the s
 | Dry-out confirmation (`dry-out`) | `tk-dryout` | 4.3 | 0.60 | 0.38 | 0.40 | 0.25 | 0.25 | 0.50 | prototype | physical observation |
 | Release and design records (`release-records`) | `tk-release-notes` | 1.4 | 0.40 | 0.45 | 0.40 | 0.20 | 0.00 | 0.00 | host | records |
 
-Ticket Engineer effort is split into 25% briefing, 50% host acceptance and 25% target acceptance when target work exists; otherwise 25% briefing and 75% host acceptance. Principal review gates host acceptance. Target active work has a 1.0 multiplier floor; fixed observations and operator durations are not scenario-scaled. Principal target-ticket effort applies the human-review policy multiplier.
+Engineer effort is split into 25% briefing, 50% host acceptance and 25% target acceptance where target work is required. Host-only tickets use 25% briefing and 75% host acceptance. Principal review precedes host acceptance. Active physical tests, fixed observation periods and operator work retain their base durations across scenarios.
 
 ## Setup and physical resources
 
-Setup aggregate: Engineer 5.50, Principal 2.00, agent 0.50 days, before scenario multipliers. Every dev-board, prototype and production-fixture station is commissioned after matching hardware readiness, with per-station estimates E 0.50, P 0.10, agent 0.25 days.
-One prototype pool (1 slot, ready day 10) is shared by control, integration, soak and dry-out. One production fixture (ready day 10) supports provisioning. Dev-board stations are ready day 5; their count varies by scenario. Operator capacity is 0.25 FTE. Setup effort is separate from product effort.
+Shared setup allows 5.50 Engineer, 2.00 Principal and 0.50 agent days before scenario adjustments. Commissioning each board, prototype or production-fixture station adds 0.50 Engineer, 0.10 Principal and 0.25 agent days after its hardware is ready.
+Control, integration, soak and dry-out share one prototype pool (1 slot, ready day 10). Provisioning uses a production fixture ready at day 10. Development boards are ready at day 5; their number varies by scenario. Operator capacity is 0.25 FTE. Setup and product effort are counted separately.
 
 
 | Setup activity | Gate | Engineer days | Principal days | Agent days |
@@ -96,9 +96,7 @@ One prototype pool (1 slot, ready day 10) is shared by control, integration, soa
 | target | 7.90 | 11.95 | 55.15 | 17.66 | 41.11 | 52.62 | 28.71 | 55.15 |
 | stretch | 5.25 | 7.45 | 46.87 | 11.78 | 34.46 | 44.96 | 21.91 | 46.87 |
 
-Sized scope means all 30 sized tickets and fleet setup. It is not full release.
-
-## Resource-limited ticket timeline
+## Ticket schedule with resource limits
 
 | Scenario | Ticket | Host accepted | Target complete |
 |---|---|---:|---:|
@@ -485,9 +483,9 @@ Sized scope means all 30 sized tickets and fleet setup. It is not full release.
 | release-records | principal_review | 53.36 | 54.72 | principal |
 | release-records | host_acceptance | 54.72 | 55.15 | engineer |
 
-Each schedule record also includes blocking predecessors and resource wait in the JSON output.
+The JSON records identify blocking predecessors and resource waits.
 
-### Dependency and resource bounds
+### Dependency and resource limits
 
 | Scenario | Dependency-only path workdays | Resource-constrained makespan workdays | Resource bottlenecks |
 |---|---:|---:|---|
@@ -497,7 +495,7 @@ Each schedule record also includes blocking predecessors and resource wait in th
 
 ## Sensitivities
 
-Each row changes one input from target. Hardware readiness offsets move dev-board, prototype and production-fixture dates together. Physical active and fixed observation durations are not reduced below base durations.
+Each case changes one target assumption. A hardware offset moves all three resource-readiness dates together. Active physical tests keep their base durations; the soak sensitivity extends observation from five to ten working days.
 
 | Sensitivity | Value | Engineer days total | Principal days total | Agent slot-days | Target slot-days | Workdays | Weeks |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -521,23 +519,22 @@ Each row changes one input from target. Hardware readiness offsets move dev-boar
 | baseline_ticket_principal_days | 15.2 | 30.21 | 19.00 | 26.55 | 34.05 | 70.07 | 14.01 |
 | baseline_ticket_principal_days | 22.8 | 32.40 | 27.04 | 26.55 | 34.05 | 92.01 | 18.40 |
 
-The baseline-review sensitivity sets sized-ticket Principal effort to 15.2 days before setup and coordination. No test-role saving is computed because the source lists Test Engineer at 0.5 FTE but does not provide a role effort total.
+The review sensitivity retains 15.2 Principal days for sized-ticket work, then adds setup and coordination. The source lists 0.5 FTE of Test Engineer capacity but gives no role effort total for a savings comparison.
 
-Explicit 1.25 human and execution contingency stress result: Engineer 35.39 days, Principal 15.72 days, makespan 63.88 workdays (12.78 weeks). This is not a probability and does not alter the base scenario estimates.
+With human and execution allowances at 1.25 times the base, the forecast is 35.39 Engineer days, 15.72 Principal days and 63.88 working days (12.78 weeks). This stress case is separate from the base scenarios and carries no probability estimate.
 
-## Exclusions, limitations and break-even
+## Exclusions and cost basis
 
-- `tk-erp-link`: Outbound ERP link with store-and-forward, unsized and excluded from estimates; source dependencies remain in the extracted input.
-- `tk-phone-ui`: Phone interface, unsized and excluded from estimates; source dependencies remain in the extracted input.
-- `tk-release-verification`: Release verification, unsized and excluded from estimates; source dependencies remain in the extracted input.
+- `tk-erp-link`: Outbound ERP link with store-and-forward, unsized and excluded. Source dependencies are retained in the input.
+- `tk-phone-ui`: Phone interface, unsized and excluded. Source dependencies are retained in the input.
+- `tk-release-verification`: Release verification, unsized and excluded. Source dependencies are retained in the input.
 
-Full release is not represented. ERP link, phone UI and release verification are unsized and excluded. Break-even allowance = saved Engineer days × Engineer day rate + saved Principal days × Principal day rate - operator days × operator rate - incremental equipment/model/other operating costs. Setup and recurring coordination are already included in forecast role days; do not subtract them twice. No rates or quotes were available, so no currency estimate is stated.
+The break-even allowance is saved Engineer days × Engineer rate + saved Principal days × Principal rate - operator days × operator rate - incremental equipment, model and other operating costs. Setup and coordination are already included in forecast role days. Rates and quotes are needed before calculating a currency saving.
 
-## Deterministic schedule method
+## Scheduling method
 
-Earliest-feasible-start list scheduling dispatches ready work without reserving human capacity for distant work ahead of nearer ready jobs; longest remaining downstream duration and stable task ID break ties. Each Engineer and Principal is one fractional-FTE calendar. Agent production and independent review share the same N-slot pool in sequential phases. Each station type is its own physical pool; operator is a separate fractional-FTE resource. Physical reservations cover manual preparation and the immediately following run on the same slot, while operator capacity is held only for the manual prefix. Dry-out evidence precedes integrated prototype acceptance as an explicit early-risk-reduction policy; alarms, events and self-test target acceptance also gate integration. Blocking predecessors and resource waits are in the JSON records; the CSV lists phase timing and resource. The dependency-only path excludes resource contention and dates; this feasible schedule is not an optimality proof.
-
-The 21.5-week baseline has different staffing assumptions and is not an equal-capacity observed comparator. Test Engineer 0.5 FTE appears in source staffing, but test-role total effort is unknown, so no test-role savings are claimed.
-
-For jobs with the same earliest feasible start, station commissioning takes priority before the downstream-duration tie-break, so added resources are made usable rather than left until the end. Initial contract-decision latency can overlap environment setup and gates product briefing, not every setup activity.
-Sensitivities also change the dispatch order. A shorter heuristic schedule under a tighter input is evidence that the schedule can be improved, not evidence that delaying decisions or reducing capacity is beneficial. Do not interpret such local reversals as causal savings.
+The model assigns ready work at its earliest feasible start. At a common start time, station commissioning takes priority, followed by the longest remaining dependency chain and a stable task ID.
+Engineer, Principal and operator work each have a fractional-FTE calendar. Implementation and independent agent review run in sequence through the same worker pool. Each hardware type has its own pool.
+A target reservation covers manual preparation and the following run on the same commissioned station. The operator is occupied only during manual preparation. Integration waits for dry-out evidence, alarms, events and self-test target acceptance. Dry-out before integration is an added risk-reduction policy.
+The initial decision allowance gates product briefing and can overlap environment setup. JSON records show predecessors and resource waits; the CSV gives phase times and resources.
+The dependency-only path omits resource contention and readiness dates. The calculated schedule is feasible; optimality has not been established. A shorter schedule under a tighter input shows that dispatch order can improve. It provides no evidence that delays or reduced capacity save time.
