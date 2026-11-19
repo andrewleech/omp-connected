@@ -288,6 +288,12 @@ describe("terminal relay routes", () => {
     const ack = new Uint8Array([4, 0, 0, 0, 4]);
     client.send(ack);
     expect([...(await host.nextFrame()).payload]).toEqual([...ack]);
+    const split = new Uint8Array([6, 1]);
+    client.send(split);
+    expect([...(await host.nextFrame()).payload]).toEqual([...split]);
+    const splitError = new Uint8Array([7, 111, 111, 112, 115]);
+    host.send(splitError);
+    expect([...(await client.nextFrame()).payload]).toEqual([...splitError]);
     const exit = new Uint8Array([5, 0, 0]);
     host.send(exit);
     expect([...(await client.nextFrame()).payload]).toEqual([...exit]);
@@ -309,6 +315,25 @@ describe("terminal relay routes", () => {
     badHost.send(new Uint8Array([3, 1]));
     expect((await badHost.nextFrame()).payload.readUInt16BE(0)).toBe(4003);
     expect((await badClient.nextFrame()).payload.readUInt16BE(0)).toBe(4001);
+  });
+
+  test("rejects malformed and wrong-direction split frames", async () => {
+    const { baseUrl } = start();
+    for (const [role, frame] of [
+      ["client", [6]], ["client", [6, 2]], ["client", [6, 1, 0]],
+      ["host", [6, 1]], ["client", [7, 1]],
+    ] as const) {
+      const { ticket, url } = await createTicket(baseUrl);
+      const client = await rawWebSocket(webSocketUrl(url, "client"), baseUrl);
+      const host = await rawWebSocket(webSocketUrl(url, "host"), baseUrl);
+      client.send(hello(ticket));
+      host.send(hello(ticket));
+      await client.nextFrame();
+      await host.nextFrame();
+      const sender = role === "client" ? client : host;
+      sender.send(new Uint8Array(frame));
+      expect((await sender.nextFrame()).payload.readUInt16BE(0)).toBe(4003);
+    }
   });
 
   test("enforces the websocket frame size limit", async () => {

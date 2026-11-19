@@ -198,18 +198,19 @@ export function terminalRoutes(
       if (
         type === undefined ||
         type === 0 ||
-        type > 5 ||
+        type > 7 ||
         (type === 3 && data.byteLength !== 5) ||
         (type === 4 && data.byteLength !== 5) ||
-        (type === 5 && data.byteLength !== 3)
+        (type === 5 && data.byteLength !== 3) ||
+        (type === 6 && (data.byteLength !== 2 || data[1]! > 1))
       ) {
         socket.close(4003, "invalid terminal frame");
         return;
       }
       const role = socket.data.role;
       if (
-        (role === "client" && type !== 2 && type !== 3 && type !== 4) ||
-        (role === "host" && type !== 1 && type !== 5)
+        (role === "client" && type !== 2 && type !== 3 && type !== 4 && type !== 6) ||
+        (role === "host" && type !== 1 && type !== 5 && type !== 7)
       ) {
         socket.close(4003, "terminal frame direction is invalid");
         return;

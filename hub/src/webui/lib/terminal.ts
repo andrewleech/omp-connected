@@ -1,6 +1,7 @@
 import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal } from "@xterm/xterm";
 import { button, el } from "./dom";
+import { modifiedTerminalInput, onTerminalInput } from "./terminal-input";
 import type { CollabSession } from "./workspace";
 
 interface TerminalEndpoint {
@@ -16,6 +17,8 @@ const INPUT = 0x02;
 const RESIZE = 0x03;
 const ACK = 0x04;
 const EXIT = 0x05;
+const SPLIT = 0x06;
+const SPLIT_ERROR = 0x07;
 const HELLO = 0x00;
 const ACK_BATCH_BYTES = 32 * 1024;
 
@@ -116,6 +119,8 @@ export class TerminalWindow {
   readonly #mount: HTMLElement;
   readonly #keys: HTMLElement;
   readonly #controlButton: HTMLButtonElement;
+  readonly #altButton: HTMLButtonElement;
+  readonly #splitButton: HTMLButtonElement;
   readonly #reconnect: HTMLButtonElement;
   readonly #close: HTMLButtonElement;
   #session: CollabSession | null = null;
@@ -127,6 +132,7 @@ export class TerminalWindow {
   #attempt = 0;
   #exitReceived = false;
   #controlKey = false;
+  #altKey = false;
 
   constructor() {
     this.#dialog = document.createElement("dialog");
@@ -156,43 +162,68 @@ export class TerminalWindow {
     const actions = el("div", { className: "terminal-actions" });
     actions.append(this.#reconnect, this.#close);
     header.append(heading, actions);
+    const toolbar = el("div", { className: "terminal-toolbar" });
+    const primary = el("div", { className: "terminal-key-row" });
+    const functionKeys = el("div", { className: "terminal-key-row terminal-function-keys" });
+    functionKeys.id = "terminal-function-keys";
+    functionKeys.hidden = true;
     this.#keys.addEventListener("pointerdown", (event) => {
       if ((event.target as HTMLElement).closest("button"))
         event.preventDefault();
     });
-    const keys: [string, string][] = [
-      ["Esc", "\u001b"],
-      ["Tab", "\t"],
-      ["Ctrl", ""],
-      ["↑", "\u001b[A"],
-      ["↓", "\u001b[B"],
-      ["←", "\u001b[D"],
-      ["→", "\u001b[C"],
-      ["|", "|"],
-      ["~", "~"],
-    ];
     this.#controlButton = button("Ctrl", "small");
-    for (const [label, value] of keys) {
-      const key =
-        label === "Ctrl" ? this.#controlButton : button(label, "small");
-      if (label === "Ctrl") {
-        key.setAttribute("aria-label", "Control modifier");
-        key.setAttribute("aria-pressed", "false");
-        key.addEventListener("click", () => {
-          this.#controlKey = !this.#controlKey;
-          key.classList.toggle("active", this.#controlKey);
-          key.setAttribute("aria-pressed", String(this.#controlKey));
-          this.#terminal?.focus();
-        });
-      } else {
-        key.setAttribute("aria-label", label);
-        key.addEventListener("click", () => {
-          this.#terminal?.input(value);
-          this.#terminal?.focus();
-        });
+    this.#altButton = button("Alt", "small");
+    const modifier = (key: HTMLButtonElement, name: string, toggle: () => boolean) => {
+      key.setAttribute("aria-label", `${name} modifier`);
+      key.setAttribute("aria-pressed", "false");
+      key.addEventListener("click", () => {
+        const active = toggle();
+        key.classList.toggle("active", active);
+        key.setAttribute("aria-pressed", String(active));
+        this.#terminal?.focus();
+      });
+    };
+    modifier(this.#controlButton, "Control", () => this.#controlKey = !this.#controlKey);
+    modifier(this.#altButton, "Alt", () => this.#altKey = !this.#altKey);
+    const keyButton = (label: string, value: string) => {
+      const key = button(label, "small");
+      key.setAttribute("aria-label", label);
+      key.addEventListener("click", () => {
+        this.#terminal?.input(value);
+        this.#terminal?.focus();
+      });
+      return key;
+    };
+    const expand = button("F1–F12", "small");
+    expand.setAttribute("aria-label", "Show function keys");
+    expand.setAttribute("aria-controls", functionKeys.id);
+    expand.setAttribute("aria-expanded", "false");
+    expand.addEventListener("click", () => {
+      functionKeys.hidden = !functionKeys.hidden;
+      expand.setAttribute("aria-expanded", String(!functionKeys.hidden));
+      expand.setAttribute("aria-label", functionKeys.hidden ? "Show function keys" : "Hide function keys");
+      this.#terminal?.focus();
+    });
+    primary.append(expand, keyButton("Esc", "\u001b"), keyButton("Tab", "\t"), this.#controlButton, this.#altButton);
+    for (const [label, value] of [
+      ["↑", "\u001b[A"], ["↓", "\u001b[B"], ["←", "\u001b[D"],
+      ["→", "\u001b[C"], ["|", "|"], ["~", "~"],
+    ]) primary.append(keyButton(label!, value!));
+    const sequences = ["OP", "OQ", "OR", "OS", "[15~", "[17~", "[18~", "[19~", "[20~", "[21~", "[23~", "[24~"];
+    sequences.forEach((sequence, index) => functionKeys.append(keyButton(`F${index + 1}`, `\u001b${sequence}`)));
+    this.#splitButton = button("Split", "small");
+    this.#splitButton.setAttribute("aria-label", "Split tmux pane");
+    this.#splitButton.title = "Split tmux pane";
+    this.#splitButton.disabled = true;
+    this.#splitButton.addEventListener("click", () => {
+      if (this.#socket?.readyState === WebSocket.OPEN) {
+        const horizontal = !window.matchMedia("(max-width: 768px)").matches;
+        this.#socket.send(frame(SPLIT, new Uint8Array([horizontal ? 1 : 0])));
       }
-      this.#keys.append(key);
-    }
+      this.#terminal?.focus();
+    });
+    toolbar.append(primary, this.#splitButton);
+    this.#keys.append(toolbar, functionKeys);
     this.#dialog.append(header, this.#error, this.#mount, this.#keys);
     this.#dialog.addEventListener("close", () => {
       this.#attempt += 1;
@@ -204,6 +235,7 @@ export class TerminalWindow {
   async open(session: CollabSession): Promise<void> {
     if (!session.features?.includes(TERMINAL_FEATURE)) return;
     this.#session = session;
+    this.#splitButton.hidden = !session.features?.includes("terminal.split.v1");
     this.#title.textContent = `Terminal · ${session.sessionName || session.label || session.instanceId}`;
     this.#error.hidden = true;
     this.#reconnect.hidden = true;
@@ -216,9 +248,7 @@ export class TerminalWindow {
     if (!session) return;
     const attempt = ++this.#attempt;
     this.#exitReceived = false;
-    this.#controlKey = false;
-    this.#controlButton.classList.remove("active");
-    this.#controlButton.setAttribute("aria-pressed", "false");
+    this.#resetModifiers();
     this.#disconnect();
     this.#error.hidden = true;
     this.#reconnect.hidden = true;
@@ -254,20 +284,12 @@ export class TerminalWindow {
       this.#fit = fit;
       this.#resizeObserver = new ResizeObserver(() => this.#fitTerminal());
       this.#resizeObserver.observe(this.#mount);
-      terminal.onData((data) => {
-        if (!this.#controlKey) {
-          this.#sendInput(data);
-          return;
+      onTerminalInput(terminal, (data, userInput) => {
+        if (userInput) {
+          data = modifiedTerminalInput(data, this.#controlKey, this.#altKey);
+          this.#resetModifiers();
         }
-        this.#controlKey = false;
-        this.#controlButton.classList.remove("active");
-        this.#controlButton.setAttribute("aria-pressed", "false");
-        const code = data.length === 1 ? data.toUpperCase().charCodeAt(0) : 0;
-        this.#sendInput(
-          code >= 0x40 && code <= 0x5f
-            ? String.fromCharCode(code & 0x1f)
-            : data,
-        );
+        this.#sendInput(data);
       });
       terminal.onResize(({ cols, rows }) => this.#sendResize(cols, rows));
       this.#fitTerminal();
@@ -310,6 +332,7 @@ export class TerminalWindow {
         throw new Error("The terminal closed during its handshake");
       this.#socket = socket;
       this.#ackBytes = 0;
+      this.#splitButton.disabled = false;
       this.#status.textContent = "Connected";
       this.#reconnect.hidden = true;
       socket.addEventListener("close", () => this.#connectionEnded(attempt));
@@ -364,6 +387,15 @@ export class TerminalWindow {
     return body as TerminalEndpoint;
   }
 
+  #resetModifiers(): void {
+    this.#controlKey = false;
+    this.#altKey = false;
+    for (const key of [this.#controlButton, this.#altButton]) {
+      key.classList.remove("active");
+      key.setAttribute("aria-pressed", "false");
+    }
+  }
+
   #fitTerminal(): void {
     if (!this.#dialog.open || !this.#fit) return;
     try {
@@ -411,6 +443,9 @@ export class TerminalWindow {
         this.#socket.send(frame(ACK, body));
         this.#ackBytes = 0;
       });
+    } else if (bytes[0] === SPLIT_ERROR) {
+      this.#error.textContent = new TextDecoder().decode(bytes.subarray(1)) || "Could not split the tmux pane";
+      this.#error.hidden = false;
     } else if (bytes[0] === EXIT) {
       this.#exitReceived = true;
       const code =
@@ -431,6 +466,7 @@ export class TerminalWindow {
     this.#showError("The terminal connection closed");
   }
   #showError(message: string): void {
+    this.#splitButton.disabled = true;
     this.#status.textContent = "Disconnected";
     this.#error.textContent = message;
     this.#error.hidden = false;
@@ -438,6 +474,7 @@ export class TerminalWindow {
   }
 
   #disconnect(): void {
+    this.#splitButton.disabled = true;
     this.#resizeObserver?.disconnect();
     this.#resizeObserver = null;
     const socket = this.#socket;

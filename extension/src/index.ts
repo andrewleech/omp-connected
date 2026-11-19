@@ -24,7 +24,7 @@ import {
 	supportsModelRoles,
 	type SessionRequestHandler,
 } from "./session-rpc.js";
-import { TerminalService, TERMINAL_FEATURE } from "./terminal.js";
+import { TerminalService, TERMINAL_FEATURE, TERMINAL_SPLIT_FEATURE } from "./terminal.js";
 
 const DISCOVERY_ATTEMPTS = 10;
 const DISCOVERY_INTERVAL_MS = 1_000;
@@ -250,7 +250,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 							HOST_SESSIONS_RESERVED_LABELS_FEATURE,
 							USAGE_FEATURE,
 							AUTH_FEATURE,
-							...(terminal ? [TERMINAL_FEATURE] : []),
+							...(terminal ? [TERMINAL_FEATURE, TERMINAL_SPLIT_FEATURE] : []),
 							...(supportsModelRoles(ownerContext) ? [MODEL_ROLES_FEATURE, AGENT_ROLES_FEATURE] : []),
 						],
 					});

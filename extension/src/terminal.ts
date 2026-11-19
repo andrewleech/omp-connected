@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { Server, ServerWebSocket } from "bun";
 
 export const TERMINAL_FEATURE = "terminal.v1";
+export const TERMINAL_SPLIT_FEATURE = "terminal.split.v1";
 
 interface TerminalHandle {
 	write(data: string | Uint8Array): void;
@@ -12,6 +13,7 @@ interface TerminalHandle {
 	close(): void;
 }
 interface Child {
+	pid: number;
 	terminal: TerminalHandle;
 	exited: Promise<number>;
 	kill(signal?: number | NodeJS.Signals): void;
@@ -58,12 +60,29 @@ function tmuxEnvironment(): NodeJS.ProcessEnv {
 	delete env.TMUX_PANE;
 	return env;
 }
+export async function splitTmuxPane(
+	clientPid: number,
+	horizontal: boolean,
+	run: (args: string[]) => Promise<string>,
+	active: () => boolean,
+): Promise<void> {
+	const clients = await run(["list-clients", "-F", "#{client_pid} #{client_tty}"]);
+	if (!active()) return;
+	const tty = clients.split("\n").map((line) => line.split(" ")).find(([pid]) => pid === String(clientPid))?.[1];
+	if (!tty) throw new Error("Could not find the terminal's tmux client");
+	const pane = await run(["display-message", "-p", "-c", tty, "#{pane_id}"]);
+	if (!active()) return;
+	if (!/^%\d+$/.test(pane)) throw new Error("Could not find the terminal's tmux pane");
+	await run(["split-window", horizontal ? "-h" : "-v", "-t", pane]);
+}
+
 
 /** Owns the capability table and TLS listener for one tmux-backed session. */
 export class TerminalService {
 	readonly #tmuxSocket: string;
 	readonly #capabilities = new Map<string, Capability>();
 	readonly #active = new Set<() => void>();
+	readonly #splitting = new Set<number>();
 	readonly #claimed = new Set<string>();
 	readonly #directSessions = new Map<string, { input(data: Uint8Array): void; close(): void }>();
 	#directServer: DirectServer | undefined;
@@ -81,6 +100,28 @@ export class TerminalService {
 
 	constructor(tmuxSocket: string) { this.#tmuxSocket = tmuxSocket; }
 	prepareDirect(): void { void this.#startDirect(); }
+
+	#split(clientPid: number, horizontal: boolean, active: () => boolean, report: (message: string) => void): void {
+		if (this.#splitting.has(clientPid)) {
+			report("A tmux split is already in progress");
+			return;
+		}
+		this.#splitting.add(clientPid);
+		void (async () => {
+			const run = async (args: string[]) => {
+				const child = Bun.spawn(["tmux", "-L", this.#tmuxSocket, ...args], {
+					env: tmuxEnvironment(), stdout: "pipe", stderr: "pipe",
+				});
+				const [code, output, error] = await Promise.all([
+					child.exited, new Response(child.stdout).text(), new Response(child.stderr).text(),
+				]);
+				if (code !== 0) throw new Error(error.trim() || "Could not split the tmux pane");
+				return output.trim();
+			};
+			await splitTmuxPane(clientPid, horizontal, run, () => !this.#closed && active());
+		})().catch((error: Error) => { if (!this.#closed && active()) report(error.message || "Could not split the tmux pane"); })
+			.finally(() => this.#splitting.delete(clientPid));
+	}
 
 	#expireDirectCertificate(): boolean {
 		if (this.#directCertExpiresAt === undefined || this.#directCertExpiresAt > Date.now()) return false;
@@ -358,6 +399,10 @@ export class TerminalService {
 			} else if (data[0] === 4 && data.byteLength === 5) {
 				outstanding = Math.max(0, outstanding - new DataView(data.buffer, data.byteOffset, data.byteLength).getUint32(1, false));
 				flush();
+			} else if (data[0] === 6 && data.byteLength === 2 && data[1]! <= 1 && child) {
+				this.#split(child.pid, data[1] === 1, () => !stopped && socket.readyState === WebSocket.OPEN, (message) => {
+					if (!stopped && socket.readyState === WebSocket.OPEN) socket.send(frame(7, new TextEncoder().encode(message)));
+				});
 			} else if (data[0] === 5) stop();
 			else stop();
 		};
@@ -477,6 +522,10 @@ export class TerminalService {
 			} else if (data[0] === 4 && data.byteLength === 5) {
 				outstanding = Math.max(0, outstanding - new DataView(data.buffer, data.byteOffset, data.byteLength).getUint32(1, false));
 				flush();
+			} else if (data[0] === 6 && data.byteLength === 2 && data[1]! <= 1 && child) {
+				this.#split(child.pid, data[1] === 1, () => !stopped && socket.readyState === WebSocket.OPEN, (message) => {
+					if (!stopped && socket.readyState === WebSocket.OPEN) socket.send(frame(7, new TextEncoder().encode(message)), true);
+				});
 			} else stop();
 		};
 		const spawn = Bun.spawn as unknown as (command: string[], options: { terminal: { cols: number; rows: number; data(terminal: TerminalHandle, data: Uint8Array): void }; env: NodeJS.ProcessEnv }) => Child;
@@ -493,7 +542,7 @@ export class TerminalService {
 		const session = ticket ? this.#directSessions.get(ticket) : undefined;
 		if (!session) { socket.close(4003, "terminal is not attached"); return; }
 		const type = data[0];
-		if ((type !== 2 && type !== 3 && type !== 4) || (type === 3 && data.byteLength !== 5) || (type === 4 && data.byteLength !== 5)) {
+		if ((type !== 2 && type !== 3 && type !== 4 && type !== 6) || (type === 3 && data.byteLength !== 5) || (type === 4 && data.byteLength !== 5) || (type === 6 && (data.byteLength !== 2 || data[1]! > 1))) {
 			socket.close(4003, "invalid terminal frame");
 			session.close();
 			return;

@@ -144,6 +144,16 @@ test.skipIf(!tmuxAvailable)(
 		}
 		expect(received).toContain(marker);
 
+		const firstWindow = tmux("display-message", "-p", "#{window_id}").trim();
+		tmux("new-window", "-d", "-n", "other", "cat");
+		hostSocket.send(new Uint8Array([6, 1]));
+		const panes = () => tmux("list-panes", "-t", firstWindow, "-F", "#{pane_left},#{pane_top}").trim().split("\n");
+		for (let attempt = 0; attempt < 100 && panes().length !== 2; attempt += 1) await Bun.sleep(10);
+		const horizontal = panes();
+		expect(horizontal.length).toBe(2);
+		expect(horizontal[0]?.split(",")[1]).toBe(horizontal[1]?.split(",")[1]);
+		expect(tmux("list-panes", "-t", "other", "-F", "#{pane_id}").trim().split("\n")).toHaveLength(1);
+
 		terminal.close();
 		service = undefined;
 		for (
