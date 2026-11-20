@@ -14,6 +14,7 @@ import {
 import type { FileService } from "./files-rpc.js";
 import { RpcCode, RpcError, paramsRecord } from "./protocol.js";
 import { type PromptScheduler, ScheduleError, type ScheduledPrompt } from "./scheduled-prompts.js";
+import type { TransferHandlers } from "./transfer/rpc.js";
 
 /** Feature flag advertised in `agent.register` for this request set. */
 export const SESSION_FEATURE = "session.v1";
@@ -34,6 +35,8 @@ export const SESSION_FORK_FEATURE = "session.fork.v1";
 export const AUTH_FEATURE = "session.auth.v1";
 /** Advertised by sessions that support uploads to the host temp directory. */
 export const FILES_TEMP_UPLOAD_FEATURE = "files.temp_upload.v1";
+/** Advertised only when transfer is enabled in config and the send worker is installed. */
+export const TRANSFER_FEATURE = "session.transfer.v1";
 /** Longest accepted answer to a login prompt, in UTF-16 code units. */
 export const MAX_LOGIN_INPUT = 100_000;
 
@@ -159,6 +162,8 @@ export interface SessionRpcDeps {
 	/** OMP's provider registry and logout helpers; loaded on first use when absent. */
 	authPlatform?: () => Promise<AuthPlatform>;
 	forkCurrentSession: (params: { cwd: string; name: string; sessionFile: string }) => Promise<unknown>;
+	/** `transfer.*` handlers; the methods are unknown while absent. */
+	transfer?: TransferHandlers;
 }
 
 interface ModelRoleConfiguration {
@@ -550,6 +555,13 @@ export function createSessionRpc(deps: SessionRpcDeps): SessionRequestHandler {
 		"files.write": (params) => files.write(params),
 		"files.write_abort": (params) => files.writeAbort(params),
 		"files.mkdir": (params) => files.mkdir(params),
+		...(deps.transfer
+			? {
+					"transfer.destinations": (params: unknown) => deps.transfer?.destinations(params),
+					"transfer.plan": (params: unknown) => deps.transfer?.plan(params),
+					"transfer.commit": (params: unknown) => deps.transfer?.commit(params),
+				}
+			: {}),
 	};
 
 	return async (method, params) => {

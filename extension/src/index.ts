@@ -20,11 +20,19 @@ import {
 	SCHEDULE_FEATURE,
 	SESSION_FEATURE,
 	SESSION_FORK_FEATURE,
+	TRANSFER_FEATURE,
 	USAGE_FEATURE,
 	supportsModelRoles,
 	type SessionRequestHandler,
 } from "./session-rpc.js";
 import { TerminalService, TERMINAL_FEATURE, TERMINAL_SPLIT_FEATURE } from "./terminal.js";
+import {
+	type TransferRpc,
+	clearArrivalEnv,
+	createTransferRpc,
+	isTransferAvailable,
+	writeArrivalRecord,
+} from "./transfer/rpc.js";
 
 const DISCOVERY_ATTEMPTS = 10;
 const DISCOVERY_INTERVAL_MS = 1_000;
@@ -62,6 +70,8 @@ interface ProcessHub {
 	instanceId?: string;
 	shuttingDown: boolean;
 	registering: boolean;
+	/** Set once the destination arrival record has been handled for this process. */
+	arrived?: boolean;
 }
 
 const PROCESS_HUB = Symbol.for("omp-connected.process-hub");
@@ -95,6 +105,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 	let scheduler: PromptScheduler | undefined;
 	let terminal: TerminalService | undefined;
 	let logins: LoginManager | undefined;
+	let transfer: TransferRpc | undefined;
 	const hostSessions = new HostSessions({
 		listHistory: async () => {
 			const { SessionManager } = await import("@oh-my-pi/pi-coding-agent");
@@ -250,6 +261,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 							HOST_SESSIONS_RESERVED_LABELS_FEATURE,
 							USAGE_FEATURE,
 							AUTH_FEATURE,
+							...(transfer ? [TRANSFER_FEATURE] : []),
 							...(terminal ? [TERMINAL_FEATURE, TERMINAL_SPLIT_FEATURE] : []),
 							...(supportsModelRoles(ownerContext) ? [MODEL_ROLES_FEATURE, AGENT_ROLES_FEATURE] : []),
 						],
@@ -289,7 +301,29 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		return undefined;
 	}
 
+	/** Tells a transfer worker on this host that the launched session started. Best effort. */
+	async function recordArrival(ctx: ExtensionContext): Promise<void> {
+		try {
+			await writeArrivalRecord({
+				sessionId: ctx.sessionManager.getSessionId(),
+				cwd: ctx.sessionManager.getCwd(),
+				hostId: `${os.userInfo().username}@${os.hostname()}`,
+				label: ompcSession,
+			});
+		} catch (error) {
+			pi.logger.warn("omp-connected: could not write the transfer arrival record", {
+				err: error instanceof Error ? error.message : String(error),
+			});
+		} finally {
+			clearArrivalEnv();
+		}
+	}
+
 	pi.on("session_start", async (_event, ctx) => {
+		if (!hub.arrived) {
+			hub.arrived = true;
+			await recordArrival(ctx);
+		}
 		const hubUrl = process.env.OMP_HUB_URL;
 		const token = process.env.OMP_HUB_HOST_TOKEN;
 		if (!hubUrl || !token) return; // graceful no-op if not configured
@@ -303,6 +337,8 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		await files?.dispose();
 		files = undefined;
 		sessionRpc = undefined;
+		transfer?.dispose();
+		transfer = undefined;
 		logins?.clear();
 		logins = new LoginManager({
 			onAfterSuccessError: (error) => {
@@ -339,6 +375,30 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		try {
 			const service = await FileService.open(process.cwd());
 			files = service;
+			let transferAvailable = false;
+			try {
+				transferAvailable = await isTransferAvailable();
+			} catch (error) {
+				pi.logger.warn("omp-connected: could not read the transfer config; transfer disabled", {
+					err: error instanceof Error ? error.message : String(error),
+				});
+			}
+			if (transferAvailable) {
+				transfer = createTransferRpc({
+					context: () => ownerContext,
+					sessionName: () => pi.getSessionName() ?? undefined,
+					hostId: `${os.userInfo().username}@${os.hostname()}`,
+					instanceId: () => hub.instanceId,
+					launcherName: ompcSession,
+					shutdown: () => ownerContext?.shutdown(),
+					extraBlockers: () => [
+						...((scheduler?.list().length ?? 0) > 0 ? ["scheduled prompts are waiting"] : []),
+						...(asking.size > 0 ? ["the session is waiting for an answer to a question"] : []),
+					],
+					hubUrl: () => process.env.OMP_HUB_URL,
+					logger: pi.logger,
+				});
+			}
 			sessionRpc = createSessionRpc({
 				pi,
 				context: () => ownerContext,
@@ -347,6 +407,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 				scheduler,
 				logins,
 				forkCurrentSession: (params) => hostSessions.forkCurrent(params),
+				transfer,
 			});
 		} catch (error) {
 			pi.logger.warn("omp-connected: could not resolve the session directory; session controls disabled", {
@@ -414,6 +475,8 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		busy = false;
 		asking.clear();
 		hub.shuttingDown = true;
+		transfer?.dispose();
+		transfer = undefined;
 		terminal?.close();
 		terminal = undefined;
 		hub.transport?.close();

@@ -1,0 +1,6 @@
+#!/usr/bin/env bun
+// Destination helper for send-to-host: one JSON request on stdin, one JSON reply on stdout.
+import { main } from "../src/transfer/helper.js";
+
+await main();
+process.stdout.write("", () => process.exit(0));

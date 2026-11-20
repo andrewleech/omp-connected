@@ -43,6 +43,12 @@ if [[ ${1:-} == collab ]]; then
 	exec "${omp_command[@]}" "$@"
 fi
 
+# Send-to-host runs in the transfer worker, never in a TUI.
+if [[ ${1:-} == send-to-host ]]; then
+	shift
+	exec "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/ompc-send" send-to-host "$@"
+fi
+
 session_name=${PWD##*/}
 has_suffix=false
 if [[ ${1:-} != -* && -n ${1:-} ]]; then

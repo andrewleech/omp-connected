@@ -1,0 +1,11 @@
+#!/usr/bin/env bun
+// Source worker for send-to-host: plan, run, recover, status, and the local
+// `send-to-host` command. Resolves through symlinks so a link in ~/.local/bin works.
+import { realpathSync } from "node:fs";
+import { dirname, join } from "node:path";
+
+const root = dirname(realpathSync(import.meta.path));
+const { main } = await import(join(root, "..", "src", "transfer", "worker.ts"));
+
+const code: number = await main(process.argv.slice(2));
+process.stdout.write("", () => process.exit(code));

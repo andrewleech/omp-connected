@@ -24,6 +24,8 @@ import {
 	type SessionRpcDeps,
 	thinkingLevelsFor,
 } from "../../src/session-rpc.js";
+import { TRANSFER_FEATURE } from "../../src/session-rpc.js";
+import type { TransferHandlers } from "../../src/transfer/rpc.js";
 
 type Model = NonNullable<ExtensionContext["model"]>;
 
@@ -758,5 +760,75 @@ test("session.auth_logout removes a stored account and reports what still authen
 		{ credentialId: 7 },
 	]) {
 		expect(await rpcCode(handle("session.auth_logout", params))).toBe(RpcCode.Invalid);
+	}
+});
+
+function transferHarness(access: CollabAccess, withTransfer = true) {
+	const calls: { method: string; params: unknown }[] = [];
+	const transfer: TransferHandlers = {
+		destinations: async (params) => {
+			calls.push({ method: "destinations", params });
+			return { enabled: true, destinations: [{ name: "worker-a", hostId: "user@worker-host" }] };
+		},
+		plan: async (params) => {
+			calls.push({ method: "plan", params });
+			return { planId: "plan-1" };
+		},
+		commit: async (params) => {
+			calls.push({ method: "commit", params });
+			return { operationId: "op-1" };
+		},
+	};
+	const handle = createSessionRpc({
+		pi: { logger: { warn: () => undefined } } as unknown as SessionRpcDeps["pi"],
+		context: () => undefined,
+		access: { current: async () => access, refresh: async () => access },
+		files,
+		scheduler: new PromptScheduler({
+			send: () => undefined,
+			onError: () => undefined,
+			isIdle: () => true,
+			now: () => 5_000,
+			setTimer: () => undefined,
+			clearTimer: () => undefined,
+		}),
+		logins: new LoginManager(),
+		forkCurrentSession: async () => ({}),
+		transfer: withTransfer ? transfer : undefined,
+	});
+	return { handle, calls };
+}
+
+test("the transfer feature flag names the v1 request set", () => {
+	expect(TRANSFER_FEATURE).toBe("session.transfer.v1");
+});
+
+test("transfer.* methods under control access reach the transfer handlers with their params", async () => {
+	const { handle, calls } = transferHarness("control");
+	expect(await handle("transfer.destinations", {})).toEqual({
+		enabled: true,
+		destinations: [{ name: "worker-a", hostId: "user@worker-host" }],
+	});
+	expect(await handle("transfer.plan", { destination: "worker-a" })).toEqual({ planId: "plan-1" });
+	expect(await handle("transfer.commit", { planId: "plan-1" })).toEqual({ operationId: "op-1" });
+	expect(calls).toEqual([
+		{ method: "destinations", params: {} },
+		{ method: "plan", params: { destination: "worker-a" } },
+		{ method: "commit", params: { planId: "plan-1" } },
+	]);
+});
+
+test("transfer.* methods are forbidden for a view-only session and never reach the handlers", async () => {
+	const { handle, calls } = transferHarness("view");
+	for (const method of ["transfer.destinations", "transfer.plan", "transfer.commit"]) {
+		expect(await rpcCode(handle(method, {}))).toBe(RpcCode.Forbidden);
+	}
+	expect(calls).toEqual([]);
+});
+
+test("transfer.* methods are unknown when no transfer handlers are wired", async () => {
+	const { handle } = transferHarness("control", false);
+	for (const method of ["transfer.destinations", "transfer.plan", "transfer.commit"]) {
+		expect(await rpcCode(handle(method, {}))).toBe(RpcCode.MethodNotFound);
 	}
 });
