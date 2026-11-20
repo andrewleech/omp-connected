@@ -1,6 +1,6 @@
 # Send an OMP session to another host
 
-Written: 2026-11-20. Source revision: `4325f99ddb7631f932f7d1ca2f4ef9ad8ff9a54f` of omp-connected. Inspected OMP fork revision: `fb352288873a1268ec829407a2dddc3caac0e22d`. Status: proposed design, implementation not started.
+Written: 2026-11-20. Source revision: `4325f99ddb7631f932f7d1ca2f4ef9ad8ff9a54f` of omp-connected. Inspected OMP fork revision: `fb352288873a1268ec829407a2dddc3caac0e22d`. Status: implemented; the interfaces as built are in [the implementation contracts](20261121_send_to_host_contracts.md).
 
 ## Outcome
 
@@ -143,4 +143,4 @@ Slices 2 and 3 can progress against the agreed runtime/worker contract; end-to-e
 
 ## Review and verification record
 
-The design was checked against repository architecture, host-session launch code and the fork's existing session-transfer implementation. Independent design review identified source reservation, stale-source resume, import visibility, type-conflict/undo, cancellation, caller trust and post-shutdown control gaps; those contracts are included above. The specialist reviewer was unavailable due to a rate limit; a separate general agent performed the review. This is a plan only: no transfer code, runtime tests, fleet deployment or hardware operations were performed.
+The design was checked against repository architecture, host-session launch code and the fork's existing session-transfer implementation. Independent design review identified source reservation, stale-source resume, import visibility, type-conflict/undo, cancellation, caller trust and post-shutdown control gaps; those contracts are included above. The specialist reviewer was unavailable due to a rate limit; a separate general agent performed the review. The feature is implemented; unit and fake-ssh tests pass. No fleet deployment, live two-host run or hardware operation has been done.

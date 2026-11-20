@@ -22,6 +22,7 @@ Each omp session started with `ompc` registers with a hub you run on one always-
 - **Start or resume on a host.** Click the **+** icon beside a host heading to start a detached `ompc`, or pick past conversations from that host's newest-first history. Click a conversation to select it, Ctrl-click (Cmd-click on Mac) to toggle individual selections, or Shift-click to select a range. The popup excludes conversations already open. Desktop entries show the title and date on one line, with the path below. Hover truncated titles/paths to read them in full, or the date for the session UUID. Path and Name work like `cd <path>; ompc <name>`; Name is the optional suffix after the directory name. Selecting a past conversation prefills the path and any remembered suffix. Names are remembered locally on the host once its updated extension has seen them, older conversations without a saved name leave it blank. The host needs an updated extension in at least one running control-shared session.
   Use the resume button to resume each selected conversation with its own path and remembered name. If selected sessions need the same tmux label, the launcher assigns distinct suffixes. A label already used by a live session causes an error; close that session or retry with another name. Filtering does not clear the selection. If some launches fail, the dialog shows the errors and keeps only those sessions selected for retry. Click **New session** to clear the selection.
 - **Rewind or fork from a prompt.** In a writable browser session, right-click a user-authored prompt (long-press on touch) to rewind the idle host to before it, restoring the prompt text and images to the composer, or fork it into a separately named session. Actions are available only when the host is idle and no UI request or command suggestions are open. A fork is a new detached OMP process with its own session file, not a branch of the current conversation. This needs the forked OMP host and Collab guest. See [hub architecture](hub/ARCHITECTURE.md#collab-rewind-and-fork) for the flow.
+- **Send to another host.** Right-click a control-shared session and choose **Send to host** to move the conversation (same UUID) to another configured host, optionally copying the project with rsync. Off by default; see [Send a session to another host](#send-a-session-to-another-host). This needs the forked OMP on both hosts.
 - **Send later.** Hold the Send button for a moment to queue a prompt for later instead, either after a delay or at a time of day. The session itself holds the prompt, so it still goes out with the browser closed; a strip above the prompt box counts down to each one and lets you cancel it. Waiting prompts are dropped if the omp session exits.
 - **Session panel.** The inspector shows the selected session's working directory, state, model, thinking level and context usage, and lets you search available models before switching, change the thinking level, compact the context or abort a turn.
 - **Model roles panel.** View effective selectors, resolved models and assignment provenance for built-in and custom roles. Where supported, search eligible models, choose a thinking level and save an explicit global or project assignment, or reset to OMP's automatic and fallback behavior. View-shared sessions are read-only.
@@ -51,7 +52,7 @@ The repo has two parts:
 
 ## Prerequisites
 
-- [OMP](https://github.com/can1357/oh-my-pi) (the official CLI), every host. Either the standalone binary or the Bun install works. Fast joins to long sessions, slash commands, image prompts, prompt history and rewind/fork additionally need a forked build, see [Fork build](#fork-build-of-omp); everything else works with stock OMP.
+- [OMP](https://github.com/can1357/oh-my-pi) (the official CLI), every host. Either the standalone binary or the Bun install works. Fast joins to long sessions, slash commands, image prompts, prompt history, rewind/fork and send to host additionally need a forked build, see [Fork build](#fork-build-of-omp); everything else works with stock OMP.
 - [tmux](https://github.com/tmux/tmux) 3.5 or newer (session persistence for `ompc`), every host. Older tmux works, without csi-u modified keys such as Shift+Enter (3.5+) or clipboard/image passthrough (3.3+).
 - [Bun](https://bun.sh) (runtime for the hub server), hub host only.
 
@@ -80,10 +81,10 @@ Clone to `~/omp-connected`: the systemd units in `hub/deploy/` expect the checko
 ```
 
 It checks OMP and tmux, links `extension/` as an OMP plugin, and symlinks
-`ompc` into `~/.local/bin` (override with `OMPC_BIN_DIR`), which most distros
-put on `PATH` at login. It then reports whether the hub connection (step 4)
-and Collab settings are configured. It's idempotent; re-run it after updating
-the checkout.
+`ompc`, `ompc-send` and `ompc-transfer-helper` into `~/.local/bin` (override
+with `OMPC_BIN_DIR`), which most distros put on `PATH` at login. It then
+reports whether the hub connection (step 4) and Collab settings are
+configured. It's idempotent; re-run it after updating the checkout.
 
 ### 3. Deploy the hub
 
@@ -216,7 +217,7 @@ Running sessions keep the old extension code until OMP restarts inside them.
 
 ## Fork build of OMP
 
-Fast joins, slash commands, image prompts, prompt history and rewind/fork depend on changes that upstream OMP doesn't have yet. They live on branches of [andrewleech/oh-my-pi](https://github.com/andrewleech/oh-my-pi), merged into `ompc-fleet` (a tagged upstream release plus the fleet feature branches). Two things are built from it:
+Fast joins, slash commands, image prompts, prompt history, rewind/fork and send to host depend on changes that upstream OMP doesn't have yet. They live on branches of [andrewleech/oh-my-pi](https://github.com/andrewleech/oh-my-pi), merged into `ompc-fleet` (a tagged upstream release plus the fleet feature branches). Two things are built from it:
 
 - **A forked `omp` binary on every host.** It sits next to your normal OMP and is used only by `ompc`; plain `omp`, and therefore `omp update`, are untouched.
 - **The Collab guest in the hub**, on the hub host.
@@ -445,6 +446,83 @@ Once two sessions are registered with the same hub, they can exchange messages:
 | `ompc_mailbox` | Fetch recent messages |
 | `ompc_events` | Query hub events |
 
+## Send a session to another host
+
+**Send to host** moves one conversation to another configured host and resumes it there with the same conversation UUID. The source OMP process stops, the journal (with nested subagent transcripts, artifacts and referenced image blobs) is packed and copied over ssh, and a detached `ompc` session resumes it at the same path relative to the destination's home directory. The project directory can be copied with rsync. Source files stay in place with a departure marker appended, so resuming the source copy later forks it to a new UUID. Processes, live subagents, tool sessions, terminal state, provider credentials and hardware connections do not move.
+
+### Enable
+
+The feature is off by default. On every host you send from, create `${XDG_CONFIG_HOME:-~/.config}/omp-connected/transfer.json`:
+
+```json
+{
+  "enabled": true,
+  "destinations": {
+    "worker": {
+      "hostId": "user@worker-host",
+      "ssh": { "target": "user@worker-host", "port": 22, "identityFile": "~/.ssh/id_ed25519" },
+      "helperPath": ".local/bin/ompc-transfer-helper",
+      "allowedRoots": ["~"],
+      "protectedPaths": ["~/.ssh", "~/.omp", "~/.config", "~/.local/state"]
+    }
+  }
+}
+```
+
+- Destination names match `[A-Za-z0-9][A-Za-z0-9_.-]{0,63}`. `hostId` is a dashboard label only and is never used as an ssh target.
+- `ssh.target` is `[user@]host`; `port` and `identityFile` are optional. `helperPath` (default shown) is the single command run over ssh, relative to the ssh login directory or absolute. It must point at where `install.sh` linked `ompc-transfer-helper` on the destination.
+- `allowedRoots` (default `["~"]`): the destination project must be strictly beneath one. `protectedPaths` always include the four defaults shown; the destination project cannot be inside, equal to or above a protected path, the home directory or the filesystem root. Entries are absolute or start with `~/`, resolved against the destination's home.
+- Unknown fields or invalid values turn the feature off and the extension logs the reason. Sessions advertise the feature when they start, so restart running sessions after enabling it.
+
+### Requirements
+
+- Both hosts: omp-connected installed with `install.sh` (the source needs `ompc-send`; the destination needs `ompc` and `ompc-transfer-helper`) and `rsync`.
+- Both hosts: the [fork build of OMP](#fork-build-of-omp) with the `session-send-to-host` branch. Transfer calls `omp session pack`, `unpack`, `moved`, `reserve`, `release`, `reservation`, `locate` and `lease`. While a transfer holds a session, no other resume of it works on either host, and implicit auto-resume starts a new session instead of the reserved one. A running source session also refuses new user input from the moment the transfer starts (prompts, steers, follow-ups, `/retry`, `--restore` and user-attributed messages sent by extensions); agent-originated input such as IRC wakes and background job results is not blocked. Stock OMP has none of this.
+- Key-based ssh from the source to the destination, with the destination's host key already in `known_hosts`. Transfers run ssh with `BatchMode=yes`, `StrictHostKeyChecking=yes` and no agent forwarding. The destination needs no transfer config and no ssh access to the source.
+- For the dashboard, the hub's public origin must be reachable from the source host: the detached worker reports progress to it.
+
+### From the dashboard
+
+1. Right-click the session and choose **Send to host**. The item needs control access and a session that advertises transfer, and is disabled while the agent is busy. A session with queued messages, background jobs, scheduled prompts or an unanswered question refuses to stop.
+2. Pick a destination. The dialog shows the source and destination project paths, UUID, title, launcher name, nested history count, archive size, warnings and blockers.
+3. If the destination project does not exist it is created from the source. If it exists, a confirmation box offers:
+   - **Update project with rsync**: adds and replaces files; files only present on the destination are kept (no `--delete`). A change preview is shown first.
+   - **Leave project untouched; transfer session only** (default): only session data moves. The destination directory must already be usable.
+   - **Cancel**: nothing changes on either host.
+4. If the archive lacks image blobs or points at paths outside the packed tree, the dialog requires an explicit acceptance before sending.
+5. After **Send**, the dialog shows progress and how long the source session has been unavailable. Cancel before publication removes staged data; during publication it only requests a stop at the next recorded boundary; after launch it does not undo anything. When the destination session registers, the dashboard selects it and moves the source's custom group membership to it. On failure the dialog shows the recovery actions that fit the state: **Resume transfer**, **Retry launch**, **Roll back source**, **Restore project** and **Clean up**. If the worker stops reporting, **Abandon** closes the operation on the hub, right away when the worker never reported and otherwise after the operation has been unchanged for 15 minutes. Abandon changes nothing on either host, so the source session may still need `ompc-send recover`. Closing the browser does not cancel the transfer.
+
+The project copy includes hidden files, `.git` and uncommitted work. Only `.DS_Store` and `Thumbs.db` are excluded; `.gitignore` is not used. Symlinks are not followed, devices and sockets are skipped, and ownership and setuid bits are not copied. The plan warns about symlinks that leave the tree, absolute symlinks, external gitdirs, submodules and files that look like secrets. Project-local secrets travel with the copied files; credentials outside the project do not. A non-empty destination directory where the source has a file or symlink, or a source path under a destination symlink, is a conflict that blocks the update until you resolve it by hand and plan again. Another process using the destination project also blocks an update.
+
+### From the command line
+
+```sh
+ompc send-to-host <sessionId> <destination> [--update-project|--session-only] [--yes] [--accept-incomplete] [--destination-path <path>]
+```
+
+The session must not be running; a running session is refused with exit code 75 and a pointer to the dashboard. The session is looked up from the current directory. The command prints the plan and asks for confirmation unless `--yes` is given (without a terminal, `--yes` is required). `--update-project` or `--session-only` chooses the mode for an existing destination project; without either, a missing destination project is created and an existing one is left untouched. `--destination-path` (absolute or `~/...`) is needed for a project outside the home directory. `--accept-incomplete` is needed when the plan reports missing blobs or outside references. The command runs the transfer in the foreground without the hub.
+
+### Recovery
+
+Each host journals its side of an operation under `${XDG_STATE_HOME:-~/.local/state}/omp-connected/transfers/`. On the source host:
+
+```sh
+ompc-send status --operation <id> [--remote]
+ompc-send recover --operation <id> --action <resume|retry-launch|rollback-source|restore-project|cleanup>
+```
+
+`status` prints the journal record, worker progress and source reservation as JSON; `--remote` also asks the destination. `resume` continues a failed operation that has not yet departed the source, for example after a dropped connection or a failed copy. `retry-launch` resumes after the source departed and never starts a second destination session once the launch was consumed; it also repeats a source release that failed after the destination arrived. `rollback-source` cancels the destination launch first and releases the source only then, and removes the session copy that the transfer created on the destination; it is refused once the destination started and stays blocked while the destination is unreachable. `restore-project` undoes an update, leaving files edited since the update alone; afterwards `resume` and `retry-launch` are refused, so roll the source back. `cleanup` removes staging on both hosts and keeps project backups. The source session is released before an operation ends as completed or rolled back. If that release fails, the operation stays open and repeating `retry-launch` or `rollback-source` retries it. After a failure the worker waits up to 24 hours for the dashboard's recovery requests; `ompc-send recover` works at any time. Dashboard operation IDs are the UUIDs listed by `GET /api/transfers`. The hub drops finished operations from that list 14 days after their last update.
+
+### Limits
+
+- The destination project path is the source path relative to home. The dashboard has no override; use `--destination-path` for other paths.
+- For an existing project the session is imported before the project is touched, so a diverged or older destination copy of the session is refused before any project write. A destination that already holds a copy of the session blocks planning; remove or reconcile the copy first.
+- A new or updated project is staged under the destination's `${XDG_STATE_HOME:-~/.local/state}/omp-connected/transfers/` and moved into place, so that directory and the destination project must be on one filesystem. Planning reports a blocker when they are not. A session-only transfer is not affected.
+- Reservations never expire. A session reserved by an operation cannot be resumed on either host until the operation completes or is rolled back.
+- The hub's REST API has no user authentication. Anyone who can reach the dashboard with control access to a session can start a transfer to any destination in that host's `transfer.json`. Operation tokens only scope the worker to one operation. Enable the feature only on a trusted network.
+- The destination runs the copied project's configuration and extensions. Dependencies may need rebuilding on a different architecture.
+- Nothing installs OMP, ssh keys or credentials on the destination. Messages addressed to the old agent are not forwarded. To return a session, send it back with a new transfer.
+
 ## TLS
 
 Non-localhost deployments require TLS. If you're on a Tailscale network:
@@ -493,6 +571,7 @@ fork sessions are launched.
   key lives only in the URL fragment (never sent to a server in an HTTP
   request). The hub never logs the links it brokers.
 - **Terminal capabilities.** The hub creates a random terminal capability for each request and sends it to the extension over the existing agent connection. It is not an HMAC signed with `OMP_HUB_HOST_TOKEN`. Same-origin checks and the Collab control check do not authenticate a dashboard user; the hub has no dashboard-user authentication.
+- **Send to host.** Any dashboard client with control access to a session can start an enabled transfer; the dashboard does not authenticate a person. The worker holds a short-lived (10 minute) token for one operation and renews it with a private renewal secret until the operation finishes. The hub stores only SHA-256 verifiers of both. Ssh uses batch authentication with strict host key checking, and the only remote command is the configured helper.
 - **The relay is content-blind.** It forwards encrypted binary frames between
   host and guests. It cannot read session content.
 

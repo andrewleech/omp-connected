@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Install omp-connected on this host: checks omp and tmux, links the
-# extension as an OMP plugin, and links `ompc` into ~/.local/bin.
+# extension as an OMP plugin, and links `ompc`, `ompc-send` and
+# `ompc-transfer-helper` into ~/.local/bin.
 # Idempotent — re-run after updating this checkout.
 set -euo pipefail
 
@@ -41,10 +42,14 @@ fi
 "$omp" plugin link "$repo/extension" >/dev/null
 ok "plugin omp-connected linked -> $repo/extension"
 
-# Launcher — a symlink, so updates to this checkout take effect immediately.
+# Launcher and send-to-host tools: symlinks, so updates to this checkout take
+# effect immediately. `ompc-transfer-helper` is the fixed command that a source
+# host runs over ssh, so every host that can receive a session needs it.
 mkdir -p "$bin_dir"
-ln -sfn "$repo/extension/bin/ompc" "$bin_dir/ompc"
-ok "ompc linked -> $bin_dir/ompc"
+for tool in ompc ompc-send ompc-transfer-helper; do
+	ln -sfn "$repo/extension/bin/$tool" "$bin_dir/$tool"
+	ok "$tool linked -> $bin_dir/$tool"
+done
 case ":$PATH:" in
 	*":$bin_dir:"*) ;;
 	*) warn "$bin_dir is not on PATH in this shell (most distros add it via ~/.profile at login; check with a new login shell)" ;;
