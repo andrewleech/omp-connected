@@ -25,9 +25,18 @@ export interface ViewTarget {
 function renderHtmlDocument(
   text: string,
   apiBase: string,
+  filePath: string,
   dir: string,
 ): string {
   const document = new DOMParser().parseFromString(text, "text/html");
+  for (const anchor of document.querySelectorAll("a[href]")) {
+    const href = anchor.getAttribute("href");
+    if (!href || !href.includes("#")) continue;
+    const path = resolveRelative(dir, href);
+    if (path === filePath) {
+      anchor.setAttribute("href", href.slice(href.indexOf("#")));
+    }
+  }
   for (const element of document.querySelectorAll(
     "script[src], img[src], link[href], audio[src], video[src], source[src], video[poster]",
   )) {
@@ -46,6 +55,16 @@ function renderHtmlDocument(
       }
     }
   }
+  const fragmentNavigation = document.createElement("script");
+  fragmentNavigation.textContent = `document.addEventListener("click", event => {
+    const link = event.target instanceof Element ? event.target.closest("a[href^='#']") : null;
+    if (!link) return;
+    const target = document.getElementById(decodeURIComponent(link.hash.slice(1)));
+    if (!target) return;
+    event.preventDefault();
+    target.scrollIntoView();
+  });`;
+  document.body.append(fragmentNavigation);
   return `<!doctype html>${document.documentElement.outerHTML}`;
 }
 
@@ -202,7 +221,12 @@ export class FileViewer {
         dir,
       });
     } else if (this.#kind === "html") {
-      this.#frame.srcdoc = renderHtmlDocument(text, target.apiBase, dir);
+      this.#frame.srcdoc = renderHtmlDocument(
+        text,
+        target.apiBase,
+        target.path,
+        dir,
+      );
     }
     this.#setMode(this.#kind === "text" ? "raw" : "rendered");
     const origin = await target.publicOrigin;

@@ -465,7 +465,7 @@ test("HTML preview runs clipboard buttons in an isolated frame", async ({
   await page.route("**/files/download?path=assets%2Fdashboard.html", (route) =>
     route.fulfill({
       contentType: "text/html",
-      body: `<button onclick="navigator.clipboard.writeText('copied')">Copy</button><script src="preview-test.js"></script><script>try { parent.document.title = 'escaped'; } catch (e) {}</script>`,
+      body: `<a href="dashboard.html#details">Details</a><button onclick="navigator.clipboard.writeText('copied')">Copy</button><section id="details"><h1>Dashboard details</h1></section><script src="preview-test.js"></script><script>try { parent.document.title = 'escaped'; } catch (e) {}</script>`,
     }),
   );
   await page.goto(
@@ -482,6 +482,10 @@ test("HTML preview runs clipboard buttons in an isolated frame", async ({
   await expect
     .poll(() => page.evaluate(() => navigator.clipboard.readText()))
     .toBe("copied");
+  await frame.getByRole("link", { name: "Details" }).click();
+  await expect(
+    frame.getByRole("heading", { name: "Dashboard details" }),
+  ).toBeVisible();
   await expect(page).toHaveTitle("dashboard.html");
   await viewer.getByRole("button", { name: "Source" }).click();
   await expect(viewer.locator("pre")).toContainText(
