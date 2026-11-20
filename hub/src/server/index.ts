@@ -12,6 +12,8 @@ import { hostSessionRoutes } from "./host-session-routes";
 import { SessionGroupStore, sessionGroupRoutes } from "./session-groups";
 import { MAX_UPLOAD_BYTES, sessionRpcRoutes } from "./session-rpc-routes";
 import { terminalRoutes } from "./terminal-routes";
+import { transferRoutes } from "./transfer-routes";
+import { TransferStore } from "./transfer-store";
 import { wsAgentPlugin } from "./ws-agent";
 
 export interface CreateHubOptions {
@@ -78,6 +80,7 @@ export function createHub(options: CreateHubOptions = {}): Hub {
     options.stateDir ?? env.stateDir,
     agentRegistry,
   );
+  const transfers = new TransferStore(options.stateDir ?? env.stateDir);
 
   const app = new Elysia()
     .onRequest(({ request, set }) => {
@@ -115,10 +118,15 @@ export function createHub(options: CreateHubOptions = {}): Hub {
     .use(agentRpcRoutes(agentRegistry, osHostname()))
     .use(sessionGroupRoutes(groups))
     .use(
+      transferRoutes(agentRegistry, transfers, {
+        publicOrigin: env.publicOrigin,
+      }),
+    )
+    .use(
       terminalRoutes(agentRegistry, env.publicOrigin, env.relayAllowedOrigins),
     )
     .use(wsAgentPlugin(agentRegistry, hostToken))
-    .use(dashboardEventsPlugin(agentRegistry, groups))
+    .use(dashboardEventsPlugin(agentRegistry, groups, transfers))
     .onBeforeHandle(({ request, set }) => {
       // index.html must always revalidate so the browser picks up
       // new hashed JS filenames on deploy.

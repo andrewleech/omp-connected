@@ -339,6 +339,62 @@ The relay also accepts client split frames (type 6, one byte: 1 for horizontal o
 
 The extension starts attempting Tailscale certificate setup when its terminal service starts. A terminal request retries setup when needed but does not wait for an attempt already in progress; it includes a direct URL and ticket only when the listener is available. The direct route carries terminal data between browser and host without the hub relay. See `extension/ARCHITECTURE.md` for host behavior.
 
+## Send to host (`session.transfer.v1`)
+
+The hub does not move sessions. It forwards planning and commit requests to the source session's extension, issues the credentials for the detached worker that does the transfer, records progress, relays cancel and recovery requests to that worker, and can close an operation whose worker is gone. Archive and project bytes travel over ssh and rsync between the two hosts, never through the hub. See `extension/ARCHITECTURE.md` for the worker, helper and journals.
+
+Code: `src/server/transfer-routes.ts` (REST), `src/server/transfer-store.ts` (operation records and credentials), `webui/lib/transfer-api.ts` and `webui/lib/transfer-dialog.ts` (dashboard).
+
+### Extension RPC
+
+An extension advertises `session.transfer.v1` when its host has `transfer.json` enabled and `ompc-send` installed. The hub sends these methods to the one agent `${hostId}:${instanceId}` and a missing feature answers 501 (restart the session to pick up an updated extension). The extension requires control access.
+
+```ts
+"transfer.destinations" {} -> { enabled: boolean; destinations: { name; hostId }[] }
+"transfer.plan" { destination; projectMode?: "create" | "session-only" | "update"; destinationPath?: string } -> { planId; digest; plan; preflight }
+"transfer.commit" { planId; planDigest; projectMode; acceptIncomplete: boolean; operation: { id; token; renewalSecret; hubUrl } } -> { operationId }
+```
+
+Deadlines: 15 s for `destinations`, 120 s for `plan` (it inspects and hashes both project trees), 60 s for `commit`.
+
+### REST
+
+Dashboard side. These share the mutation-origin check and a limit of 20 requests per 10 s (per agent for the session routes, per host instance for cancel and recover); there is no per-user authentication, so access follows the other session controls.
+
+- `POST /api/hosts/:id/sessions/:instanceId/transfer/destinations`, `.../transfer/plan` `{ destination, projectMode?, destinationPath? }` and `.../transfer/commit` `{ destination, planId, planDigest, projectMode, acceptIncomplete? }`. Extension error codes map to HTTP like the other session calls (not found 404, exists 409, forbidden 403, invalid 400, changed 409, busy 409, unknown method 501); no reply in time answers 504 and anything else 502.
+- `GET /api/transfers` and `GET /api/transfers/:id` return `TransferView` objects, which carry no verifiers or secrets.
+- `POST /api/transfers/:id/cancel` and `POST /api/transfers/:id/recover` `{ action: "resume" | "retry-launch" | "rollback-source" | "restore-project" | "cleanup" }` append a command for the worker and return the updated view. An identical unacknowledged command is not queued twice. Cancel on a terminal operation answers 409, and so does any command on an operation whose worker has finished.
+- `POST /api/transfers/:id/abandon` closes an operation that nobody drives and returns the updated view. It is accepted only for an operation that is neither terminal nor finished and whose worker never reported, or whose record (events, command acknowledgements, token renewals) has not changed for 15 minutes; anything else answers 409. The record becomes `rolled-back` with the error `abandoned`, finished, with both credentials revoked. Abandon changes only the hub's record and contacts neither host, so the source reservation may still need `ompc-send recover` on the source host.
+
+`commit` looks up the session's UUID through the host's `collab.list`, creates the operation in the store (a random id plus the secrets below), then calls `transfer.commit` with the secrets and `hubUrl` (the configured public origin, else the request's origin; the extension uses its own `OMP_HUB_URL` for the worker when that is set). It answers `{ operationId }`. The secrets exist only in that RPC and are never returned to the browser or logged; failure messages have them redacted. The hub refuses with 409 while another unfinished operation exists for the same session UUID or the same host instance. If the RPC fails, the outcome depends on what is known. A worker that already reported owns the operation, so the commit counts as made and the answer is `{ operationId }`. An error reply from the extension means nothing started, and the operation is removed. With no reply (timeout, disconnect) the worker may have been launched: the operation stays, and the error answer names it as `operationId` so it can be abandoned later.
+
+Worker side, `Authorization: Bearer <token>`:
+
+- `POST /api/transfers/:id/worker/events` `{ state, detail?, error?, progress? }`
+- `GET /api/transfers/:id/worker/commands?after=<n>` returns `{ commands: { seq, type, payload }[] }`, the unacknowledged commands after `n`
+- `POST /api/transfers/:id/worker/commands/:seq/ack`
+- `POST /api/transfers/:id/worker/renew` with `Bearer <renewalSecret>` returns `{ token, expiresAt }` (`cache-control: no-store`)
+- `POST /api/transfers/:id/worker/finish` revokes the renewal secret
+
+Worker routes are not rate limited; a worker sends no `Origin` header, so the origin check does not block it. A wrong or expired token answers 401 with `code` `token-invalid` or `token-expired` and a `WWW-Authenticate` header; a wrong or revoked renewal secret answers 401 `renewal-invalid`.
+
+### Store and credentials
+
+`TransferStore` keeps one record per operation in `transfers.json` in the hub state directory (`OMP_HUB_STATE_DIR`). Writes are atomic (temp file, fsync, rename). A file that does not parse is renamed to `transfers.json.corrupt-<time>`, like the session group file, and the hub starts with no transfers. Records survive a hub restart, so progress and recovery continue. Finished terminal operations are pruned 14 days after their last update, when the file loads and when a new operation is created. A record holds the session UUID, source host and instance, destination name, state, last confirmed state, history (the last 200 entries), error, plan digest, project mode, whether the worker has reported, the worker's latest progress report (at most 8192 characters), the command queue and the credential verifiers.
+
+Two secrets of 32 random bytes (base64url) are created with each operation. The worker token lasts 10 minutes. The renewal secret obtains the next token until the worker calls `finish`; the store clears its verifier then. The store keeps only SHA-256 verifiers and compares them in constant time, so a restarted hub can authenticate a worker with no source extension connected. A terminal state (`completed`, `rolled-back`) never changes through a worker event; until the worker finishes, such an event still records `error` and `progress` (recovery reporting), and afterwards it is ignored. A state change, or an event with neither error nor progress, clears the recorded error and sets the last confirmed state; an event that repeats the state and carries only `progress` leaves both alone, and an event that changes nothing writes nothing. The store refuses new commands once the operation is finished.
+
+Every change to a record broadcasts `{ "event": "transfer.changed", "transfer": TransferView }` on `/ws/dashboard` to all connected dashboards. Token renewal does not broadcast.
+
+### Dashboard
+
+- `transfer-api.ts` is the REST client. It normalises the extension's `plan` and `preflight` answers (every field optional on the wire) into one `TransferPlanView` for the dialog, caps listed plan entries at 200, and classifies failures (hub unreachable, rate limited, unsupported, and so on).
+- `transfer-dialog.ts` holds the logic as pure functions and a `TransferDialog` class. `sendToHostMenuState` enables the **Send to host** context menu item only for a control-shared session whose agent advertises `session.transfer.v1` and is not busy. `reduceDialog` is the step machine: destination, planning, plan, committing, progress. The conflict box (**Update project with rsync**, **Leave project untouched; transfer session only**, **Cancel**) is shown when the destination project exists, with session-only as the default; a missing destination commits `create`. A choice change re-plans in the matching mode. An incomplete archive needs an explicit acceptance, and a change in what it lacks invalidates the acceptance. The progress view shows the state timeline, source downtime, the recovery buttons offered for the current state and what **Cancel** does at that boundary.
+- Recovery buttons appear for an unsettled operation with an error: before publication **Resume transfer**, **Roll back source** and **Clean up**; during publication the same plus **Restore project** for an update; after departure **Retry launch** and **Roll back source**; while aborting **Roll back source** and **Clean up**. A rolled-back update offers **Restore project** and **Clean up**, and a completed operation **Clean up**. **Abandon** (with a confirmation) appears when the hub would accept it: the worker never reported, or the record has been unchanged for 15 minutes. The dialog re-checks this on a timer because a silent worker sends no events.
+- A commit that fails without a definite answer (hub unreachable, timeout, server error) keeps its hand-off record under a `pending:` key. On the next load the dialog adopts the newest operation for that session created since, or drops the record after 10 minutes with none.
+- `TransferDialog` follows an operation through `transfer.changed` events and by polling `GET /api/transfers/:id`, with backoff from 2 s to 15 s while the hub is unreachable. It stores a hand-off record per started operation in `localStorage` (`omp-hub-transfer-handoffs/v1`, 24 hour TTL) and re-attaches to running operations at page load.
+- `app.ts` adds the menu item, routes `transfer.changed` to the dialog, and handles the hand-off. After `completed` it polls the session list every 3 s until the destination registers, selects it only if the user is still on the source session, and moves the source's custom group membership to it. If the destination has not registered after 5 minutes, it shows a warning and drops the hand-off.
+
 ## Security model
 
 - **Shared-secret agent registration, self-attested identity.**
@@ -363,6 +419,7 @@ The extension starts attempting Tailscale certificate setup when its terminal se
   guest session — links are not long-lived bearer tokens.
 - **Session controls and files follow the Collab share.** The dashboard's `session.v1` routes have no authentication of their own beyond reaching the hub, like the rest of the REST API. What they can do is decided by the omp session: `session.info` and `session.model_roles` work with either access level, while provider usage and all controls require `control`. File access is confined to the session's working directory by realpath. Downloads carry `content-security-policy: sandbox` and `x-content-type-options: nosniff`. The viewer renders Markdown in an opaque-origin sandbox without scripts. HTML previews run scripts and load network resources in an opaque-origin sandbox without same-origin access, forms or popups. Scripts can change the preview, write to the clipboard and send network requests. Browser mutations and hub WebSocket upgrades require the hub origin or configured public origin; clients without an Origin header remain allowed. This is not authentication and does not restrict non-browser clients. The separate browser viewer uses the same isolation.
 - **HTML module limitation.** Relative classic scripts can load through the file download endpoint, but relative ES module scripts cannot: browsers require CORS for modules, and allowing the opaque `null` origin would let other untrusted pages read session files. Module imports within downloaded scripts also do not resolve against the original file path.
+- **Send to host.** The transfer routes have no user authentication, like the other dashboard routes, so anyone who reaches the hub with control access to a session can start a transfer to any destination in that host's `transfer.json`. The worker credentials limit a worker to one operation; they do not identify a person. A token lasts 10 minutes and the renewal secret works until the worker finishes. The hub keeps only SHA-256 verifiers of both. Deployments with untrusted dashboard users need dashboard authentication before enabling the feature.
 
 ## Scope
 
@@ -372,4 +429,4 @@ The extension starts attempting Tailscale certificate setup when its terminal se
   agent's existing session through `/ws/agent`.
 - Its own registry (agents, Collab sessions, brokered links) is fully
   independent and does not merge with, read, or depend on any other
-  service's state. Its only persistent state is the session group file.
+  service's state. Its persistent state is the session group file and `transfers.json`.

@@ -36,6 +36,18 @@ import { SessionLauncher } from "./lib/session-launcher";
 import { SessionPane } from "./lib/session-pane";
 import { buildShareUrl } from "./lib/share-link";
 import { TerminalWindow } from "./lib/terminal";
+import type { TransferView } from "./lib/transfer-api";
+import {
+  type Handoff,
+  MENU_LABEL,
+  TransferDialog,
+  dropHandoff,
+  findDestinationSession,
+  groupReassignment,
+  readHandoffs,
+  sendToHostMenuState,
+  shouldSelectDestination,
+} from "./lib/transfer-dialog";
 import {
   type CollabSession,
   INSPECTOR_PANES,
@@ -59,6 +71,10 @@ import {
 
 const SESSION_POLL_MS = 15_000;
 const AGENT_EVENT_REFRESH_MS = 1_000;
+// How often sessions are re-listed while a completed transfer's destination
+// has not registered, and how long that wait lasts.
+const HANDOFF_POLL_MS = 3_000;
+const HANDOFF_WAIT_MS = 5 * 60 * 1000;
 // How long a Collab room stays connected after the user switches away.
 const POOL_TTL_MS = 6 * 60 * 60 * 1000;
 // Upper bound on connected rooms, the selected one included; each holds a
@@ -91,6 +107,8 @@ interface ContextMenuItem {
   onSelect: () => void;
   disabled?: boolean;
   danger?: boolean;
+  /** Why the item is disabled; shown under its label. */
+  reason?: string;
 }
 
 let activeContextMenu: HTMLElement | null = null;
@@ -109,7 +127,12 @@ function openContextMenu(x: number, y: number, items: ContextMenuItem[]): void {
       type: "button",
       text: item.label,
       disabled: item.disabled,
+      title: item.disabled ? item.reason : undefined,
     }) as HTMLButtonElement;
+    if (item.disabled && item.reason)
+      button.append(
+        el("small", { className: "ctx-reason", text: item.reason }),
+      );
     button.onclick = () => {
       closeContextMenu();
       item.onSelect();
@@ -280,6 +303,74 @@ function createDashboard(root: HTMLElement): void {
       showStatus((error as Error).message, "warning"),
     );
   });
+  const transferDialog = new TransferDialog({
+    showStatus,
+    isBusy: (session) =>
+      state.agents.find(
+        (agent) => agent.id === `${session.host_id}:${session.instanceId}`,
+      )?.busy === true,
+    storage: localStorage,
+    onCompleted: registerHandoff,
+  });
+  // Completed transfers whose destination session is not listed yet.
+  const pendingHandoffs = new Map<
+    string,
+    { handoff: Handoff; since: number }
+  >();
+  let handoffTimer: number | undefined;
+  function registerHandoff(transfer: TransferView): void {
+    const handoff = readHandoffs(localStorage).find(
+      (candidate) => candidate.transferId === transfer.id,
+    );
+    if (!handoff || pendingHandoffs.has(transfer.id)) return;
+    pendingHandoffs.set(transfer.id, { handoff, since: Date.now() });
+    applyHandoffs();
+    if (pendingHandoffs.size > 0 && handoffTimer === undefined)
+      handoffTimer = window.setInterval(
+        () => void pollSessions().catch(() => {}),
+        HANDOFF_POLL_MS,
+      );
+  }
+  // Selects the destination session once it registers and moves the
+  // source's custom group membership to it.
+  function applyHandoffs(): void {
+    for (const [id, { handoff, since }] of pendingHandoffs) {
+      const destination = findDestinationSession(state.sessions, handoff);
+      if (!destination) {
+        if (Date.now() - since > HANDOFF_WAIT_MS) {
+          pendingHandoffs.delete(id);
+          dropHandoff(localStorage, id);
+          showStatus(
+            "The destination session did not register. Check the destination host.",
+            "warning",
+          );
+        }
+        continue;
+      }
+      pendingHandoffs.delete(id);
+      dropHandoff(localStorage, id);
+      const newKey = groupMemberKey(destination);
+      const groupId = groupReassignment(
+        state.groups,
+        handoff.memberKey,
+        newKey,
+      );
+      if (groupId)
+        void changeGroups("/assign", { session: newKey, groupId }).then(() =>
+          changeGroups("/assign", {
+            session: handoff.memberKey,
+            groupId: null,
+          }),
+        );
+      if (shouldSelectDestination(state.selectedSession, handoff))
+        selectSession(destination);
+      showStatus(`Session continues on ${destination.host_id}`, "ok");
+    }
+    if (pendingHandoffs.size === 0) {
+      clearInterval(handoffTimer);
+      handoffTimer = undefined;
+    }
+  }
   const terminalWindow = new TerminalWindow();
   const sessionPane = new SessionPane({
     showStatus,
@@ -461,6 +552,7 @@ function createDashboard(root: HTMLElement): void {
     );
     listedHosts = listed;
     apply();
+    applyHandoffs();
     void importLegacyGroups().catch(() => {});
   }
 
@@ -817,6 +909,13 @@ function createDashboard(root: HTMLElement): void {
         !session.features?.includes(SESSION_FORK_FEATURE) ||
         agent?.busy === true,
       onSelect: () => void forkSession(session),
+    });
+    const transferMenu = sendToHostMenuState(session, agent?.busy === true);
+    items.push({
+      label: MENU_LABEL,
+      disabled: transferMenu.disabled,
+      reason: transferMenu.reason,
+      onSelect: () => void transferDialog.open(session),
     });
     if (current)
       items.push({
@@ -1353,10 +1452,15 @@ function createDashboard(root: HTMLElement): void {
         waiting?: boolean;
         revision?: number;
         groups?: WorkspaceGroup[];
+        transfer?: TransferView;
       };
       if (data.event === "groups.changed") {
         if (typeof data.revision === "number" && Array.isArray(data.groups))
           applyGroups({ revision: data.revision, groups: data.groups });
+        return;
+      }
+      if (data.event === "transfer.changed") {
+        if (data.transfer) transferDialog.onTransferChanged(data.transfer);
         return;
       }
       if (data.event === "agent.activity") {
@@ -1366,6 +1470,7 @@ function createDashboard(root: HTMLElement): void {
         if (agent && typeof data.busy === "boolean") {
           agent.busy = data.busy;
           agent.waiting = data.waiting === true;
+          transferDialog.refresh();
           const rail = root.querySelector("[data-session-rail]");
           if (rail) renderRail(rail);
         }
@@ -1389,6 +1494,7 @@ function createDashboard(root: HTMLElement): void {
     // A failed import keeps the legacy copy and is retried after a session load.
     .then(() => importLegacyGroups().catch(() => {}))
     .then(() => loadAgents())
+    .then(() => transferDialog.resumeActive().catch(() => {}))
     .then(() => render())
     .catch((error) => showStatus(error.message, "warning"));
 }

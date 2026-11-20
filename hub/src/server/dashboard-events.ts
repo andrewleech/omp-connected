@@ -14,6 +14,7 @@
 import { Elysia } from "elysia";
 import type { AgentRegistry } from "./agent-registry";
 import type { SessionGroupStore } from "./session-groups";
+import type { TransferStore } from "./transfer-store";
 import type { DashboardEvent } from "./types";
 
 interface DashboardWs {
@@ -24,6 +25,7 @@ interface DashboardWs {
 export function dashboardEventsPlugin(
   agentRegistry: AgentRegistry,
   groups: SessionGroupStore,
+  transfers?: TransferStore,
 ) {
   const clients = new Set<DashboardWs>();
   const broadcast = (event: DashboardEvent) => {
@@ -32,6 +34,9 @@ export function dashboardEventsPlugin(
   };
   agentRegistry.onChange(broadcast);
   groups.onChange((list) => broadcast({ event: "groups.changed", ...list }));
+  transfers?.onChange((transfer) =>
+    broadcast({ event: "transfer.changed", transfer }),
+  );
 
   return new Elysia().ws("/ws/dashboard", {
     open(ws: DashboardWs) {

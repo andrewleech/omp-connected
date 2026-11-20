@@ -35,6 +35,7 @@ const sessions = {
       "session.usage.v1",
       "files.temp_upload.v1",
       "session.auth.v1",
+      "session.transfer.v1",
     ],
   },
   viewer: {
@@ -261,6 +262,181 @@ const history = [
     modifiedAt: 1_700_000_000_000,
   },
 ];
+// Send to host: one configured destination, plans that report an existing
+// destination project, and one operation that advances a state on every
+// GET /api/transfers/:id until it completes.
+const transferDestination = { name: "buildbox", hostId: "buildbox-host" };
+const transferSequence = [
+  "source-stopping",
+  "source-stopping",
+  "publishing",
+  "completed",
+] as const;
+const transferPlans = new Map<string, { digest: string; mode: string }>();
+let transferPlanSeq = 0;
+let transfer: {
+  id: string;
+  destination: string;
+  projectMode: string;
+  planDigest: string;
+  startedAt: number;
+  // Index into transferSequence; -1 until the first poll.
+  index: number;
+} | null = null;
+
+function resetTransfers(): void {
+  transferPlans.clear();
+  transferPlanSeq = 0;
+  transfer = null;
+}
+
+function transferView() {
+  if (!transfer) throw new Error("No transfer");
+  const current = transfer;
+  const state =
+    current.index < 0 ? "prepared" : transferSequence[current.index];
+  const at = (step: number) =>
+    new Date(current.startedAt + step * 1000).toISOString();
+  return {
+    id: current.id,
+    sessionId: "sess-fixture-1",
+    host: "writer",
+    instance: "writer-room",
+    destination: current.destination,
+    state,
+    lastConfirmedState: state,
+    history: [
+      { state: "prepared", at: at(0) },
+      ...transferSequence
+        .slice(0, current.index + 1)
+        .map((step, i) => ({ state: step, at: at(i + 1) })),
+    ],
+    planDigest: current.planDigest,
+    projectMode: current.projectMode,
+    progress:
+      state === "completed"
+        ? undefined
+        : { message: "Copying project", bytesDone: 512, bytesTotal: 1024 },
+    workerStarted: true,
+    createdAt: at(0),
+    updatedAt: at(current.index + 1),
+    commands: [],
+    finished: state === "completed",
+  };
+}
+
+async function transferApi(
+  request: Request,
+  url: URL,
+): Promise<Response | undefined> {
+  const scoped = "/api/hosts/writer/sessions/writer-room/transfer/";
+  if (url.pathname === "/api/transfers" && request.method === "GET")
+    return json(transfer ? [transferView()] : []);
+  const operation = url.pathname.match(/^\/api\/transfers\/([^/]+)$/);
+  if (operation && request.method === "GET") {
+    if (!transfer || transfer.id !== decodeURIComponent(operation[1] ?? ""))
+      return Response.json({ error: "unknown transfer" }, { status: 404 });
+    transfer.index = Math.min(transfer.index + 1, transferSequence.length - 1);
+    return json(transferView());
+  }
+  if (!url.pathname.startsWith(scoped) || request.method !== "POST")
+    return undefined;
+  const route = url.pathname.slice(scoped.length);
+  if (route === "destinations")
+    return json({ enabled: true, destinations: [transferDestination] });
+  if (route === "plan") {
+    const body = (await request.json()) as {
+      destination: string;
+      projectMode?: string;
+    };
+    if (body.destination !== transferDestination.name)
+      return Response.json({ error: "unknown destination" }, { status: 400 });
+    const mode = body.projectMode ?? "session-only";
+    const seq = ++transferPlanSeq;
+    const planId = `plan-${seq}`;
+    const digest = `digest-${seq}`;
+    transferPlans.set(planId, { digest, mode });
+    return json({
+      planId,
+      digest,
+      plan: {
+        mode,
+        entries:
+          mode === "update"
+            ? [
+                { path: "src/new.ts", action: "add", kind: "file", bytes: 512 },
+                { path: "src/more.ts", action: "add", kind: "file", bytes: 512 },
+                {
+                  path: "package.json",
+                  action: "replace",
+                  kind: "file",
+                  bytes: 512,
+                },
+              ]
+            : [],
+        unchanged: 40,
+        destinationOnly: 3,
+        totalBytes: mode === "update" ? 1536 : 0,
+        conflicts: [],
+        warnings: [],
+      },
+      preflight: {
+        destinationExists: true,
+        sourceProject: "/work/writer",
+        destinationProject: "/home/dev/writer",
+        sessionId: "sess-fixture-1",
+        title: "Writable room",
+        launcherName: "writer",
+        children: 0,
+        archiveBytes: 2_097_152,
+        missingBlobs: [],
+        externalReferences: [],
+        skippedSymlinks: [],
+        gitDirty: false,
+        knownUsers: [],
+        warnings: [],
+        blockers: [],
+        runtimeVersion: "omp 1.2.3",
+        runtimeCompatible: true,
+      },
+    });
+  }
+  if (route === "commit") {
+    const body = (await request.json()) as {
+      destination: string;
+      planId: string;
+      planDigest: string;
+      projectMode: string;
+    };
+    const plan = transferPlans.get(body.planId);
+    if (
+      body.destination !== transferDestination.name ||
+      !plan ||
+      plan.digest !== body.planDigest ||
+      plan.mode !== body.projectMode
+    )
+      return Response.json(
+        { error: "plan does not match the request" },
+        { status: 400 },
+      );
+    if (transfer && transfer.index < transferSequence.length - 1)
+      return Response.json(
+        { error: "a transfer is already running" },
+        { status: 409 },
+      );
+    transfer = {
+      id: "transfer-1",
+      destination: body.destination,
+      projectMode: body.projectMode,
+      planDigest: body.planDigest,
+      startedAt: Date.now(),
+      index: -1,
+    };
+    return json({ operationId: transfer.id });
+  }
+  return Response.json({ error: "not found" }, { status: 404 });
+}
+
 let writerExited = false;
 // The writer's agent registered as ompc session "writer"; POST /__forget-label
 // lists it without that name, as a restarted hub does until it re-registers.
@@ -268,6 +444,7 @@ let writerOmpcLabelKnown = true;
 function resetWriter(): void {
   writerExited = false;
   writerOmpcLabelKnown = true;
+  resetTransfers();
   sessions.writer.generation = 1;
   launched.length = 0;
   writerInfo.model = models[0];
@@ -753,6 +930,8 @@ Bun.serve({
       request.method === "GET"
     )
       return json(agentRolesInfo());
+    const transferResponse = await transferApi(request, url);
+    if (transferResponse) return transferResponse;
     const writerApi = "/api/hosts/writer/sessions/writer-room";
     if (url.pathname.startsWith(`${writerApi}/`))
       return writerSessionApi(

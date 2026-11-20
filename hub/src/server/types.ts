@@ -150,7 +150,8 @@ export type DashboardEvent =
       busy: boolean;
       waiting: boolean;
     }
-  | ({ event: "groups.changed" } & SessionGroupList);
+  | ({ event: "groups.changed" } & SessionGroupList)
+  | { event: "transfer.changed"; transfer: TransferView };
 
 // ---------------------------------------------------------------------------
 // Agent-to-agent messaging.
@@ -550,6 +551,159 @@ export interface ScheduledPromptResult {
 export const TERMINAL_FEATURE = "terminal.v1";
 export const FILES_TEMP_UPLOAD_FEATURE = "files.temp_upload.v1";
 
+/** Advertised by sessions that serve the transfer.* methods (send to host). */
+export const SESSION_TRANSFER_FEATURE = "session.transfer.v1";
+
+// ---------------------------------------------------------------------------
+// Send to host. The hub keeps one record per operation, creates the worker's
+// credentials, and relays progress and recovery commands. Secrets are
+// 32 random bytes (base64url); only their SHA-256 verifiers are stored.
+// ---------------------------------------------------------------------------
+
+/** Operation states, in the order of a successful transfer. */
+export const TRANSFER_STATES = [
+  "prepared",
+  "source-stopping",
+  "source-stopped",
+  "staged",
+  "publishing",
+  "source-departed",
+  "destination-starting",
+  "completed",
+  "aborting",
+  "rolled-back",
+] as const;
+export type TransferState = (typeof TRANSFER_STATES)[number];
+/** States that end an operation. */
+export const TRANSFER_TERMINAL_STATES: readonly TransferState[] = [
+  "completed",
+  "rolled-back",
+];
+export const TRANSFER_PROJECT_MODES = [
+  "create",
+  "session-only",
+  "update",
+] as const;
+export type TransferProjectMode = (typeof TRANSFER_PROJECT_MODES)[number];
+export const TRANSFER_RECOVER_ACTIONS = [
+  "resume",
+  "retry-launch",
+  "rollback-source",
+  "restore-project",
+  "cleanup",
+] as const;
+export type TransferRecoverAction = (typeof TRANSFER_RECOVER_ACTIONS)[number];
+/** Worker credential lifetime; the renewal secret obtains the next one. */
+export const TRANSFER_TOKEN_TTL_MS = 10 * 60 * 1000;
+/** An operation whose worker has been silent this long may be abandoned. */
+export const TRANSFER_ABANDON_AFTER_MS = 15 * 60 * 1000;
+/** Finished terminal operations are dropped from the state file after this. */
+export const TRANSFER_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
+
+export interface TransferError {
+  code: string;
+  message: string;
+  /** ISO 8601, set by the hub when it records the error. */
+  at: string;
+}
+
+export interface TransferHistoryEntry {
+  state: TransferState;
+  at: string;
+  detail?: string;
+}
+
+/** A control request for the worker; `seq` increases per operation from 1. */
+export interface TransferCommand {
+  seq: number;
+  type: "cancel" | "recover";
+  payload: Record<string, unknown>;
+  createdAt: string;
+  /** ISO 8601; set once the worker acknowledged the command. */
+  ackedAt?: string;
+}
+
+/** One operation as persisted in transfers.json. */
+export interface TransferRecord {
+  id: string;
+  sessionId: string;
+  host: string;
+  instance: string;
+  destination: string;
+  state: TransferState;
+  lastConfirmedState: TransferState;
+  history: TransferHistoryEntry[];
+  error?: TransferError;
+  planDigest: string;
+  projectMode: TransferProjectMode;
+  /** Latest worker progress report; free-form, bounded in size. */
+  progress?: Record<string, unknown>;
+  /** True once the worker has reported any event. */
+  workerStarted: boolean;
+  createdAt: string;
+  updatedAt: string;
+  commands: TransferCommand[];
+  /** SHA-256 (base64url) of the current worker token. */
+  tokenVerifier: string;
+  /** Epoch ms. */
+  tokenExpiresAt: number;
+  /** SHA-256 (base64url) of the renewal secret; "" once revoked. */
+  renewalVerifier: string;
+  /** The worker called finish: no more renewals. */
+  finished: boolean;
+}
+
+/** What REST and the dashboard socket expose: no verifiers. */
+export type TransferView = Omit<
+  TransferRecord,
+  "tokenVerifier" | "tokenExpiresAt" | "renewalVerifier"
+>;
+
+export interface TransferDestination {
+  name: string;
+  hostId: string;
+}
+export interface TransferDestinationsResult {
+  enabled: boolean;
+  destinations: TransferDestination[];
+}
+export interface TransferPlanParams {
+  destination: string;
+  projectMode?: TransferProjectMode;
+  destinationPath?: string;
+}
+/** `plan` and `preflight` are produced by the extension and shown by the
+ *  dashboard; the hub does not interpret them. */
+export interface TransferPlanResult {
+  planId: string;
+  digest: string;
+  plan: unknown;
+  preflight: unknown;
+}
+export interface TransferCommitParams {
+  planId: string;
+  planDigest: string;
+  projectMode: TransferProjectMode;
+  acceptIncomplete: boolean;
+  operation: {
+    id: string;
+    token: string;
+    renewalSecret: string;
+    hubUrl: string;
+  };
+}
+export interface TransferCommitResult {
+  operationId: string;
+}
+
+/** Worker -> hub: `POST /api/transfers/:id/worker/events`. */
+export interface TransferEventPayload {
+  state: TransferState;
+  detail?: string;
+  error?: { code: string; message: string };
+  progress?: Record<string, unknown>;
+}
+
 export interface SessionMethodParams {
   "session.info": Record<string, never>;
   "session.abort": Record<string, never>;
@@ -578,6 +732,9 @@ export interface SessionMethodParams {
   "session.set_model_role": SetModelRoleParams;
   "session.usage": Record<string, never>;
   "terminal.open": { ticket: string; relayUrl: string };
+  "transfer.destinations": Record<string, never>;
+  "transfer.plan": TransferPlanParams;
+  "transfer.commit": TransferCommitParams;
 }
 
 export interface SessionMethodResult {
@@ -608,6 +765,9 @@ export interface SessionMethodResult {
   "session.usage": SessionUsageResult;
   "session.set_model_role": ModelRolesInfo;
   "terminal.open": { ok: true; directUrl?: string; directTicket?: string };
+  "transfer.destinations": TransferDestinationsResult;
+  "transfer.plan": TransferPlanResult;
+  "transfer.commit": TransferCommitResult;
 }
 
 export type SessionMethod = keyof SessionMethodParams;
