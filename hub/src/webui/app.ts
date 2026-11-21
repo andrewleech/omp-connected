@@ -1470,6 +1470,7 @@ function createDashboard(root: HTMLElement): void {
         if (agent && typeof data.busy === "boolean") {
           agent.busy = data.busy;
           agent.waiting = data.waiting === true;
+          noteAgentTransitions([agent]);
           transferDialog.refresh();
           const rail = root.querySelector("[data-session-rail]");
           if (rail) renderRail(rail);
