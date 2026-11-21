@@ -19,9 +19,15 @@ function fakeSession() {
 	const handlers = new Map<string, Handler>();
 	const tools = new Map<string, Tool>();
 	const anyType = new Proxy({}, { get: () => () => ({}) });
+	const names: { current?: string; calls: string[] } = { calls: [] };
 	const pi = {
 		on: (event: string, handler: Handler) => handlers.set(event, handler),
 		registerTool: (tool: Tool) => tools.set(tool.name, tool),
+		getSessionName: () => names.current,
+		setSessionName: async (name: string) => {
+			names.current = name;
+			names.calls.push(name);
+		},
 		registerMessageRenderer: () => undefined,
 		sendMessage: () => undefined,
 		logger: { warn: () => undefined },
@@ -29,6 +35,7 @@ function fakeSession() {
 	};
 	registerOmpConnected(pi as unknown as ExtensionAPI);
 	return {
+		names,
 		emit: async (event: string, context?: unknown, payload?: unknown) => handlers.get(event)?.(payload ?? {}, {
 			sessionManager: { getSessionId: () => "test-session" },
 			...(context as Record<string, unknown> | undefined),
@@ -45,6 +52,21 @@ afterEach(() => {
 	process.env.OMP_HUB_URL = savedEnv.url;
 	process.env.OMP_HUB_HOST_TOKEN = savedEnv.token;
 	delete (globalThis as Record<symbol, unknown>)[Symbol.for("omp-connected.process-hub")];
+});
+
+test("the ompc session title is applied once by the process's first session only", async () => {
+	delete process.env.OMP_HUB_URL;
+	process.env.OMPC_SESSION_TITLE = "feature-x";
+	try {
+		const parent = fakeSession();
+		const subagent = fakeSession();
+		await parent.emit("session_start");
+		await subagent.emit("session_start");
+		expect(parent.names.calls).toEqual(["feature-x"]);
+		expect(subagent.names.calls).toEqual([]);
+	} finally {
+		delete process.env.OMPC_SESSION_TITLE;
+	}
 });
 
 test("a subagent in the same process shares the parent's hub registration instead of claiming it again", async () => {

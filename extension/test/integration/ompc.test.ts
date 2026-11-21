@@ -82,6 +82,30 @@ tmuxTest("session names default to the working directory and append a suffix", a
 	}
 });
 
+tmuxTest("a suffix is exported as the session title and no suffix exports none", async () => {
+	const directory = await mkdtemp(path.join(os.tmpdir(), "ompc-title-"));
+	const baseName = path.basename(directory);
+	const script = 'printf "[%s]" "$OMPC_SESSION_TITLE" > "$0"; exec sleep 60';
+
+	try {
+		for (const [suffix, name, expected] of [
+			["feature-x", `${baseName}.feature-x`, "[feature-x]"],
+			[undefined, baseName, "[]"],
+		] as const) {
+			const out = path.join(directory, `${suffix ?? "plain"}.out`);
+			const args = ["env", "OMP_BIN=/bin/sh", launcher, "--detach"];
+			if (suffix) args.push(suffix);
+			args.push("-c", script, out);
+			expect(Bun.spawnSync(args, { cwd: directory }).exitCode).toBe(0);
+			servers.push(name);
+			for (let attempt = 0; attempt < 40 && !(await Bun.file(out).exists()); attempt += 1) await Bun.sleep(50);
+			expect(await Bun.file(out).text()).toBe(expected);
+		}
+	} finally {
+		await rm(directory, { force: true, recursive: true });
+	}
+});
+
 tmuxTest("detach on existing session prints name without creating duplicate", async () => {
 	const directory = await mkdtemp(path.join(os.tmpdir(), "ompc-dup-"));
 	const baseName = path.basename(directory);

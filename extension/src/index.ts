@@ -70,6 +70,7 @@ interface ProcessHub {
 	instanceId?: string;
 	shuttingDown: boolean;
 	registering: boolean;
+	titled?: boolean;
 	/** Set once the destination arrival record has been handled for this process. */
 	arrived?: boolean;
 }
@@ -301,6 +302,19 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		return undefined;
 	}
 
+	/** Sets the OMP session name to the ompc suffix, as `/rename` would. */
+	async function applyLauncherTitle(): Promise<void> {
+		const title = process.env.OMPC_SESSION_TITLE;
+		if (!title || !LABEL_PATTERN.test(title) || pi.getSessionName() === title) return;
+		try {
+			await pi.setSessionName(title);
+		} catch (error) {
+			pi.logger.warn("omp-connected: could not set the session name", {
+				err: error instanceof Error ? error.message : String(error),
+			});
+		}
+	}
+
 	/** Tells a transfer worker on this host that the launched session started. Best effort. */
 	async function recordArrival(ctx: ExtensionContext): Promise<void> {
 		try {
@@ -320,6 +334,12 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 	}
 
 	pi.on("session_start", async (_event, ctx) => {
+		// Only the process's first session (the top-level one) takes the name;
+		// in-process subagents also run this handler.
+		if (!hub.titled) {
+			hub.titled = true;
+			await applyLauncherTitle();
+		}
 		if (!hub.arrived) {
 			hub.arrived = true;
 			await recordArrival(ctx);
