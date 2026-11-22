@@ -81,7 +81,7 @@ function cspMeta(imageSources: string): string {
 
 const RENDERED_CSS = `
 :root { color-scheme: dark; }
-body { background: #0d1117; color: #e6edf3; font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; margin: 0 auto; max-width: 48em; padding: 1em; overflow-wrap: anywhere; }
+body { background: #0d1117; color: #e6edf3; font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; margin: 0 auto; padding: 1em; overflow-wrap: anywhere; }
 h1, h2, h3, h4, h5, h6 { color: #f0f6fc; margin: 1.5em 0 .5em; }
 h1, h2 { border-bottom: 1px solid #30363d; padding-bottom: .3em; }
 a { color: #58a6ff; text-decoration: none; }

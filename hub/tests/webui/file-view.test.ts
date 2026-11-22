@@ -87,6 +87,7 @@ describe("renderMarkdownDocument", () => {
     expect(doc).toContain("<pre><code");
     expect(doc).toContain("default-src 'none'");
     expect(doc).toContain("img-src https://hub.test data:");
+    expect(doc).not.toContain("max-width: 48em");
   });
 
   test("links: web links open a new tab, fragments stay, everything else is inert", () => {

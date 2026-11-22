@@ -76,6 +76,8 @@ export class FileViewer {
   readonly #modes: HTMLElement;
   readonly #renderedButton: HTMLButtonElement;
   readonly #rawButton: HTMLButtonElement;
+  readonly #renderedDownload: HTMLAnchorElement;
+  #renderedUrl: string | null = null;
   readonly #openInNewWindow: HTMLAnchorElement;
   readonly #download: HTMLAnchorElement;
   readonly #body: HTMLElement;
@@ -121,6 +123,11 @@ export class FileViewer {
       "Open file in a browser tab",
     );
     this.#download = document.createElement("a");
+    this.#renderedDownload = document.createElement("a");
+    this.#renderedDownload.className = "file-viewer-download";
+    this.#renderedDownload.textContent = "Download rendered HTML";
+    this.#renderedDownload.hidden = true;
+    this.#renderedDownload.setAttribute("aria-label", "Download rendered HTML");
     this.#download.className = "file-viewer-download";
     this.#download.textContent = "Download";
     const close = button("Close", "small");
@@ -132,6 +139,7 @@ export class FileViewer {
       this.#modes,
       this.#openInNewWindow,
       this.#download,
+      this.#renderedDownload,
       close,
     );
 
@@ -156,6 +164,7 @@ export class FileViewer {
     this.#dialog.addEventListener("close", () => {
       this.#abort?.abort();
       this.#abort = null;
+      this.#clearRenderedDownload();
       this.#openInNewWindow.removeAttribute("href");
       this.#openInNewWindow.hidden = true;
       this.#frame.removeAttribute("srcdoc");
@@ -175,6 +184,7 @@ export class FileViewer {
     this.#download.href = downloadUrl;
     this.#download.download = target.name;
     this.#kind = viewKind(target.name);
+    this.#clearRenderedDownload();
     this.#modes.hidden = this.#kind === "text";
     this.#raw.textContent = "";
     this.#frame.removeAttribute("srcdoc");
@@ -228,6 +238,7 @@ export class FileViewer {
         dir,
       );
     }
+    this.#setRenderedDownload(target.name);
     this.#setMode(this.#kind === "text" ? "raw" : "rendered");
     const origin = await target.publicOrigin;
     if (abort.signal.aborted) return;
@@ -255,6 +266,7 @@ export class FileViewer {
     this.#rawButton.setAttribute("aria-pressed", String(mode === "raw"));
     this.#renderedButton.classList.toggle("active", mode === "rendered");
     this.#rawButton.classList.toggle("active", mode === "raw");
+    this.#renderedDownload.hidden = mode !== "rendered" || !this.#renderedUrl;
   }
 
   #showStatus(message: string): void {
@@ -264,6 +276,24 @@ export class FileViewer {
     this.#status.hidden = false;
     this.#raw.hidden = true;
     this.#frame.hidden = true;
+  }
+
+  #setRenderedDownload(name: string): void {
+    this.#clearRenderedDownload();
+    if (!this.#frame.srcdoc) return;
+    this.#renderedUrl = URL.createObjectURL(
+      new Blob([this.#frame.srcdoc], { type: "text/html;charset=utf-8" }),
+    );
+    this.#renderedDownload.href = this.#renderedUrl;
+    this.#renderedDownload.download = `${name}.html`;
+    this.#renderedDownload.hidden = false;
+  }
+
+  #clearRenderedDownload(): void {
+    this.#renderedDownload.hidden = true;
+    this.#renderedDownload.removeAttribute("href");
+    if (this.#renderedUrl) URL.revokeObjectURL(this.#renderedUrl);
+    this.#renderedUrl = null;
   }
 
   #startDownload(url: string, name: string): void {

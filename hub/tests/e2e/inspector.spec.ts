@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
 test.use({ locale: "en-US" });
 
@@ -431,8 +432,19 @@ test("opening a preview in a browser tab keeps the viewer controls", async ({
       .frameLocator("iframe")
       .getByRole("heading", { name: "Hello" }),
   ).toBeVisible();
+  const renderedDownload = popup.waitForEvent("download");
+  await browserViewer
+    .getByRole("link", { name: "Download rendered HTML" })
+    .click();
+  const renderedFile = await renderedDownload;
+  expect(renderedFile.suggestedFilename()).toBe("README.md.html");
+  const renderedPath = await renderedFile.path();
+  if (!renderedPath) throw new Error("Rendered HTML download has no path");
+  const renderedHtml = await readFile(renderedPath, "utf8");
+  expect(renderedHtml).toContain("Hello");
+  expect(renderedHtml).not.toContain("data-omp-dashboard");
   await expect(
-    browserViewer.getByRole("link", { name: "Download" }),
+    browserViewer.getByRole("link", { name: "Download", exact: true }),
   ).toHaveAttribute("href", /\/files\/download\?path=README\.md$/);
   await browserViewer.getByRole("button", { name: "Raw" }).click();
   await expect(browserViewer.locator("pre")).toContainText("# Hello");
