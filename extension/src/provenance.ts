@@ -24,6 +24,7 @@ export interface ProvenancedMessage {
 	customType: typeof AGENT_MESSAGE_TYPE;
 	attribution: "agent";
 	content: string;
+	display: true;
 	details: AgentMessageDetails;
 }
 
@@ -52,6 +53,7 @@ export function formatInboundMessage(message: AgentMessage): ProvenancedMessage 
 	return {
 		customType: AGENT_MESSAGE_TYPE,
 		attribution: "agent",
+		display: true,
 		content: `[from ${sender}${exactId}]\n${content}`,
 		details,
 	};
