@@ -20,6 +20,7 @@ function fakeSession() {
 	const tools = new Map<string, Tool>();
 	const anyType = new Proxy({}, { get: () => () => ({}) });
 	const names: { current?: string; calls: string[] } = { calls: [] };
+	const sent: { message: unknown; options: unknown }[] = [];
 	const pi = {
 		on: (event: string, handler: Handler) => handlers.set(event, handler),
 		registerTool: (tool: Tool) => tools.set(tool.name, tool),
@@ -29,13 +30,14 @@ function fakeSession() {
 			names.calls.push(name);
 		},
 		registerMessageRenderer: () => undefined,
-		sendMessage: () => undefined,
+		sendMessage: (message: unknown, options: unknown) => sent.push({ message, options }),
 		logger: { warn: () => undefined },
 		typebox: { Type: anyType },
 	};
 	registerOmpConnected(pi as unknown as ExtensionAPI);
 	return {
 		names,
+		sent,
 		emit: async (event: string, context?: unknown, payload?: unknown) => handlers.get(event)?.(payload ?? {}, {
 			sessionManager: { getSessionId: () => "test-session" },
 			...(context as Record<string, unknown> | undefined),
@@ -217,5 +219,50 @@ test("an ask tool call reports waiting until it ends", async () => {
 		{ busy: true, waiting: true },
 		{ busy: true, waiting: false },
 	]);
+	await session.emit("session_shutdown");
+});
+
+test("an inbound agent message starts a turn on an idle session and rides along on a busy one", async () => {
+	let socket: { send(data: string): void } | undefined;
+	const server = Bun.serve({
+		port: 0,
+		fetch(request, srv) {
+			return srv.upgrade(request) ? undefined : new Response("no");
+		},
+		websocket: {
+			open(ws) {
+				socket = ws;
+			},
+			message(ws, message) {
+				const request = JSON.parse(String(message)) as { id: string; method: string };
+				const result = request.method === "agent.register" ? { ok: true, agent: { id: "host:inst-1" } } : { ok: true };
+				ws.send(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }));
+			},
+		},
+	});
+	servers.push(server);
+	process.env.OMP_HUB_URL = `http://localhost:${server.port}`;
+	process.env.OMP_HUB_HOST_TOKEN = "secret-token";
+	const push = (id: string) =>
+		socket?.send(
+			JSON.stringify({
+				jsonrpc: "2.0",
+				id,
+				method: "agent.message",
+				params: { messageId: id, from: "peer", to: "host:inst-1", type: "message", content: id, timestamp: "now" },
+			}),
+		);
+
+	const session = fakeSession();
+	let idle = true;
+	await session.emit("session_start", { isIdle: () => idle });
+	await Bun.sleep(100);
+	push("m1");
+	await Bun.sleep(100);
+	idle = false;
+	push("m2");
+	await Bun.sleep(100);
+
+	expect(session.sent.map((entry) => entry.options)).toEqual([{ triggerTurn: true }, { deliverAs: "aside" }]);
 	await session.emit("session_shutdown");
 });

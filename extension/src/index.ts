@@ -93,8 +93,14 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		return component;
 	});
 
+	// An idle session must start a turn: `deliverAs: "aside"` on an idle session
+	// folds the message into context without a turn after any user interrupt
+	// (Esc), so the recipient would never see it until prompted. A busy session
+	// takes the message at its next step boundary without being interrupted.
 	function handleInbound(message: AgentMessage): void {
-		pi.sendMessage(formatInboundMessage(message), { deliverAs: "aside" });
+		const formatted = formatInboundMessage(message);
+		if (ownerContext?.isIdle()) pi.sendMessage(formatted, { triggerTurn: true });
+		else pi.sendMessage(formatted, { deliverAs: "aside" });
 	}
 
 	// Owner-only state: the transport is created by the owner session (see
