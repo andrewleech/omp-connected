@@ -149,6 +149,7 @@ export type DashboardEvent =
       agentId: string;
       busy: boolean;
       waiting: boolean;
+      compacting: boolean;
     }
   | ({ event: "groups.changed" } & SessionGroupList)
   | { event: "transfer.changed"; transfer: TransferView };
@@ -175,6 +176,8 @@ export interface AgentSummary {
   busy?: boolean;
   /** Whether a turn is blocked on a question to the user; omitted until reported. */
   waiting?: boolean;
+  /** Whether a compaction is running; omitted until reported. */
+  compacting?: boolean;
   /** Terminal is available only for an OMPC_SESSION-backed tmux session. */
   terminal?: { available: true };
 }

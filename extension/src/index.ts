@@ -150,6 +150,8 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 	}
 	/** True between the owner's agent_start and agent_end. */
 	let busy = false;
+	/** True between an auto-compaction's start and end events. */
+	let compacting = false;
 	/** Tool call ids of `ask` calls still waiting for the user's answer. */
 	const asking = new Set<string>();
 
@@ -158,7 +160,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 	 *  registration re-sends it after a reconnect. */
 	function reportActivity(): void {
 		if (!hub.transport || !hub.identity) return;
-		hub.transport.request("agent.activity", { busy, waiting: asking.size > 0 }).catch(() => {});
+		hub.transport.request("agent.activity", { busy, waiting: asking.size > 0, compacting }).catch(() => {});
 	}
 
 	function showScheduled(prompts: readonly ScheduledPrompt[]): void {
@@ -433,6 +435,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 				scheduler,
 				logins,
 				forkCurrentSession: (params) => hostSessions.forkCurrent(params),
+				compacting: () => compacting,
 				transfer,
 			});
 		} catch (error) {
@@ -477,6 +480,16 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		if (hub.owner !== pi || !asking.delete(event.toolCallId)) return;
 		reportActivity();
 	});
+	pi.on("auto_compaction_start", () => {
+		if (hub.owner !== pi) return;
+		compacting = true;
+		reportActivity();
+	});
+	pi.on("auto_compaction_end", () => {
+		if (hub.owner !== pi) return;
+		compacting = false;
+		reportActivity();
+	});
 
 	// Keep the owner's context current across in-process session changes.
 	const trackContext = (_event: unknown, ctx: ExtensionContext) => {
@@ -499,6 +512,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		if (hub.owner !== pi) return;
 		hub.owner = undefined;
 		busy = false;
+		compacting = false;
 		asking.clear();
 		hub.shuttingDown = true;
 		transfer?.dispose();

@@ -545,7 +545,11 @@ export class SessionPane {
     const viewOnly = !!info && info.access !== "control";
     this.#compactInput.disabled = viewOnly;
     this.#compactButton.disabled = !canControl;
-    this.#abortButton.disabled = !canControl || !info || info.idle;
+    this.#abortButton.textContent = info?.compacting
+      ? "Cancel compaction"
+      : "Abort";
+    this.#abortButton.disabled =
+      !canControl || !info || (info.idle && !info.compacting);
     this.#terminalButton.hidden =
       !this.#session?.features?.includes("terminal.v1") ||
       info?.access !== "control";

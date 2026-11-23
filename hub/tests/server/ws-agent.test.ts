@@ -694,7 +694,19 @@ describe("wsAgentPlugin — dashboard events", () => {
       agentId: "user@hub-host:inst-1",
       busy: true,
       waiting: true,
+      compacting: false,
     });
+    expect(agentRegistry.listAgents()[0]).toMatchObject({ compacting: false });
+    socket.send(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: "a3",
+        method: "agent.activity",
+        params: { busy: false, compacting: true },
+      }),
+    );
+    expect((await waitForMessage(socket)).result).toEqual({ ok: true });
+    expect(agentRegistry.listAgents()[0]).toMatchObject({ compacting: true });
     socket.send(
       JSON.stringify({
         jsonrpc: "2.0",

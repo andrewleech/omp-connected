@@ -131,6 +131,8 @@ interface AgentEntry {
   busy: boolean | undefined;
   /** Last reported "blocked on a question to the user"; undefined until reported. */
   waiting: boolean | undefined;
+  /** Last reported "a compaction is running"; undefined until reported. */
+  compacting: boolean | undefined;
   /** FIFO, unbounded. Rate limiting (at the ws-agent layer) bounds input
    *  rate; TTL purge of the owning entry bounds long-term accumulation. */
   mailbox: AgentMessage[];
@@ -250,6 +252,7 @@ export class AgentRegistry {
       teams: existing?.teams ?? new Set(),
       busy: undefined,
       waiting: undefined,
+      compacting: undefined,
       mailbox: existing?.mailbox ?? [],
     };
     this.agents.set(id, entry);
@@ -267,13 +270,30 @@ export class AgentRegistry {
   /** Records whether a live agent is mid-turn and whether that turn is
    *  blocked on a question to the user, and tells dashboards when either
    *  changed. Not an event-log entry: turns start and end far too often. */
-  setActivity(id: string, busy: boolean, waiting: boolean): void {
+  setActivity(
+    id: string,
+    busy: boolean,
+    waiting: boolean,
+    compacting = false,
+  ): void {
     const entry = this.agents.get(id);
-    if (!entry?.conn || (entry.busy === busy && entry.waiting === waiting))
+    if (
+      !entry?.conn ||
+      (entry.busy === busy &&
+        entry.waiting === waiting &&
+        entry.compacting === compacting)
+    )
       return;
     entry.busy = busy;
     entry.waiting = waiting;
-    this.emit({ event: "agent.activity", agentId: id, busy, waiting });
+    entry.compacting = compacting;
+    this.emit({
+      event: "agent.activity",
+      agentId: id,
+      busy,
+      waiting,
+      compacting,
+    });
   }
 
   /** Marks an agent's live connection gone. The entry (and its mailbox) is
@@ -818,6 +838,9 @@ export class AgentRegistry {
       features: [...entry.features],
       ...(entry.busy !== undefined ? { busy: entry.busy } : {}),
       ...(entry.waiting !== undefined ? { waiting: entry.waiting } : {}),
+      ...(entry.compacting !== undefined
+        ? { compacting: entry.compacting }
+        : {}),
       ...(entry.features.includes(TERMINAL_FEATURE)
         ? { terminal: { available: true as const } }
         : {}),

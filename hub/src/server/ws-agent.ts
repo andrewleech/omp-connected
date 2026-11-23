@@ -189,7 +189,9 @@ export function wsAgentPlugin(agentRegistry: AgentRegistry, hostToken: string) {
           return;
         }
         case "agent.activity": {
-          const p = params as { busy?: unknown; waiting?: unknown } | undefined;
+          const p = params as
+            | { busy?: unknown; waiting?: unknown; compacting?: unknown }
+            | undefined;
           if (typeof p?.busy !== "boolean") {
             sendError(ws, id, -32602, "agent.activity requires a boolean busy");
             return;
@@ -203,7 +205,21 @@ export function wsAgentPlugin(agentRegistry: AgentRegistry, hostToken: string) {
             );
             return;
           }
-          agentRegistry.setActivity(registered.id, p.busy, p.waiting ?? false);
+          if (p.compacting !== undefined && typeof p.compacting !== "boolean") {
+            sendError(
+              ws,
+              id,
+              -32602,
+              "agent.activity compacting must be a boolean",
+            );
+            return;
+          }
+          agentRegistry.setActivity(
+            registered.id,
+            p.busy,
+            p.waiting ?? false,
+            p.compacting ?? false,
+          );
           sendResult(ws, id, { ok: true });
           return;
         }

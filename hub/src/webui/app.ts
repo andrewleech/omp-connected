@@ -96,6 +96,7 @@ interface AgentSummary {
   id: string;
   busy?: boolean;
   waiting?: boolean;
+  compacting?: boolean;
 }
 
 function displayName(session: CollabSession): string {
@@ -1044,9 +1045,11 @@ function createDashboard(root: HTMLElement): void {
           const [stateClass, label] =
             agent?.waiting === true
               ? ["waiting", "Waiting for your answer"]
-              : busy
-                ? ["working", "Working"]
-                : ["idle", "Idle"];
+              : agent?.compacting === true
+                ? ["compacting", "Compacting context"]
+                : busy
+                  ? ["working", "Working"]
+                  : ["idle", "Idle"];
           const dot = el("span", {
             className: `activity-dot ${stateClass}${stateClass === "idle" && agent !== undefined && unseenIdle.has(agent.id) ? " unseen" : ""}`,
             title: label,
@@ -1156,7 +1159,13 @@ function createDashboard(root: HTMLElement): void {
   const unseenIdle = new Set<string>();
   const lastAgentState = new Map<string, string>();
   function agentStateOf(a: AgentSummary): string {
-    return a.waiting === true ? "waiting" : a.busy ? "working" : "idle";
+    return a.waiting === true
+      ? "waiting"
+      : a.compacting === true
+        ? "compacting"
+        : a.busy
+          ? "working"
+          : "idle";
   }
   function selectedAgentId(): string | null {
     const s = state.selectedSession;
@@ -1450,6 +1459,7 @@ function createDashboard(root: HTMLElement): void {
         agentId?: string;
         busy?: boolean;
         waiting?: boolean;
+        compacting?: boolean;
         revision?: number;
         groups?: WorkspaceGroup[];
         transfer?: TransferView;
@@ -1470,6 +1480,7 @@ function createDashboard(root: HTMLElement): void {
         if (agent && typeof data.busy === "boolean") {
           agent.busy = data.busy;
           agent.waiting = data.waiting === true;
+          agent.compacting = data.compacting === true;
           noteAgentTransitions([agent]);
           transferDialog.refresh();
           const rail = root.querySelector("[data-session-rail]");

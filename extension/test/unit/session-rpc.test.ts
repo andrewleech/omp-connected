@@ -216,6 +216,7 @@ test("session.info reports the session, its model choices and usage, with non-fi
 		sessionName: null,
 		access: "view",
 		idle: true,
+		compacting: false,
 		model: { provider: "anthropic", id: "claude-sonnet", name: "Claude Sonnet" },
 		thinkingLevel: "medium",
 		thinkingLevels: ["off", "low", "medium", "high"],

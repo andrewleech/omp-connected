@@ -82,6 +82,7 @@ export interface SessionInfo {
   sessionName: string | null;
   access: "view" | "control";
   idle: boolean;
+  compacting?: boolean;
   model: ModelRef | null;
   thinkingLevel: string | null;
   thinkingLevels: string[];

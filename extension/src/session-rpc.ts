@@ -123,6 +123,8 @@ export interface SessionInfo {
 	sessionName: string | null;
 	access: CollabAccess;
 	idle: boolean;
+	/** A compaction is running; abort cancels it. */
+	compacting: boolean;
 	model: ModelSummary | null;
 	thinkingLevel: string | null;
 	thinkingLevels: string[];
@@ -162,6 +164,8 @@ export interface SessionRpcDeps {
 	/** OMP's provider registry and logout helpers; loaded on first use when absent. */
 	authPlatform?: () => Promise<AuthPlatform>;
 	forkCurrentSession: (params: { cwd: string; name: string; sessionFile: string }) => Promise<unknown>;
+	/** Whether an automatic compaction is running. */
+	compacting?: () => boolean;
 	/** `transfer.*` handlers; the methods are unknown while absent. */
 	transfer?: TransferHandlers;
 }
@@ -270,6 +274,7 @@ export function createSessionRpc(deps: SessionRpcDeps): SessionRequestHandler {
 				// The dashboard polls this, so it keeps the gate's cached level current.
 				access: await deps.access.refresh(),
 				idle: ctx.isIdle(),
+				compacting: compacting || deps.compacting?.() === true,
 				model: model ? summarise(model) : null,
 				thinkingLevel: pi.getThinkingLevel() ?? null,
 				thinkingLevels: thinkingLevelsFor(model),
