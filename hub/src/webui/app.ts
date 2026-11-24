@@ -163,6 +163,9 @@ document.addEventListener("keydown", (event) => {
 });
 window.addEventListener("resize", closeContextMenu);
 window.addEventListener("scroll", closeContextMenu, true);
+// Taps inside the Collab iframe never reach this document's pointerdown, but
+// they move focus away from it.
+window.addEventListener("blur", closeContextMenu);
 
 /**
  * Fallback long-press trigger for touch devices whose browser does not
@@ -399,6 +402,7 @@ function createDashboard(root: HTMLElement): void {
   ): void {
     if (drawer === "left") leftDrawerOpen = open;
     else rightDrawerOpen = open;
+    closeContextMenu();
     if (open && trigger) drawerTrigger = trigger;
     root.dataset.leftDrawerOpen = String(leftDrawerOpen);
     root.dataset.rightDrawerOpen = String(rightDrawerOpen);
