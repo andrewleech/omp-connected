@@ -744,18 +744,21 @@ describe("AgentRegistry — activity", () => {
         agentId: "user@hub-host:inst-1",
         busy: true,
         waiting: false,
+        compacting: false,
       },
       {
         event: "agent.activity",
         agentId: "user@hub-host:inst-1",
         busy: true,
         waiting: true,
+        compacting: false,
       },
       {
         event: "agent.activity",
         agentId: "user@hub-host:inst-1",
         busy: false,
         waiting: false,
+        compacting: false,
       },
     ]);
   });
