@@ -73,6 +73,173 @@ test("group changes in one dashboard appear in another without a reload", async 
   }
 });
 
+test("keyboard reordering synchronises the global order between dashboards", async ({
+  page,
+  context,
+  request,
+}) => {
+  await page.goto("/");
+  await loaded(page);
+  const other = await context.newPage();
+  await other.goto("/");
+  await loaded(other);
+  await newGroup(page, WRITER, "Project");
+  await page.locator(VIEWER).click({ button: "right" });
+  await page
+    .getByRole("button", { name: 'Move to "Project"', exact: true })
+    .click();
+  for (const view of [page, other]) {
+    await expect(group(view, "Project").locator(".session-card")).toHaveCount(
+      2,
+    );
+  }
+
+  const writer = "writer:label:writer";
+  const viewer = "viewer:instance:viewer-room";
+  const response = await request.post("/api/groups/reorder", {
+    data: { session: writer, anchor: viewer, position: "before" },
+  });
+  expect(response.status()).toBe(200);
+  for (const view of [page, other]) {
+    await expect(
+      group(view, "Project").locator(".session-card").first(),
+    ).toHaveAttribute("title", "Writable room");
+  }
+
+  const reorder = page.waitForRequest(
+    (req) =>
+      req.url().endsWith("/api/groups/reorder") && req.method() === "POST",
+  );
+  const down = group(page, "Project").locator(
+    '[data-order-key="writer:label:writer"][data-order-action="down"]',
+  );
+  await down.focus();
+  await page.keyboard.press("Enter");
+  expect((await reorder).postDataJSON()).toEqual({
+    session: writer,
+    anchor: viewer,
+    position: "after",
+  });
+  for (const view of [page, other]) {
+    await expect(
+      group(view, "Project").locator(".session-card").first(),
+    ).toHaveAttribute("title", "Read-only room");
+  }
+  await expect
+    .poll(async () => {
+      const state = (await (await request.get("/api/groups")).json()) as {
+        order: string[];
+      };
+      return state.order;
+    })
+    .toEqual([viewer, writer]);
+});
+
+test("pointer and touch drags reorder sessions within a group", async ({
+  page,
+  request,
+}) => {
+  await page.goto("/");
+  await loaded(page);
+  await newGroup(page, WRITER, "Project");
+  await page.locator(VIEWER).click({ button: "right" });
+  await page
+    .getByRole("button", { name: 'Move to "Project"', exact: true })
+    .click();
+  const project = group(page, "Project");
+  await expect(project.locator(".session-card")).toHaveCount(2);
+  expect(
+    (
+      await request.post("/api/groups/reorder", {
+        data: {
+          session: "writer:label:writer",
+          anchor: "viewer:instance:viewer-room",
+          position: "before",
+        },
+      })
+    ).status(),
+  ).toBe(200);
+  await expect(project.locator(".session-card").first()).toHaveAttribute(
+    "title",
+    "Writable room",
+  );
+
+  const handle = project.locator(
+    '[data-order-key="writer:label:writer"][data-order-action="drag"]',
+  );
+  const viewerRow = project
+    .locator(".session-row")
+    .filter({ has: page.locator(VIEWER) });
+  const start = await handle.boundingBox();
+  const target = await viewerRow.boundingBox();
+  if (!start || !target)
+    throw new Error("Session drag controls have no bounds");
+  const mouseMove = page.waitForRequest(
+    (req) =>
+      req.url().endsWith("/api/groups/reorder") && req.method() === "POST",
+  );
+  await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(
+    target.x + target.width / 2,
+    target.y + target.height * 0.75,
+    { steps: 5 },
+  );
+  await page.mouse.up();
+  expect((await mouseMove).postDataJSON()).toEqual({
+    session: "writer:label:writer",
+    anchor: "viewer:instance:viewer-room",
+    position: "after",
+  });
+  await expect(project.locator(".session-card").first()).toHaveAttribute(
+    "title",
+    "Read-only room",
+  );
+
+  const touchStart = await handle.boundingBox();
+  const touchTarget = await viewerRow.boundingBox();
+  if (!touchStart || !touchTarget)
+    throw new Error("Session drag controls have no bounds");
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true });
+  const touchMove = page.waitForRequest(
+    (req) =>
+      req.url().endsWith("/api/groups/reorder") && req.method() === "POST",
+  );
+  await cdp.send("Input.dispatchTouchEvent", {
+    type: "touchStart",
+    touchPoints: [
+      {
+        x: touchStart.x + touchStart.width / 2,
+        y: touchStart.y + touchStart.height / 2,
+      },
+    ],
+  });
+  await cdp.send("Input.dispatchTouchEvent", {
+    type: "touchMove",
+    touchPoints: [
+      {
+        x: touchTarget.x + touchTarget.width / 2,
+        y: touchTarget.y + touchTarget.height * 0.25,
+      },
+    ],
+  });
+  await cdp.send("Input.dispatchTouchEvent", {
+    type: "touchEnd",
+    touchPoints: [],
+  });
+  expect((await touchMove).postDataJSON()).toEqual({
+    session: "writer:label:writer",
+    anchor: "viewer:instance:viewer-room",
+    position: "before",
+  });
+  await expect(project.locator(".session-card").first()).toHaveAttribute(
+    "title",
+    "Writable room",
+  );
+  await cdp.detach();
+});
+
 test("a session keeps its group after its room is hosted again", async ({
   page,
   request,

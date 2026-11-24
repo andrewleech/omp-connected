@@ -10,6 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AgentRegistry } from "@/server/agent-registry";
+import { collabRpcRoutes } from "@/server/collab-rpc-routes";
 import { dashboardEventsPlugin } from "@/server/dashboard-events";
 import { SessionGroupStore, sessionGroupRoutes } from "@/server/session-groups";
 import type { DashboardEvent, SessionGroup } from "@/server/types";
@@ -89,7 +90,7 @@ test("groups survive a restart through the state file", async () => {
 test("a missing state directory means no groups until the first change", async () => {
   const stateDir = join(dir, "nested", "omp-hub");
   const store = new SessionGroupStore(stateDir);
-  expect(store.snapshot()).toEqual({ revision: 0, groups: [] });
+  expect(store.snapshot()).toEqual({ revision: 0, groups: [], order: [] });
   store.create("Project");
   expect(readdirSync(stateDir)).toEqual(["session-groups.json"]);
 });
@@ -113,7 +114,7 @@ for (const [label, content] of [
     try {
       writeFileSync(join(dir, "session-groups.json"), content);
       const store = new SessionGroupStore(dir);
-      expect(store.snapshot()).toEqual({ revision: 0, groups: [] });
+      expect(store.snapshot()).toEqual({ revision: 0, groups: [], order: [] });
       const files = readdirSync(dir);
       expect(files).toHaveLength(1);
       expect(files[0]).toMatch(/^session-groups\.json\.corrupt-\d+$/);
@@ -175,7 +176,7 @@ test("assignments from two clients at once both land", async () => {
     { id: project.id, name: "Project", sessions: [WRITER] },
     { id: other.id, name: "Other", sessions: [VIEWER] },
   ];
-  expect(store.snapshot()).toEqual({ revision: 4, groups: expected });
+  expect(store.snapshot()).toMatchObject({ revision: 4, groups: expected });
   expect(new SessionGroupStore(dir).snapshot().groups).toEqual(expected);
 });
 
@@ -239,7 +240,7 @@ test("a failed write answers 500 and keeps the previous groups", async () => {
       post("/assign", { session: WRITER, groupId: project.id }),
     );
     expect(result.status).toBe(500);
-    expect(store.snapshot()).toEqual({ revision: 1, groups: [project] });
+    expect(store.snapshot()).toMatchObject({ revision: 1, groups: [project] });
   } finally {
     error.mockRestore();
   }
@@ -279,10 +280,11 @@ test("every change pushes the full list to dashboard sockets", async () => {
       },
     );
     const { group } = (await response.json()) as { group: SessionGroup };
-    expect(await received.promise).toEqual({
+    expect(await received.promise).toMatchObject({
       event: "groups.changed",
       revision: 1,
       groups: [{ id: group.id, name: "Project", sessions: [WRITER] }],
+      order: expect.any(Array),
     });
     socket.close();
   } finally {
@@ -321,7 +323,7 @@ test("deleting a group ungroups its sessions and pushes the change", async () =>
     new Request(`${base}/${project.id}`, { method: "DELETE" }),
   );
   expect(deleted.status).toBe(200);
-  expect(deleted.body).toEqual({ revision: 3, groups: [other] });
+  expect(deleted.body).toEqual({ revision: 3, groups: [other], order: [] });
   expect(pushed).toEqual([1, 2, 3]);
   expect(
     (
@@ -390,4 +392,142 @@ test("an agent registering its ompc name re-keys the instance key it was grouped
   expect(store.snapshot().groups).toEqual(expected);
   expect(pushed).toEqual([expected]);
   expect(new SessionGroupStore(dir).snapshot().groups).toEqual(expected);
+});
+
+test("host listings discover new sessions once, keep order on outages, and persist it", async () => {
+  const registry = new AgentRegistry();
+  const store = new SessionGroupStore(dir, registry);
+  let sessions = [
+    { instanceId: "older", startedAt: 1 },
+    { instanceId: "newer", startedAt: 2 },
+  ];
+  const conn = {
+    send(data: string) {
+      const frame = JSON.parse(data) as { id: string };
+      queueMicrotask(() =>
+        registry.resolveHostCall(frame.id, { sessions }, undefined),
+      );
+    },
+    close() {},
+  };
+  registry.register(
+    { hostId: "user@host-a", instanceId: "agent", pid: 1, cwd: "/work" },
+    conn,
+  );
+  const app = new Elysia()
+    .use(sessionGroupRoutes(store))
+    .use(collabRpcRoutes(registry, store));
+  const list = () =>
+    app.handle(new Request("http://localhost/api/hosts/user@host-a/collab"));
+  const older = "user@host-a:instance:older";
+  const newer = "user@host-a:instance:newer";
+  const latest = "user@host-a:instance:latest";
+
+  expect((await list()).status).toBe(200);
+  expect(store.snapshot().order).toEqual([newer, older]);
+  const revision = store.snapshot().revision;
+  expect((await list()).status).toBe(200);
+  expect(store.snapshot().revision).toBe(revision);
+
+  sessions = [...sessions, { instanceId: "latest", startedAt: 3 }];
+  expect((await list()).status).toBe(200);
+  expect(store.snapshot().order).toEqual([latest, newer, older]);
+  registry.unregister("user@host-a:agent", conn);
+  expect((await list()).status).toBe(404);
+  expect(store.snapshot().order).toEqual([latest, newer, older]);
+  expect(new SessionGroupStore(dir).snapshot().order).toEqual([
+    latest,
+    newer,
+    older,
+  ]);
+
+  registerAgent(registry, "newer", "named");
+  expect(store.snapshot().order).toEqual([
+    latest,
+    "user@host-a:label:named",
+    older,
+  ]);
+  expect(new SessionGroupStore(dir).snapshot().order).toEqual(
+    store.snapshot().order,
+  );
+});
+
+test("relative reorders apply to current state and broadcast persisted snapshots", async () => {
+  const registry = new AgentRegistry();
+  const store = new SessionGroupStore(dir, registry);
+  const conn = {
+    send(data: string) {
+      const frame = JSON.parse(data) as { id: string };
+      queueMicrotask(() =>
+        registry.resolveHostCall(
+          frame.id,
+          {
+            sessions: [
+              { instanceId: "a", startedAt: 3 },
+              { instanceId: "b", startedAt: 2 },
+              { instanceId: "c", startedAt: 1 },
+            ],
+          },
+          undefined,
+        ),
+      );
+    },
+    close() {},
+  };
+  registry.register(
+    { hostId: "user@host-a", instanceId: "agent", pid: 1, cwd: "/work" },
+    conn,
+  );
+  const app = new Elysia()
+    .use(sessionGroupRoutes(store))
+    .use(collabRpcRoutes(registry, store))
+    .use(dashboardEventsPlugin(registry, store));
+  expect(
+    (
+      await app.handle(
+        new Request("http://localhost/api/hosts/user@host-a/collab"),
+      )
+    ).status,
+  ).toBe(200);
+  const a = "user@host-a:instance:a";
+  const b = "user@host-a:instance:b";
+  const c = "user@host-a:instance:c";
+  const initial = store.snapshot();
+  app.listen(0);
+  try {
+    const socket = new WebSocket(
+      `ws://localhost:${app.server?.port}/ws/dashboard`,
+    );
+    const opened = Promise.withResolvers<void>();
+    socket.onopen = () => opened.resolve();
+    await opened.promise;
+    const received = Promise.withResolvers<DashboardEvent>();
+    socket.onmessage = (event) =>
+      received.resolve(JSON.parse(String(event.data)));
+    const first = await call(
+      app,
+      post("/reorder", { session: c, anchor: a, position: "before" }),
+    );
+    expect(first.status).toBe(200);
+    expect(await received.promise).toEqual({
+      event: "groups.changed",
+      revision: initial.revision + 1,
+      groups: initial.groups,
+      order: [c, a, b],
+    });
+    const second = await call(
+      app,
+      post("/reorder", { session: a, anchor: b, position: "after" }),
+    );
+    expect(second.status).toBe(200);
+    expect(store.snapshot()).toEqual({
+      revision: initial.revision + 2,
+      groups: initial.groups,
+      order: [c, b, a],
+    });
+    expect(new SessionGroupStore(dir).snapshot()).toEqual(store.snapshot());
+    socket.close();
+  } finally {
+    app.stop();
+  }
 });

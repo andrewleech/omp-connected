@@ -57,6 +57,45 @@ describe("fleet dashboard workspace", () => {
     });
   });
 
+  test("filters global order by section and places unobserved sessions newest first", () => {
+    const third = { ...alpha, instanceId: "third", startedAt: 300 };
+    const fourth = { ...alpha, instanceId: "fourth", startedAt: 400 };
+    const fifth = { ...beta, instanceId: "fifth", startedAt: 500 };
+    const sixth = { ...beta, instanceId: "sixth", startedAt: 600 };
+    const groups = [
+      {
+        id: "g1",
+        name: "Project",
+        sessions: [
+          groupMemberKey(alpha),
+          groupMemberKey(beta),
+          groupMemberKey(third),
+          groupMemberKey(fourth),
+        ],
+      },
+    ];
+    const order = [
+      groupMemberKey(sixth),
+      "missing:instance:gone",
+      groupMemberKey(alpha),
+      groupMemberKey(fifth),
+      groupMemberKey(beta),
+    ];
+    const grouped = groupSessions(
+      [alpha, beta, third, fourth, fifth, sixth],
+      groups,
+      order,
+    );
+    expect(grouped[0]).toMatchObject({
+      id: "g1",
+      sessions: [fourth, third, alpha, beta],
+    });
+    expect(grouped[1]).toMatchObject({
+      id: "host:andrew@beta",
+      sessions: [sixth, fifth],
+    });
+  });
+
   test("keys group members by explicit ompc name, else by instance, never by generation", () => {
     expect(groupMemberKey({ ...alpha, ompcLabel: "mesh.install" })).toBe(
       "andrew@alpha:label:mesh.install",

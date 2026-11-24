@@ -136,6 +136,7 @@ export interface SessionGroup {
 export interface SessionGroupList {
   revision: number;
   groups: SessionGroup[];
+  order: string[];
 }
 
 /** Server -> dashboard push. Narrow and server-known-true only — no generic

@@ -6,6 +6,7 @@
 import { Elysia } from "elysia";
 import type { AgentRegistry } from "./agent-registry";
 import { RateLimiter } from "./rate-limit";
+import type { SessionGroupStore } from "./session-groups";
 
 const COLLAB_TIMEOUT_MS = 120_000;
 const COLLAB_INSTANCE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
@@ -13,8 +14,13 @@ const COLLAB_INSTANCE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
  *  bounded blast radius. */
 const COLLAB_LINK_TTL_MS = 90_000;
 
-export function collabRpcRoutes(agentRegistry: AgentRegistry) {
+export function collabRpcRoutes(
+  agentRegistry: AgentRegistry,
+  groups?: SessionGroupStore,
+) {
   const collabLimiter = new RateLimiter({ max: 20, windowMs: 10_000 });
+  let sequence = 0;
+  const observed = new Map<string, number>();
 
   return new Elysia({ prefix: "/api/hosts" })
     .get("/", () => agentRegistry.listHostIds().map((hostId) => ({ hostId })))
@@ -30,6 +36,7 @@ export function collabRpcRoutes(agentRegistry: AgentRegistry) {
         set.headers["retry-after"] = "1";
         return { error: "Rate limit: collab (20 per 10s)" };
       }
+      const requestSequence = ++sequence;
       try {
         const result = await agentRegistry.callOnHost(
           hostId,
@@ -49,15 +56,31 @@ export function collabRpcRoutes(agentRegistry: AgentRegistry) {
             .filter((agent) => agent.hostId === hostId)
             .map((agent) => [agent.instanceId, agent]),
         );
+        if (requestSequence > (observed.get(hostId) ?? 0)) {
+          try {
+            groups?.observe(hostId, result.sessions);
+            observed.set(hostId, requestSequence);
+          } catch (error) {
+            console.error(
+              `session groups: could not record sessions for ${hostId}: ${(error as Error).message}`,
+            );
+          }
+        }
         return {
           sessions: result.sessions.map((session) => {
+            const {
+              ompcLabel: _ompcLabel,
+              label: _label,
+              features: _features,
+              ...metadata
+            } = session;
             const agent = agents.get(session.instanceId);
             const ompcLabel = agentRegistry.ompcLabel(
               hostId,
               session.instanceId,
             );
             return {
-              ...session,
+              ...metadata,
               ...(agent === undefined
                 ? { features: [] }
                 : { label: agent.label, features: agent.features }),

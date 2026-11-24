@@ -43,7 +43,6 @@ import {
   TransferDialog,
   dropHandoff,
   findDestinationSession,
-  groupReassignment,
   readHandoffs,
   sendToHostMenuState,
   shouldSelectDestination,
@@ -89,6 +88,7 @@ interface HostSummary {
 interface GroupList {
   revision: number;
   groups: WorkspaceGroup[];
+  order: string[];
 }
 
 // Only identity and activity are consumed by the session rail.
@@ -223,6 +223,7 @@ function createDashboard(root: HTMLElement): void {
   const state = {
     ...readWorkspace(localStorage),
     groups: [] as WorkspaceGroup[],
+    order: [] as string[],
     hosts: [] as HostSummary[],
     sessions: [] as CollabSession[],
     selectedSession: null as CollabSession | null,
@@ -231,6 +232,9 @@ function createDashboard(root: HTMLElement): void {
   };
   // Revision of state.groups; -1 accepts the next list whatever its revision.
   let groupsRevision = -1;
+  let groupsEpoch = 0;
+  let railDragging = false;
+  let railRenderPending = false;
   // Hosts whose latest session listing succeeded.
   let listedHosts = new Set<string>();
   let lastWorkspaceSignature: string | null | undefined;
@@ -312,11 +316,12 @@ function createDashboard(root: HTMLElement): void {
     storage: localStorage,
     onCompleted: registerHandoff,
   });
-  // Completed transfers whose destination session is not listed yet.
+  // Completed transfers waiting for their destination and hub snapshot.
   const pendingHandoffs = new Map<
     string,
-    { handoff: Handoff; since: number }
+    { handoff: Handoff; since: number; warned?: boolean }
   >();
+  const handoffsInFlight = new Set<string>();
   let handoffTimer: number | undefined;
   function registerHandoff(transfer: TransferView): void {
     const handoff = readHandoffs(localStorage).find(
@@ -331,15 +336,14 @@ function createDashboard(root: HTMLElement): void {
         HANDOFF_POLL_MS,
       );
   }
-  // Selects the destination session once it registers and moves the
-  // source's custom group membership to it.
+  // Move the destination beside the source before transferring its group.
   function applyHandoffs(): void {
-    for (const [id, { handoff, since }] of pendingHandoffs) {
+    for (const [id, pending] of pendingHandoffs) {
+      const { handoff, since } = pending;
       const destination = findDestinationSession(state.sessions, handoff);
       if (!destination) {
-        if (Date.now() - since > HANDOFF_WAIT_MS) {
-          pendingHandoffs.delete(id);
-          dropHandoff(localStorage, id);
+        if (!pending.warned && Date.now() - since > HANDOFF_WAIT_MS) {
+          pending.warned = true;
           showStatus(
             "The destination session did not register. Check the destination host.",
             "warning",
@@ -347,28 +351,50 @@ function createDashboard(root: HTMLElement): void {
         }
         continue;
       }
-      pendingHandoffs.delete(id);
-      dropHandoff(localStorage, id);
+      if (handoffsInFlight.has(id)) continue;
       const newKey = groupMemberKey(destination);
-      const groupId = groupReassignment(
-        state.groups,
-        handoff.memberKey,
-        newKey,
-      );
-      if (groupId)
-        void changeGroups("/assign", { session: newKey, groupId }).then(() =>
-          changeGroups("/assign", {
-            session: handoff.memberKey,
-            groupId: null,
-          }),
-        );
-      if (shouldSelectDestination(state.selectedSession, handoff))
-        selectSession(destination);
-      showStatus(`Session continues on ${destination.host_id}`, "ok");
-    }
-    if (pendingHandoffs.size === 0) {
-      clearInterval(handoffTimer);
-      handoffTimer = undefined;
+      if (
+        !state.order.includes(handoff.memberKey) ||
+        !state.order.includes(newKey)
+      )
+        continue;
+      handoffsInFlight.add(id);
+      void (async () => {
+        try {
+          await mutateGroups("/reorder", {
+            session: newKey,
+            anchor: handoff.memberKey,
+            position: "before",
+          });
+          const sourceGroup = state.groups.find((group) =>
+            group.sessions.includes(handoff.memberKey),
+          );
+          if (sourceGroup) {
+            if (!sourceGroup.sessions.includes(newKey))
+              await mutateGroups("/assign", {
+                session: newKey,
+                groupId: sourceGroup.id,
+              });
+            await mutateGroups("/assign", {
+              session: handoff.memberKey,
+              groupId: null,
+            });
+          }
+          pendingHandoffs.delete(id);
+          dropHandoff(localStorage, id);
+          if (shouldSelectDestination(state.selectedSession, handoff))
+            selectSession(destination);
+          showStatus(`Session continues on ${destination.host_id}`, "ok");
+          if (pendingHandoffs.size === 0) {
+            clearInterval(handoffTimer);
+            handoffTimer = undefined;
+          }
+        } catch (error) {
+          showStatus((error as Error).message, "warning");
+        } finally {
+          handoffsInFlight.delete(id);
+        }
+      })();
     }
   }
   const terminalWindow = new TerminalWindow();
@@ -544,6 +570,11 @@ function createDashboard(root: HTMLElement): void {
             ),
           );
           listed.add(host.hostId);
+          // The hub records identities before the listing returns. Reload in
+          // case its change event arrived before the socket opened.
+          void loadGroups().catch((error: unknown) =>
+            showStatus((error as Error).message, "warning"),
+          );
         } catch (error) {
           showStatus(`${host.hostId}: ${(error as Error).message}`, "warning");
         }
@@ -631,16 +662,38 @@ function createDashboard(root: HTMLElement): void {
     void openCollab(defaultRequestedAccess(session), request);
   }
 
-  function applyGroups(list: GroupList): void {
-    if (list.revision <= groupsRevision) return;
+  function applyGroups(list: GroupList, epoch = groupsEpoch): void {
+    if (epoch !== groupsEpoch || list.revision <= groupsRevision) return;
     groupsRevision = list.revision;
     state.groups = list.groups;
+    state.order = list.order;
     const rail = root.querySelector("[data-session-rail]");
     if (rail) renderRail(rail);
+    applyHandoffs();
   }
 
   async function loadGroups(): Promise<void> {
-    applyGroups(await json<GroupList>("/api/groups"));
+    const epoch = groupsEpoch;
+    applyGroups(await json<GroupList>("/api/groups"), epoch);
+  }
+
+  async function mutateGroups(
+    path: string,
+    body?: unknown,
+    method = "POST",
+  ): Promise<void> {
+    // A change from this tab must not reach an empty hub before this
+    // browser's legacy groups, or their import would be refused.
+    await importLegacyGroups(true);
+    const epoch = groupsEpoch;
+    const list = await json<GroupList>(`/api/groups${path}`, {
+      method,
+      headers: { "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    if (epoch !== groupsEpoch)
+      throw new Error("Hub reconnected during group update. Retry.");
+    applyGroups(list, epoch);
   }
 
   async function changeGroups(
@@ -649,16 +702,7 @@ function createDashboard(root: HTMLElement): void {
     method = "POST",
   ): Promise<void> {
     try {
-      // A change from this tab must not reach an empty hub before this
-      // browser's legacy groups, or their import would be refused.
-      await importLegacyGroups(true);
-      applyGroups(
-        await json<GroupList>(`/api/groups${path}`, {
-          method,
-          headers: { "content-type": "application/json" },
-          body: body === undefined ? undefined : JSON.stringify(body),
-        }),
-      );
+      await mutateGroups(path, body, method);
     } catch (error) {
       showStatus((error as Error).message, "warning");
     }
@@ -706,6 +750,7 @@ function createDashboard(root: HTMLElement): void {
         waitingHosts,
       );
       if (!groups) return;
+      const epoch = groupsEpoch;
       const response = await fetch("/api/groups/import", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -717,7 +762,7 @@ function createDashboard(root: HTMLElement): void {
         throw new Error(
           `Could not import this browser's groups (${response.status})`,
         );
-      if (response.ok) applyGroups((await response.json()) as GroupList);
+      if (response.ok) applyGroups((await response.json()) as GroupList, epoch);
     }
     dropLegacyGroups(localStorage);
   }
@@ -949,8 +994,20 @@ function createDashboard(root: HTMLElement): void {
     return items;
   }
 
+  let keyboardMoves = Promise.resolve();
+
   function renderRail(container: Element): void {
     const rail = container as HTMLElement;
+    if (railDragging) {
+      railRenderPending = true;
+      return;
+    }
+    railRenderPending = false;
+    const focused = document.activeElement as HTMLElement | null;
+    const focusKey = rail.contains(focused)
+      ? focused?.dataset.orderKey
+      : undefined;
+    const focusAction = focused?.dataset.orderAction;
     const oldScrollTop = rail.scrollTop;
     const railTop = rail.getBoundingClientRect().top;
     const oldAnchor = Array.from(
@@ -976,7 +1033,7 @@ function createDashboard(root: HTMLElement): void {
       void changeGroups("", { name });
     };
     container.append(addGroup);
-    const groups = groupSessions(state.sessions, state.groups);
+    const groups = groupSessions(state.sessions, state.groups, state.order);
     for (const host of state.hosts) {
       if (!groups.some((group) => !group.custom && group.name === host.hostId))
         groups.push({
@@ -1030,7 +1087,10 @@ function createDashboard(root: HTMLElement): void {
       section.append(heading);
       if (group.sessions.length === 0)
         section.append(el("p", { className: "empty", text: "No sessions" }));
-      for (const session of group.sessions) {
+      for (const [index, session] of group.sessions.entries()) {
+        const memberKey = groupMemberKey(session);
+        const row = el("div", { className: "session-row" });
+        row.dataset.memberKey = memberKey;
         const card = el("button", {
           className: `session-card${sessionKey(session) === state.selected ? " selected" : ""}`,
           type: "button",
@@ -1097,7 +1157,189 @@ function createDashboard(root: HTMLElement): void {
         attachLongPress(card, (x, y) =>
           openContextMenu(x, y, sessionMenuItems(session)),
         );
-        section.append(card);
+        row.append(card);
+        const handle = el("button", {
+          className: "session-drag-handle",
+          type: "button",
+          text: "⋮⋮",
+          title: `Drag ${sessionLabel(session)} to reorder`,
+        }) as HTMLButtonElement;
+        handle.setAttribute(
+          "aria-label",
+          `Drag ${sessionLabel(session)} to reorder`,
+        );
+        handle.dataset.orderKey = memberKey;
+        handle.dataset.orderAction = "drag";
+        handle.onpointerdown = (event) => {
+          if (event.button !== 0 || group.sessions.length < 2) return;
+          event.preventDefault();
+          event.stopPropagation();
+          closeContextMenu();
+          railDragging = true;
+          row.classList.add("dragging");
+          handle.setPointerCapture(event.pointerId);
+          const startX = event.clientX;
+          const startY = event.clientY;
+          let target: HTMLElement | undefined;
+          let position: "before" | "after" = "before";
+          let pointerX = startX;
+          let pointerY = startY;
+          let scrollFrame: number | undefined;
+          const clearTarget = () => {
+            target?.classList.remove("drop-before", "drop-after");
+            target = undefined;
+          };
+          const updateTarget = () => {
+            clearTarget();
+            if (Math.hypot(pointerX - startX, pointerY - startY) < 5) return;
+            const bounds = section.getBoundingClientRect();
+            if (
+              pointerX < bounds.left ||
+              pointerX > bounds.right ||
+              pointerY < bounds.top ||
+              pointerY > bounds.bottom
+            )
+              return;
+            target = Array.from(
+              section.querySelectorAll<HTMLElement>(".session-row"),
+            ).find((candidate) => {
+              const rect = candidate.getBoundingClientRect();
+              return pointerY >= rect.top && pointerY <= rect.bottom;
+            });
+            if (!target || target === row) {
+              target = undefined;
+              return;
+            }
+            const rect = target.getBoundingClientRect();
+            position =
+              pointerY < rect.top + rect.height / 2 ? "before" : "after";
+            target.classList.add(
+              position === "before" ? "drop-before" : "drop-after",
+            );
+          };
+          const scroll = () => {
+            scrollFrame = undefined;
+            const bounds = rail.getBoundingClientRect();
+            const edge = 48;
+            if (
+              pointerX < bounds.left ||
+              pointerX > bounds.right ||
+              pointerY < bounds.top ||
+              pointerY > bounds.bottom
+            )
+              return;
+            const speed =
+              pointerY < bounds.top + edge
+                ? -Math.ceil((bounds.top + edge - pointerY) / 4)
+                : pointerY > bounds.bottom - edge
+                  ? Math.ceil((pointerY - bounds.bottom + edge) / 4)
+                  : 0;
+            if (!speed) return;
+            const previous = rail.scrollTop;
+            rail.scrollTop += speed;
+            if (rail.scrollTop === previous) return;
+            updateTarget();
+            scrollFrame = requestAnimationFrame(scroll);
+          };
+          handle.onpointermove = (move) => {
+            if (move.pointerId !== event.pointerId) return;
+            pointerX = move.clientX;
+            pointerY = move.clientY;
+            updateTarget();
+            if (
+              scrollFrame === undefined &&
+              Math.hypot(pointerX - startX, pointerY - startY) >= 5
+            )
+              scrollFrame = requestAnimationFrame(scroll);
+          };
+          const finish = (end: PointerEvent, cancelled: boolean) => {
+            if (end.pointerId !== event.pointerId) return;
+            if (scrollFrame !== undefined) cancelAnimationFrame(scrollFrame);
+            const anchor = target?.dataset.memberKey;
+            clearTarget();
+            row.classList.remove("dragging");
+            handle.onpointermove = null;
+            handle.onpointerup = null;
+            handle.onpointercancel = null;
+            handle.onlostpointercapture = null;
+            railDragging = false;
+            if (railRenderPending) renderRail(rail);
+            if (!cancelled && anchor) {
+              const current = groupSessions(
+                state.sessions,
+                state.groups,
+                state.order,
+              ).find(
+                (candidate) =>
+                  candidate.id === group.id &&
+                  candidate.custom === group.custom,
+              );
+              const keys = current?.sessions.map(groupMemberKey) ?? [];
+              if (keys.includes(memberKey) && keys.includes(anchor))
+                void changeGroups("/reorder", {
+                  session: memberKey,
+                  anchor,
+                  position,
+                });
+            }
+          };
+          handle.onpointerup = (end) => finish(end, false);
+          handle.onpointercancel = (end) => finish(end, true);
+          handle.onlostpointercapture = (end) => finish(end, true);
+        };
+        row.append(handle);
+        for (const [direction, offset] of [
+          ["up", -1],
+          ["down", 1],
+        ] as const) {
+          const neighbour = group.sessions[index + offset];
+          const move = el("button", {
+            className: "session-move",
+            type: "button",
+            text: direction === "up" ? "↑" : "↓",
+            title: `Move ${sessionLabel(session)} ${direction}`,
+            disabled: !neighbour,
+          }) as HTMLButtonElement;
+          move.setAttribute(
+            "aria-label",
+            `Move ${sessionLabel(session)} ${direction}`,
+          );
+          move.dataset.orderKey = memberKey;
+          move.dataset.orderAction = direction;
+          move.onclick = () => {
+            keyboardMoves = keyboardMoves
+              .then(async () => {
+                const current = groupSessions(
+                  state.sessions,
+                  state.groups,
+                  state.order,
+                ).find(
+                  (candidate) =>
+                    candidate.id === group.id &&
+                    candidate.custom === group.custom,
+                );
+                const sessions = current?.sessions ?? [];
+                const currentIndex = sessions.findIndex(
+                  (item) => groupMemberKey(item) === memberKey,
+                );
+                const anchor =
+                  currentIndex < 0
+                    ? undefined
+                    : sessions[currentIndex + offset];
+                if (anchor)
+                  await mutateGroups("/reorder", {
+                    session: memberKey,
+                    anchor: groupMemberKey(anchor),
+                    position: direction === "up" ? "before" : "after",
+                  });
+              })
+              .catch((error: unknown) =>
+                showStatus((error as Error).message, "warning"),
+              );
+          };
+          row.append(move);
+        }
+        section.append(row);
       }
       container.append(section);
     }
@@ -1109,6 +1351,25 @@ function createDashboard(root: HTMLElement): void {
     if (newAnchor && anchorTop !== undefined)
       rail.scrollTop += newAnchor.getBoundingClientRect().top - anchorTop;
     else rail.scrollTop = oldScrollTop;
+    if (focusKey && focusAction) {
+      const controls = Array.from(
+        rail.querySelectorAll<HTMLButtonElement>("[data-order-key]"),
+      );
+      const control =
+        controls.find(
+          (item) =>
+            item.dataset.orderKey === focusKey &&
+            item.dataset.orderAction === focusAction &&
+            !item.disabled,
+        ) ??
+        controls.find(
+          (item) =>
+            item.dataset.orderKey === focusKey &&
+            item.dataset.orderAction === "drag",
+        );
+      control?.focus({ preventScroll: true });
+      control?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
   }
 
   function renderWorkspace(container: Element): void {
@@ -1440,10 +1701,11 @@ function createDashboard(root: HTMLElement): void {
       if (hadSocket) {
         // Group changes in the gap were missed too, and a restarted hub may
         // number its revisions from a lower value.
+        groupsEpoch++;
         groupsRevision = -1;
-        void loadGroups().catch(() => {});
         refreshForAgentEvent();
       }
+      void loadGroups().catch(() => {});
       hadSocket = true;
     };
     socket.onmessage = handleSocketMessage;
@@ -1462,11 +1724,20 @@ function createDashboard(root: HTMLElement): void {
         compacting?: boolean;
         revision?: number;
         groups?: WorkspaceGroup[];
+        order?: string[];
         transfer?: TransferView;
       };
       if (data.event === "groups.changed") {
-        if (typeof data.revision === "number" && Array.isArray(data.groups))
-          applyGroups({ revision: data.revision, groups: data.groups });
+        if (
+          typeof data.revision === "number" &&
+          Array.isArray(data.groups) &&
+          Array.isArray(data.order)
+        )
+          applyGroups({
+            revision: data.revision,
+            groups: data.groups,
+            order: data.order,
+          });
         return;
       }
       if (data.event === "transfer.changed") {

@@ -247,10 +247,14 @@ The custom groups ("projects") in the dashboard's session rail live on the hub, 
 
 ```ts
 interface SessionGroup { id: string; name: string; sessions: string[] } // sessions: member keys
-interface SessionGroupList { revision: number; groups: SessionGroup[] }
+interface SessionGroupList { revision: number; groups: SessionGroup[]; order: string[] } // order: member keys
 ```
 
 A member key is `${hostId}:label:${ompcLabel}` when the session's agent explicitly registered a label (its ompc session name, which tmux keeps unique per host), else `${hostId}:instance:${instanceId}`. The cwd-derived `label` never keys a group, as sessions in one directory share it. A key has no Collab generation, so a session keeps its group when its room is hosted again, and an ompc session keeps it across omp restarts. The dashboard builds the keys (`groupMemberKey` in `webui/lib/workspace.ts`); the hub checks their shape. A session is in at most one group.
+
+`order` is one shared sequence of member keys across all hosts and groups. Each rail section filters this sequence to its own sessions; ordering does not change group membership. A successful host Collab listing adds newly discovered identities at the head, newest first, without moving known identities. Repeated listings are idempotent, and failed listings or disconnected hosts do not remove keys. When an instance key becomes a label key, the hub preserves its position.
+
+The rail provides a drag handle for mouse and touch and move up/down controls for keyboard access. These actions reorder within the visible section by moving a session relative to another session in the shared sequence.
 
 The session's name must not drop out of its key while its agent reconnects:
 
@@ -263,14 +267,15 @@ REST routes, one per dashboard action, so edits from several dashboards each app
 - `GET /api/groups`.
 - `POST /api/groups` `{ name, session? }` adds a group at the end, moving `session` into it when given; the answer also has the new `group`.
 - `POST /api/groups/assign` `{ session, groupId }` moves a session into a group, or out of every group for `groupId: null`. An unknown group answers 404.
+- `POST /api/groups/reorder` `{ session, anchor, position: "before" | "after" }` moves `session` relative to `anchor` in the shared order.
 - `DELETE /api/groups/:id` deletes a group and ungroups its sessions; 404 when unknown. The rail's custom group headings have a delete button.
 - `POST /api/groups/import` `{ groups: { name, sessions }[] }` replaces an empty list; 409 once the hub has any group. The dashboard uses it once to upload groups it kept in `localStorage` before the hub stored them, translating their `host:instance:generation` members through the current session listing and dropping members no listed session matches. While an unmatched member's host is connected but has not listed successfully, it waits and retries after each session load; members of hosts that are not connected are dropped. A group change in that tab runs the import first without waiting, so the tab's own change never makes the hub refuse it. The local copy is removed once imported, or when the hub already had groups from elsewhere (409 or a non-empty list) before the attempt.
 
 Names are trimmed and must be 1-64 characters without control characters; there are at most 100 groups and 1000 grouped sessions. Invalid input answers 400. Writes share one limit of 30 per 10 s (429), as the dashboard has no per-user identity. A failed save answers 500 and leaves the groups unchanged.
 
-After every change the hub pushes `{ event: "groups.changed", revision, groups }` to `/ws/dashboard`. `revision` increments with every change, so a dashboard ignores a list older than the one it shows. It loads the list at start and again after its event socket reconnects, then accepts any revision, as a restarted hub with a new state file counts from 0.
+After every change the hub pushes `{ event: "groups.changed", revision, groups, order }` to `/ws/dashboard`. `revision` increments with every change, so a dashboard ignores a list older than the one it shows. It loads the list at start and again after its event socket reconnects, then accepts any revision, as a restarted hub with a new state file counts from 0.
 
-State file: `session-groups.json` in `OMP_HUB_STATE_DIR` (default `$XDG_STATE_HOME/omp-hub`, else `~/.local/state/omp-hub`), `{ version: 1, revision, groups }`. Each change is written to a temp file, synced and renamed over it. A missing file means no groups. An invalid file is renamed to `session-groups.json.corrupt-<ms>` and logged, and the hub starts with no groups.
+State file: `session-groups.json` in `OMP_HUB_STATE_DIR` (default `$XDG_STATE_HOME/omp-hub`, else `~/.local/state/omp-hub`), `{ version: 1, revision, groups, order }`. Each change is written to a temp file, synced and renamed over it. A missing file means no groups or saved order. An invalid file is renamed to `session-groups.json.corrupt-<ms>` and logged, and the hub starts with no groups or saved order.
 
 ## Collab rewind and fork
 

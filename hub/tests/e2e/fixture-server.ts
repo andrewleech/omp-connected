@@ -365,7 +365,12 @@ async function transferApi(
           mode === "update"
             ? [
                 { path: "src/new.ts", action: "add", kind: "file", bytes: 512 },
-                { path: "src/more.ts", action: "add", kind: "file", bytes: 512 },
+                {
+                  path: "src/more.ts",
+                  action: "add",
+                  kind: "file",
+                  bytes: 512,
+                },
                 {
                   path: "package.json",
                   action: "replace",
@@ -720,15 +725,26 @@ const dashboardSockets = new Set<{ send(data: string): void; close(): void }>();
 // Session groups use the hub's own store and routes. Loading the dashboard
 // page starts them over with an empty state dir.
 let groupsDir = "";
+let groupStore: SessionGroupStore;
 function freshGroups() {
   if (groupsDir) rmSync(groupsDir, { recursive: true, force: true });
   groupsDir = mkdtempSync(join(tmpdir(), "omp-hub-e2e-groups-"));
-  const store = new SessionGroupStore(groupsDir);
-  store.onChange((list) => {
+  groupStore = new SessionGroupStore(groupsDir, {
+    ompcLabel(hostId, instanceId) {
+      if (hostId !== "writer") return undefined;
+      if (instanceId === "writer-room") return "writer";
+      return launched.find((session) => session.instanceId === instanceId)
+        ?.ompcLabel;
+    },
+    onChange() {
+      return () => {};
+    },
+  });
+  groupStore.onChange((list) => {
     const event = JSON.stringify({ event: "groups.changed", ...list });
     for (const socket of dashboardSockets) socket.send(event);
   });
-  return sessionGroupRoutes(store);
+  return sessionGroupRoutes(groupStore);
 }
 let groupRoutes = freshGroups();
 
@@ -799,22 +815,25 @@ Bun.serve({
     }
     if (url.pathname === "/api/hosts")
       return json([{ hostId: "writer" }, { hostId: "viewer" }]);
-    if (url.pathname === "/api/hosts/writer/collab")
-      return json({
-        sessions: [
-          ...(writerExited
-            ? []
-            : [
-                {
-                  ...sessions.writer,
-                  ...(writerOmpcLabelKnown ? { ompcLabel: "writer" } : {}),
-                },
-              ]),
-          ...launched,
-        ],
-      });
-    if (url.pathname === "/api/hosts/viewer/collab")
+    if (url.pathname === "/api/hosts/writer/collab") {
+      const listed = [
+        ...(writerExited
+          ? []
+          : [
+              {
+                ...sessions.writer,
+                ...(writerOmpcLabelKnown ? { ompcLabel: "writer" } : {}),
+              },
+            ]),
+        ...launched,
+      ];
+      groupStore.observe("writer", listed);
+      return json({ sessions: listed });
+    }
+    if (url.pathname === "/api/hosts/viewer/collab") {
+      groupStore.observe("viewer", [sessions.viewer]);
       return json({ sessions: [sessions.viewer] });
+    }
     if (url.pathname === "/api/hosts/writer/session-history")
       return json({
         sessions: history.filter(

@@ -244,18 +244,32 @@ export function legacyGroupsForImport(
 export function groupSessions(
   sessions: CollabSession[],
   groups: WorkspaceGroup[],
+  order: string[] = [],
 ): SessionGroup[] {
   const grouped = new Set(groups.flatMap((group) => group.sessions));
-  const byRecency = (left: CollabSession, right: CollabSession) =>
-    right.startedAt - left.startedAt ||
-    sessionKey(left).localeCompare(sessionKey(right));
+  const positions = new Map(order.map((key, index) => [key, index]));
+  const byOrder = (left: CollabSession, right: CollabSession) => {
+    const leftPosition = positions.get(groupMemberKey(left));
+    const rightPosition = positions.get(groupMemberKey(right));
+    if (leftPosition !== undefined && rightPosition !== undefined)
+      return (
+        leftPosition - rightPosition ||
+        sessionKey(left).localeCompare(sessionKey(right))
+      );
+    if (leftPosition !== undefined) return 1;
+    if (rightPosition !== undefined) return -1;
+    return (
+      right.startedAt - left.startedAt ||
+      sessionKey(left).localeCompare(sessionKey(right))
+    );
+  };
   const named: SessionGroup[] = groups.map((group) => ({
     id: group.id,
     name: group.name,
     custom: true,
     sessions: sessions
       .filter((session) => group.sessions.includes(groupMemberKey(session)))
-      .sort(byRecency),
+      .sort(byOrder),
   }));
   const hosts = new Map<string, CollabSession[]>();
   for (const session of sessions.filter(
@@ -273,7 +287,7 @@ export function groupSessions(
         id: `host:${id}`,
         name: id,
         custom: false,
-        sessions: hostSessions.sort(byRecency),
+        sessions: hostSessions.sort(byOrder),
       })),
   ];
 }

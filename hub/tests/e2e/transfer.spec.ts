@@ -105,8 +105,7 @@ test("choosing Cancel closes the dialog without committing", async ({
 }) => {
   const commits: string[] = [];
   page.on("request", (request) => {
-    if (request.url().endsWith("/transfer/commit"))
-      commits.push(request.url());
+    if (request.url().endsWith("/transfer/commit")) commits.push(request.url());
   });
   const dialog = await planToBuildbox(page);
 
@@ -130,12 +129,10 @@ test("committing an update shows progress until the transfer completes", async (
 
   await choice(dialog, "update").click();
   await expect(dialog.locator(".transfer-preview")).toBeVisible();
-  const send = dialog
-    .locator(".transfer-actions")
-    .getByRole("button", {
-      name: "Update project and send to buildbox",
-      exact: true,
-    });
+  const send = dialog.locator(".transfer-actions").getByRole("button", {
+    name: "Update project and send to buildbox",
+    exact: true,
+  });
   await expect(send).toBeEnabled();
 
   const committed = page.waitForRequest((request) =>
@@ -168,4 +165,153 @@ test("committing an update shows progress until the transfer completes", async (
     "The session continues on the destination.",
   );
   await expect(dialog).not.toContainText("Copying project");
+});
+
+test("handoff waits for observed order and retries a failed reorder before moving the group", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(60_000);
+  let observeDestination = false;
+  await page.route("**/api/hosts/viewer/collab", async (route) => {
+    if (!observeDestination) {
+      await route.fulfill({
+        json: {
+          sessions: [
+            {
+              instanceId: "viewer-room",
+              generation: 1,
+              access: "view",
+              startedAt: 1,
+              sessionName: "Read-only room",
+              sessionId: "sess-fixture-1",
+              cwd: "/work/viewer",
+              participants: 1,
+              features: ["session.model_roles.v1"],
+            },
+          ],
+        },
+      });
+      return;
+    }
+    const response = await route.fetch();
+    const body = (await response.json()) as {
+      sessions: Record<string, unknown>[];
+    };
+    for (const session of body.sessions) session.sessionId = "sess-fixture-1";
+    await route.fulfill({ response, json: body });
+  });
+  await page.route(
+    "**/api/hosts/writer/sessions/writer-room/transfer/destinations",
+    async (route) => {
+      const response = await route.fetch();
+      const body = (await response.json()) as {
+        destinations: { hostId: string }[];
+      };
+      const destination = body.destinations[0];
+      if (!destination) throw new Error("Missing transfer destination");
+      destination.hostId = "viewer";
+      await route.fulfill({ response, json: body });
+    },
+  );
+
+  const failedReorder = Promise.withResolvers<void>();
+  const releaseFailure = Promise.withResolvers<void>();
+  const moves: unknown[] = [];
+  await page.route("**/api/groups/reorder", async (route) => {
+    moves.push(route.request().postDataJSON());
+    if (moves.length === 1) {
+      failedReorder.resolve();
+      await releaseFailure.promise;
+      await route.fulfill({ status: 503, json: { error: "write failed" } });
+      return;
+    }
+    await route.continue();
+  });
+
+  await openTransferMenu(page);
+  page.once("dialog", (dialog) => void dialog.accept("Project"));
+  await page.getByRole("button", { name: "New group…", exact: true }).click();
+  const project = page.locator(".session-group").filter({
+    has: page.getByRole("heading", { name: "Project", exact: true }),
+  });
+  await expect(
+    project.locator('.session-card[title="Writable room"]'),
+  ).toBeVisible();
+  await page
+    .locator('.session-card[title="Writable room"]')
+    .click({ button: "right" });
+  await page.getByRole("button", { name: "Send to host", exact: true }).click();
+  const dialog = page.locator("dialog[data-transfer-dialog]");
+  await dialog
+    .locator(".transfer-destinations button")
+    .filter({ hasText: "buildbox" })
+    .click();
+  await expect(dialog.locator(".transfer-conflict-box")).toBeVisible();
+  await dialog
+    .locator(".transfer-actions")
+    .getByRole("button", {
+      name: "Send session only to buildbox",
+      exact: true,
+    })
+    .click();
+  await expect(dialog.locator("li", { hasText: "Completed" })).toHaveAttribute(
+    "data-status",
+    "done",
+    { timeout: 30_000 },
+  );
+  const handoffKey = "omp-hub-transfer-handoffs/v1";
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (key) => JSON.parse(localStorage.getItem(key) ?? "[]").length,
+        handoffKey,
+      ),
+    )
+    .toBe(1);
+  expect(moves).toEqual([]);
+
+  observeDestination = true;
+  await failedReorder.promise;
+  expect(moves[0]).toEqual({
+    session: "viewer:instance:viewer-room",
+    anchor: "writer:label:writer",
+    position: "before",
+  });
+  await expect(
+    project.locator('.session-card[title="Writable room"]'),
+  ).toBeVisible();
+  await expect(
+    project.locator('.session-card[title="Read-only room"]'),
+  ).toHaveCount(0);
+  releaseFailure.resolve();
+
+  await expect
+    .poll(() => moves.length, { timeout: 15_000 })
+    .toBeGreaterThanOrEqual(2);
+  await expect(
+    project.locator('.session-card[title="Read-only room"]'),
+  ).toBeVisible();
+  await expect(
+    project.locator('.session-card[title="Writable room"]'),
+  ).toHaveCount(0);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (key) => JSON.parse(localStorage.getItem(key) ?? "[]").length,
+        handoffKey,
+      ),
+    )
+    .toBe(0);
+  const state = (await (await request.get("/api/groups")).json()) as {
+    order: string[];
+    groups: { name: string; sessions: string[] }[];
+  };
+  expect(state.order).toEqual([
+    "viewer:instance:viewer-room",
+    "writer:label:writer",
+  ]);
+  expect(
+    state.groups.find((group) => group.name === "Project")?.sessions,
+  ).toEqual(["viewer:instance:viewer-room"]);
 });

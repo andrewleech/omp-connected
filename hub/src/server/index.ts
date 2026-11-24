@@ -112,7 +112,7 @@ export function createHub(options: CreateHubOptions = {}): Hub {
     .get("/manifest.webmanifest", () =>
       revalidatedFile(`${webuiRoot}/manifest.webmanifest`),
     )
-    .use(collabRpcRoutes(agentRegistry))
+    .use(collabRpcRoutes(agentRegistry, groups))
     .use(hostSessionRoutes(agentRegistry))
     .use(sessionRpcRoutes(agentRegistry))
     .use(agentRpcRoutes(agentRegistry, osHostname()))

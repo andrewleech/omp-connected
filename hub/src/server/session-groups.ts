@@ -137,7 +137,14 @@ function parseStateFile(value: unknown): SessionGroupList | null {
   } catch {
     return null;
   }
-  return { revision: value.revision, groups };
+  const order = "order" in value ? value.order : [];
+  if (!Array.isArray(order)) return null;
+  const ordered = new Set<string>();
+  for (const key of order) {
+    if (!isGroupMemberKey(key) || ordered.has(key)) return null;
+    ordered.add(key);
+  }
+  return { revision: value.revision, groups, order };
 }
 
 /** What the store needs from the agent registry: the ompc session name an
@@ -245,14 +252,22 @@ export class SessionGroupStore {
   private adoptLabel(hostId: string, instanceId: string, label: string): void {
     const instanceKey = `${hostId}${INSTANCE_MARKER}${instanceId}`;
     const labelKey = `${hostId}:label:${label}`;
+    if (!isGroupMemberKey(labelKey)) return;
     const next = this.list();
     const target = next.find((group) => group.sessions.includes(instanceKey));
-    if (!target || !isGroupMemberKey(labelKey)) return;
-    removeMember(next, labelKey);
-    target.sessions = target.sessions.map((key) =>
-      key === instanceKey ? labelKey : key,
-    );
-    this.commit(next);
+    if (target) {
+      removeMember(next, labelKey);
+      target.sessions = target.sessions.map((key) =>
+        key === instanceKey ? labelKey : key,
+      );
+    }
+    const order = this.state.order.slice();
+    const index = order.indexOf(instanceKey);
+    if (index >= 0) {
+      if (order.includes(labelKey)) order.splice(index, 1);
+      else order[index] = labelKey;
+    }
+    if (target || index >= 0) this.commit(next, order);
   }
 
   /** A valid member key, as the label key when the hub knows the name. */
@@ -267,6 +282,50 @@ export class SessionGroupStore {
     );
     const labelKey = `${hostId}:label:${label}`;
     return label !== undefined && isGroupMemberKey(labelKey) ? labelKey : key;
+  }
+
+  /** Records newly observed sessions, newest first, without moving known keys. */
+  observe(
+    hostId: string,
+    sessions: { instanceId: string; startedAt: number }[],
+  ): void {
+    const known = new Set(this.state.order);
+    const added: string[] = [];
+    const sorted = sessions
+      .slice()
+      .sort(
+        (a, b) =>
+          b.startedAt - a.startedAt || a.instanceId.localeCompare(b.instanceId),
+      );
+    for (const session of sorted) {
+      const instanceKey = `${hostId}${INSTANCE_MARKER}${session.instanceId}`;
+      if (!isGroupMemberKey(instanceKey)) continue;
+      const key = this.memberKey(instanceKey);
+      if (!known.has(key)) {
+        known.add(key);
+        added.push(key);
+      }
+    }
+    if (added.length) this.commit(this.list(), [...added, ...this.state.order]);
+  }
+
+  /** Moves one known session relative to another in the current order. */
+  reorder(session: unknown, anchor: unknown, position: unknown): void {
+    const key = this.memberKey(session);
+    const anchorKey = this.memberKey(anchor);
+    if (position !== "before" && position !== "after")
+      throw new GroupRequestError("position must be before or after.", 400);
+    const order = this.state.order.slice();
+    const from = order.indexOf(key);
+    if (from < 0 || !order.includes(anchorKey))
+      throw new GroupRequestError("Session or anchor not found.", 404);
+    if (key === anchorKey) return;
+    order.splice(from, 1);
+    const to = order.indexOf(anchorKey) + (position === "after" ? 1 : 0);
+    order.splice(to, 0, key);
+    if (order.every((entry, index) => entry === this.state.order[index]))
+      return;
+    this.commit(this.list(), order);
   }
 
   /**
@@ -299,16 +358,16 @@ export class SessionGroupStore {
     this.commit(next);
   }
 
-  private commit(groups: SessionGroup[]): void {
+  private commit(groups: SessionGroup[], order = this.state.order): void {
     checkLimits(groups);
-    const next = { revision: this.state.revision + 1, groups };
+    const next = { revision: this.state.revision + 1, groups, order };
     this.write(next);
     this.state = next;
     for (const listener of this.listeners) listener(this.snapshot());
   }
 
   private load(): SessionGroupList {
-    const empty = { revision: 0, groups: [] };
+    const empty: SessionGroupList = { revision: 0, groups: [], order: [] };
     let raw: string;
     try {
       raw = readFileSync(this.path, "utf8");
@@ -413,6 +472,16 @@ export function sessionGroupRoutes(store: SessionGroupStore) {
     .post("/assign", ({ body, set }) =>
       change(set, () => {
         store.assign(field(body, "session"), field(body, "groupId"));
+        return store.snapshot();
+      }),
+    )
+    .post("/reorder", ({ body, set }) =>
+      change(set, () => {
+        store.reorder(
+          field(body, "session"),
+          field(body, "anchor"),
+          field(body, "position"),
+        );
         return store.snapshot();
       }),
     )
