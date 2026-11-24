@@ -130,10 +130,6 @@ function openContextMenu(x: number, y: number, items: ContextMenuItem[]): void {
       disabled: item.disabled,
       title: item.disabled ? item.reason : undefined,
     }) as HTMLButtonElement;
-    if (item.disabled && item.reason)
-      button.append(
-        el("small", { className: "ctx-reason", text: item.reason }),
-      );
     button.onclick = () => {
       closeContextMenu();
       item.onSelect();
