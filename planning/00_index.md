@@ -28,6 +28,7 @@ HEAD: ea1ccb0695
 11. Web terminal attached to a session's tmux, implemented and deployed (no fork branch, no upstream change needed): [design](20261031_web_terminal_design.md): binary frame protocol with permessage-deflate and flow control, direct browser-to-host route with hub relay fallback, random single-use tickets delivered over agent RPC (not signed with the host token), on by default; the hub has no dashboard-user authentication.
 12. Collab whole-form Ask, planned (no feature branch yet): [design and work plan](20261117_collab_whole_form_ask_design.md), including ompweb research, protocol compatibility and reconciliation with upstream RPC PR #18646.
 13. Send a session to another host, implemented: [design and work plan](20261120_send_to_host_design.md) and [implementation contracts](20261121_send_to_host_contracts.md), including project update/session-only confirmation, UUID and linked-history portability, ownership cutover and recovery.
+14. Collab side requests, planned: [sprint plan and tickets](20261124_collab_side_request_sprint.md), using the uncommitted fork prototype as reference only; no deployment.
 
 ## Operating conventions
 - Every document is stamped with its date and HEAD revision.
