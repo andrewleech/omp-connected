@@ -186,6 +186,10 @@ A capable connected extension answers host-wide history and launch requests. The
 
 Older extensions may ignore `reservedLabels`, so the hub returns 501 when no connected extension advertises `host.sessions.reserved-labels` instead of forwarding the request to an older extension. A new extension accepts requests from older hubs that omit the field and preserves their requested name.
 
+Folder browsing uses the `host.folders.v1` capability. `host.folders.list { path }` returns `{ path, entries }`, where `path` is the resolved directory and `entries` contains sorted directory names, including directory symlinks. An empty path lists the host home directory; paths otherwise must be absolute or start with `~/`. `host.folders.mkdir { path }` creates one directory and returns `{ ok: true }`. Both require a local control share.
+
+`GET /api/hosts/:id/folders?path=...` and `POST /api/hosts/:id/folders` with `{ path }` route these requests to a capable extension. The GET path defaults to empty. Hosts without a capable extension return 501; the RPC error mapping also applies. Folder requests share a separate host limit of 60 per 10 seconds.
+
 The session list's **Fork session** action targets one specific session instance through the `session.fork.v1` capability, rather than the host-wide history launcher. The extension requires control access, an idle session with no queued prompts, and a persisted session file, then starts `ompc --detach --new <suffix> --fork <session-file>`. OMP's built-in `--fork` creates a new session from the complete current head; the source session remains active and unchanged. The context-menu action is disabled for view-only, busy or older sessions.
 
 REST: `GET /api/hosts/:id/session-history` and `POST /api/hosts/:id/sessions` expose those results and parameters. Requests share a host limit of 20 per 10 seconds, with a 30-second RPC deadline. A disconnected host answers 404, no capable extension answers 501, and remote errors use the session RPC HTTP mapping.

@@ -679,3 +679,235 @@ test("shows host access failures in the mobile popup", async ({ page }) => {
     .click();
   await expect(page.getByRole("dialog")).not.toBeVisible();
 });
+
+test("browses, creates and selects host folders with path completion", async ({ page }) => {
+  const created: string[] = [];
+  await page.route("**/api/hosts/writer/folders**", async (route) => {
+    if (route.request().method() === "POST") {
+      created.push(route.request().postDataJSON().path);
+      await route.fulfill({ json: { ok: true } });
+      return;
+    }
+    const path = new URL(route.request().url()).searchParams.get("path");
+    const directories: Record<string, string[]> = {
+      "/work": ["project", "other"],
+      "/work/project": [],
+      "/work/project/new": [],
+      "/home/writer": ["src"],
+    };
+    const resolved = path || "/home/writer";
+    await route.fulfill({ json: { path: resolved, entries: directories[resolved] ?? [] } });
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Start session on writer" }).click();
+  const dialog = page.getByRole("dialog");
+  const path = dialog.getByLabel("Path", { exact: true });
+  await path.fill("/work/pr");
+  await expect(dialog.locator("#folder-path-suggestions option")).toHaveAttribute("value", "/work/project");
+  await path.fill("/work");
+  await dialog.getByRole("button", { name: "Browse folders" }).click();
+  await dialog.getByRole("button", { name: "project", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "Up", exact: true })).toBeFocused();
+  await dialog.getByLabel("New folder name").fill("new");
+  await dialog.getByRole("button", { name: "Create folder" }).click();
+  await expect(dialog.locator(".folder-location")).toHaveText("/work/project/new");
+  expect(created).toEqual(["/work/project/new"]);
+  await dialog.getByRole("button", { name: "Select this folder" }).click();
+  await expect(path).toHaveValue("/work/project/new");
+  await dialog.getByRole("button", { name: "Browse folders" }).click();
+  await dialog.getByRole("button", { name: "Home", exact: true }).click();
+  await expect(dialog.locator(".folder-location")).toHaveText("/home/writer");
+});
+
+test("keeps the path editable when folder browsing fails", async ({ page }) => {
+  await page.route("**/api/hosts/writer/folders**", async (route) => {
+    await route.fulfill({ status: 501, json: { error: "Host does not support folder browsing" } });
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Start session on writer" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "Browse folders" }).click();
+  await expect(dialog.locator(".folder-status")).toHaveText("Host does not support folder browsing");
+  await dialog.getByLabel("Path", { exact: true }).fill("/work/project");
+  await expect(dialog.getByLabel("Path", { exact: true })).toHaveValue("/work/project");
+});
+
+test("ignores folder responses from an earlier navigation", async ({ page }) => {
+  const { promise: pending, resolve: release } = Promise.withResolvers<void>();
+  const { promise: started, resolve: requested } = Promise.withResolvers<void>();
+  const { promise: finished, resolve: finish } = Promise.withResolvers<void>();
+  await page.route("**/api/hosts/writer/folders**", async (route) => {
+    const path = new URL(route.request().url()).searchParams.get("path");
+    if (path === "/slow") {
+      requested();
+      await pending;
+      await route.fulfill({ json: { path: "/slow", entries: ["old"] } });
+      finish();
+    } else {
+      await route.fulfill({ json: { path: "/home/writer", entries: ["current"] } });
+    }
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Start session on writer" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Path", { exact: true }).fill("/slow");
+  await dialog.getByRole("button", { name: "Browse folders" }).click();
+  await started;
+  await dialog.getByRole("button", { name: "Home", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "current", exact: true })).toBeVisible();
+  release();
+  await finished;
+  await expect(dialog.locator(".folder-location")).toHaveText("/home/writer");
+  await expect(dialog.getByRole("button", { name: "old", exact: true })).toHaveCount(0);
+});
+
+test("keeps failed locations unavailable for creation after a failed launch", async ({ page }) => {
+  const created: string[] = [];
+  await page.route("**/api/hosts/writer/folders**", async (route) => {
+    if (route.request().method() === "POST") {
+      created.push(route.request().postDataJSON().path);
+      await route.fulfill({ json: { ok: true } });
+      return;
+    }
+    const path = new URL(route.request().url()).searchParams.get("path");
+    if (path === "/work/missing") {
+      await route.fulfill({ status: 404, json: { error: "Folder not found" } });
+    } else {
+      await route.fulfill({ json: { path: path || "/work", entries: ["missing"] } });
+    }
+  });
+  await page.route("**/api/hosts/writer/sessions", async (route) => {
+    await route.fulfill({ status: 409, json: { error: "Launch failed" } });
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Start session on writer" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Path", { exact: true }).fill("/work");
+  await dialog.getByRole("button", { name: "Browse folders" }).click();
+  const missing = dialog.getByRole("button", { name: "missing", exact: true });
+  await missing.focus();
+  await page.keyboard.press("Enter");
+  await expect(dialog.locator(".folder-status")).toHaveText("Folder not found");
+  await expect(dialog.getByRole("button", { name: "Up", exact: true })).toBeFocused();
+  await dialog.getByRole("button", { name: "Start session", exact: true }).click();
+  await expect(dialog.locator(".session-launch-status")).toHaveText("Launch failed");
+  await expect(dialog.getByRole("button", { name: "Create folder" })).toBeDisabled();
+  await dialog.getByLabel("New folder name").fill("new");
+  await dialog.getByLabel("New folder name").press("Enter");
+  expect(created).toEqual([]);
+  await dialog.getByRole("button", { name: "Up", exact: true }).click();
+  await expect(dialog.locator(".folder-location")).toHaveText("/work");
+  await expect(dialog.getByRole("button", { name: "Create folder" })).toBeEnabled();
+});
+
+test("caches path completions until creation or launcher reset", async ({ page }) => {
+  let listings = 0;
+  let created = false;
+  await page.route("**/api/hosts/writer/folders**", async (route) => {
+    if (route.request().method() === "POST") {
+      created = true;
+      await route.fulfill({ json: { ok: true } });
+      return;
+    }
+    const path = new URL(route.request().url()).searchParams.get("path") || "/work";
+    if (path === "/work") listings++;
+    await route.fulfill({ json: { path, entries: path === "/work" ? ["project", ...(created ? ["new"] : [])] : [] } });
+  });
+  await page.goto("/");
+  const launch = page.getByRole("button", { name: "Start session on writer" });
+  await launch.click();
+  const dialog = page.getByRole("dialog");
+  const path = dialog.getByLabel("Path", { exact: true });
+  const options = dialog.locator("#folder-path-suggestions option");
+  await path.fill("/work/p");
+  await expect(options).toHaveAttribute("value", "/work/project");
+  await path.fill("/work/pr");
+  await expect(options).toHaveAttribute("value", "/work/project");
+  expect(listings).toBe(1);
+  await path.evaluate((input: HTMLInputElement) => { input.value = "/work"; });
+  await dialog.getByRole("button", { name: "Browse folders" }).click();
+  await expect(dialog.locator(".folder-location")).toHaveText("/work");
+  await dialog.getByLabel("New folder name").fill("new");
+  await dialog.getByRole("button", { name: "Create folder" }).click();
+  await expect(dialog.locator(".folder-location")).toHaveText("/work/new");
+  await path.fill("/work/n");
+  await expect(options).toHaveAttribute("value", "/work/new");
+  expect(listings).toBe(3);
+  await page.keyboard.press("Escape");
+  await launch.click();
+  await path.fill("/work/p");
+  await expect(options).toHaveAttribute("value", "/work/project");
+  expect(listings).toBe(4);
+});
+
+test("does not cache an outdated completion response", async ({ page }) => {
+  const { promise: pending, resolve: release } = Promise.withResolvers<void>();
+  const { promise: started, resolve: requested } = Promise.withResolvers<void>();
+  const { promise: finished, resolve: finish } = Promise.withResolvers<void>();
+  await page.route("**/api/hosts/writer/folders**", async (route) => {
+    const path = new URL(route.request().url()).searchParams.get("path");
+    if (path === "/slow") {
+      requested();
+      await pending;
+      await route.fulfill({ json: { path, entries: ["stale"] } });
+      finish();
+    } else {
+      await route.fulfill({ json: { path, entries: ["current"] } });
+    }
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Start session on writer" }).click();
+  const dialog = page.getByRole("dialog");
+  const path = dialog.getByLabel("Path", { exact: true });
+  const options = dialog.locator("#folder-path-suggestions option");
+  await path.fill("/slow/s");
+  await started;
+  await path.fill("/fast/c");
+  await expect(options).toHaveAttribute("value", "/fast/current");
+  release();
+  await finished;
+  await path.fill("/fast/cu");
+  await expect(options).toHaveAttribute("value", "/fast/current");
+});
+
+test("discards an in-flight completion when a folder is created", async ({ page }) => {
+  const { promise: pending, resolve: release } = Promise.withResolvers<void>();
+  const { promise: started, resolve: requested } = Promise.withResolvers<void>();
+  const { promise: finished, resolve: finish } = Promise.withResolvers<void>();
+  let delay = true;
+  let created = false;
+  await page.route("**/api/hosts/writer/folders**", async (route) => {
+    if (route.request().method() === "POST") {
+      created = true;
+      await route.fulfill({ json: { ok: true } });
+      return;
+    }
+    const path = new URL(route.request().url()).searchParams.get("path");
+    if (path === "/work" && delay) {
+      delay = false;
+      requested();
+      await pending;
+      await route.fulfill({ json: { path, entries: ["old"] } });
+      finish();
+      return;
+    }
+    await route.fulfill({ json: { path, entries: path === "/work" && created ? ["new"] : [] } });
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Start session on writer" }).click();
+  const dialog = page.getByRole("dialog");
+  const path = dialog.getByLabel("Path", { exact: true });
+  const options = dialog.locator("#folder-path-suggestions option");
+  await path.fill("/work/o");
+  await started;
+  await path.evaluate((input: HTMLInputElement) => { input.value = "/work"; });
+  await dialog.getByRole("button", { name: "Browse folders" }).click();
+  await expect(dialog.locator(".folder-location")).toHaveText("/work");
+  await dialog.getByLabel("New folder name").fill("new");
+  await dialog.getByRole("button", { name: "Create folder" }).click();
+  await expect(dialog.locator(".folder-location")).toHaveText("/work/new");
+  release();
+  await finished;
+  await path.fill("/work/n");
+  await expect(options).toHaveAttribute("value", "/work/new");
+});

@@ -96,6 +96,7 @@ export interface CollabMethodResult {
 export const HOST_SESSIONS_FEATURE = "host.sessions.v1";
 export const HOST_SESSIONS_RESERVED_LABELS_FEATURE =
   "host.sessions.reserved-labels";
+export const HOST_FOLDERS_FEATURE = "host.folders.v1";
 
 export interface PastSession {
   sessionId: string;
@@ -108,6 +109,8 @@ export interface PastSession {
 
 export interface HostMethodParams extends CollabMethodParams {
   "host.sessions.list": Record<string, never>;
+  "host.folders.list": { path: string };
+  "host.folders.mkdir": { path: string };
   "host.sessions.start": {
     cwd: string;
     name: string;
@@ -118,6 +121,8 @@ export interface HostMethodParams extends CollabMethodParams {
 
 export interface HostMethodResult extends CollabMethodResult {
   "host.sessions.list": { sessions: PastSession[] };
+  "host.folders.list": { path: string; entries: string[] };
+  "host.folders.mkdir": { ok: true };
   "host.sessions.start": { ok: true; label: string };
 }
 

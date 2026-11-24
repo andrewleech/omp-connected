@@ -4,6 +4,7 @@ import type { Component } from "@oh-my-pi/pi-tui";
 import { LoginManager } from "./auth-login.js";
 import { getCollabRegistry } from "./collab-registry.js";
 import { FileService } from "./files-rpc.js";
+import { HOST_FOLDERS_FEATURE, HostFolders } from "./host-folders.js";
 import { HOST_SESSIONS_FEATURE, HOST_SESSIONS_RESERVED_LABELS_FEATURE, HostSessions } from "./host-sessions.js";
 import { type AgentSummary, HubTransport } from "./hub-transport.js";
 import { RpcCode, RpcError } from "./protocol.js";
@@ -141,6 +142,11 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		},
 		currentSessionId: () => ownerContext?.sessionManager.getSessionId(),
 	});
+	const hostFolders = new HostFolders(async () => {
+		const registry = await getCollabRegistry();
+		if (!registry) throw new RpcError(RpcCode.Internal, "Collab registry not available");
+		return registry.listCollabHosts();
+	});
 	function rememberSession(ctx: ExtensionContext): void {
 		void hostSessions.remember(ctx.sessionManager.getSessionId(), process.cwd(), ompcSession).catch((error) => {
 			pi.logger.warn("omp-connected: could not remember the ompc session name", {
@@ -200,6 +206,8 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 		}
 		if (method === "host.sessions.list") return hostSessions.list();
 		if (method === "host.sessions.start") return hostSessions.start(params);
+		if (method === "host.folders.list") return hostFolders.list(params);
+		if (method === "host.folders.mkdir") return hostFolders.mkdir(params);
 		if (!sessionRpc) throw new RpcError(RpcCode.Internal, "the session is not ready");
 		const result = await sessionRpc(method, params);
 		if (method === "session.exit") {
@@ -268,6 +276,7 @@ export function registerOmpConnected(pi: ExtensionAPI): void {
 							SESSION_FORK_FEATURE,
 							HOST_SESSIONS_FEATURE,
 							HOST_SESSIONS_RESERVED_LABELS_FEATURE,
+							HOST_FOLDERS_FEATURE,
 							USAGE_FEATURE,
 							AUTH_FEATURE,
 							...(transfer ? [TRANSFER_FEATURE] : []),

@@ -2,6 +2,7 @@ import { type Context, Elysia } from "elysia";
 import { AgentCallError, type AgentRegistry } from "./agent-registry";
 import { RateLimiter } from "./rate-limit";
 import {
+  HOST_FOLDERS_FEATURE,
   HOST_SESSIONS_FEATURE,
   HOST_SESSIONS_RESERVED_LABELS_FEATURE,
   type HostMethodParams,
@@ -19,9 +20,10 @@ const HTTP_ERRORS: Record<number, number> = {
 };
 
 export function hostSessionRoutes(registry: AgentRegistry) {
-  const limiter = new RateLimiter({ max: 20, windowMs: 10_000 });
+  const sessionLimiter = new RateLimiter({ max: 20, windowMs: 10_000 });
+  const folderLimiter = new RateLimiter({ max: 60, windowMs: 10_000 });
 
-  async function call<M extends "host.sessions.list" | "host.sessions.start">(
+  async function call<M extends "host.sessions.list" | "host.sessions.start" | "host.folders.list" | "host.folders.mkdir">(
     hostId: string,
     method: M,
     params: HostMethodParams[M],
@@ -41,13 +43,18 @@ export function hostSessionRoutes(registry: AgentRegistry) {
         error:
           feature === HOST_SESSIONS_RESERVED_LABELS_FEATURE
             ? "Restart an OMP session on this host to enable reserved-label session launching."
-            : "Restart an OMP session on this host to enable dashboard session launching.",
+            : feature === HOST_FOLDERS_FEATURE
+              ? "Restart an OMP session on this host to enable folder browsing."
+              : "Restart an OMP session on this host to enable dashboard session launching.",
       };
     }
-    if (!limiter.allow(hostId)) {
+    const isFolderRequest = feature === HOST_FOLDERS_FEATURE;
+    if (!(isFolderRequest ? folderLimiter : sessionLimiter).allow(hostId)) {
       set.status = 429;
       set.headers["retry-after"] = "1";
-      return { error: "Rate limit: host session requests (20 per 10s)" };
+      return { error: isFolderRequest
+        ? "Rate limit: host folder requests (60 per 10s)"
+        : "Rate limit: host session requests (20 per 10s)" };
     }
     try {
       return await registry.callOnHost(
@@ -70,6 +77,24 @@ export function hostSessionRoutes(registry: AgentRegistry) {
   }
 
   return new Elysia({ prefix: "/api/hosts" })
+    .get("/:id/folders", ({ params, query, set }) => {
+      const path = query.path ?? "";
+      if (typeof path !== "string" || path.includes("\0")) {
+        set.status = 400;
+        return { error: "Provide a valid folder path." };
+      }
+      return call(params.id, "host.folders.list", { path }, set, HOST_FOLDERS_FEATURE);
+    })
+    .post("/:id/folders", ({ params, body, set }) => {
+      const value = body && typeof body === "object" && !Array.isArray(body)
+        ? (body as Record<string, unknown>)
+        : undefined;
+      if (typeof value?.path !== "string" || !value.path || value.path.includes("\0")) {
+        set.status = 400;
+        return { error: "Provide a valid folder path." };
+      }
+      return call(params.id, "host.folders.mkdir", { path: value.path }, set, HOST_FOLDERS_FEATURE);
+    })
     .get("/:id/session-history", ({ params, set }) =>
       call(params.id, "host.sessions.list", {}, set),
     )

@@ -1,4 +1,5 @@
 import { button, el } from "./dom";
+import { FolderBrowser } from "./folder-browser";
 
 interface PastSession {
   sessionId: string;
@@ -15,6 +16,7 @@ export class SessionLauncher {
   }) as HTMLDialogElement;
   readonly #title = el("h2");
   readonly #path = document.createElement("input");
+  readonly #folders = new FolderBrowser(this.#path);
   readonly #name = document.createElement("input");
   readonly #history = el("div", { className: "session-history" });
   readonly #status = el("p", { className: "session-launch-status" });
@@ -53,6 +55,7 @@ export class SessionLauncher {
       const label = el("label", { text });
       label.append(input);
       form.append(label);
+      if (input === this.#path) form.append(this.#folders.element);
     }
     form.append(
       el("p", {
@@ -96,6 +99,7 @@ export class SessionLauncher {
     });
     this.#dialog.addEventListener("close", () => {
       this.#request++;
+      this.#folders.reset("");
     });
     document.body.append(this.#dialog);
   }
@@ -140,6 +144,7 @@ export class SessionLauncher {
     if (this.#submitting) return;
     const request = ++this.#request;
     this.#host = host;
+    this.#folders.reset(host);
     this.#title.textContent = `Start session on ${host}`;
     this.#path.value = cwd;
     this.#name.value = "";
@@ -269,6 +274,7 @@ export class SessionLauncher {
           : "Start session";
     this.#new.disabled = this.#submitting || count === 0;
     this.#path.disabled = this.#submitting || count > 1;
+    this.#folders.setDisabled(this.#path.disabled);
     this.#name.disabled = this.#submitting || count > 1;
     for (const row of this.#history.querySelectorAll<HTMLButtonElement>(
       ".past-session",
