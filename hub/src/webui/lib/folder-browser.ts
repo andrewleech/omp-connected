@@ -5,6 +5,17 @@ interface FolderListing {
   entries: string[];
 }
 
+interface FolderNode {
+  path: string;
+  row: HTMLElement;
+  group: HTMLElement;
+  select: HTMLButtonElement;
+  expand: HTMLButtonElement;
+  loaded: boolean;
+  loading: boolean;
+  version: number;
+}
+
 function joinPath(parent: string, name: string): string {
   return `${parent.replace(/\/$/, "")}/${name}`;
 }
@@ -12,45 +23,40 @@ function joinPath(parent: string, name: string): string {
 export class FolderBrowser {
   readonly element = el("div", { className: "folder-browser" });
   readonly #toggle = button("Browse folders", "small");
-  readonly #panel = el("div", { className: "folder-panel" });
+  readonly #panel = document.createElement("dialog");
   readonly #location = el("p", { className: "folder-location" });
-  readonly #up = button("Up", "small");
   readonly #list = el("div", { className: "folder-list" });
   readonly #status = el("p", { className: "folder-status" });
   readonly #folderName = document.createElement("input");
   readonly #create = button("Create folder", "small");
+  readonly #select = button("Select folder", "small");
   readonly #suggestions = document.createElement("datalist");
   #host = "";
-  #current = "";
+  #selected: FolderNode | undefined;
   #request = 0;
   #generation = 0;
+  #selectionRequest = 0;
   #completionRequest = 0;
   #completionCache: { parent: string; listing: FolderListing } | undefined;
-  #canCreate = false;
   #timer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly path: HTMLInputElement) {
-    this.#panel.hidden = true;
-    this.#panel.id = "folder-browser-panel";
-    this.#toggle.setAttribute("aria-expanded", "false");
-    this.#toggle.setAttribute("aria-controls", this.#panel.id);
+    this.#panel.className = "folder-panel";
+    this.#panel.setAttribute("aria-labelledby", "folder-dialog-title");
+    this.#toggle.setAttribute("aria-haspopup", "dialog");
     this.#toggle.onclick = () => {
-      if (!this.#panel.hidden) {
-        this.#hide();
-      } else {
-        this.#panel.hidden = false;
-        this.#toggle.setAttribute("aria-expanded", "true");
-        void this.#browse(this.path.value || "");
-      }
+      this.#panel.showModal();
+      void this.#browse(this.path.value || "");
     };
-    const navigation = el("div", { className: "folder-navigation" });
+    this.#panel.addEventListener("cancel", () => this.#invalidate());
+    const heading = el("h2", { text: "Choose a folder" });
+    heading.id = "folder-dialog-title";
     const home = button("Home", "small");
     home.onclick = () => void this.#browse("");
-    this.#up.onclick = () => {
-      const parent = this.#current.replace(/\/+$/, "").replace(/\/[^/]*$/, "") || "/";
-      void this.#browse(parent);
-    };
-    navigation.append(home, this.#up, this.#location);
+    const root = button("Root", "small");
+    root.onclick = () => void this.#browse("/");
+    const navigation = el("div", { className: "folder-navigation" });
+    navigation.append(root, home, this.#location);
     this.#list.setAttribute("aria-label", "Folders");
     this.#status.setAttribute("role", "status");
     const createRow = el("div", { className: "folder-create" });
@@ -64,7 +70,18 @@ export class FolderBrowser {
     };
     this.#create.onclick = () => void this.#createFolder();
     createRow.append(this.#folderName, this.#create);
-    this.#panel.append(navigation, this.#list, createRow, this.#status);
+    this.#select.onclick = () => {
+      if (!this.#selected) return;
+      this.path.value = this.#selected.path;
+      this.#clearCompletion();
+      this.#hide();
+      this.path.focus();
+    };
+    const cancel = button("Cancel", "small");
+    cancel.onclick = () => this.#hide();
+    const actions = el("div", { className: "folder-actions" });
+    actions.append(cancel, this.#select);
+    this.#panel.append(heading, navigation, this.#list, createRow, this.#status, actions);
     this.#suggestions.id = "folder-path-suggestions";
     this.path.setAttribute("list", this.#suggestions.id);
     this.path.setAttribute("autocomplete", "off");
@@ -80,27 +97,33 @@ export class FolderBrowser {
   reset(host: string): void {
     this.#host = host;
     ++this.#generation;
-    this.#current = "";
-    this.#canCreate = false;
     this.#completionCache = undefined;
     this.#hide();
-    ++this.#completionRequest;
-    clearTimeout(this.#timer);
-    this.#suggestions.replaceChildren();
+    this.#clearCompletion();
     this.#folderName.value = "";
     this.#status.textContent = "";
   }
 
   setDisabled(disabled: boolean): void {
     this.#toggle.disabled = disabled;
-    this.#create.disabled = disabled || !this.#canCreate;
     if (disabled) this.#hide();
   }
 
-  #hide(): void {
+  #clearCompletion(): void {
+    ++this.#completionRequest;
+    clearTimeout(this.#timer);
+    this.#suggestions.replaceChildren();
+  }
+
+  #invalidate(): void {
     ++this.#request;
-    this.#panel.hidden = true;
-    this.#toggle.setAttribute("aria-expanded", "false");
+    ++this.#selectionRequest;
+    this.#selected = undefined;
+  }
+
+  #hide(): void {
+    this.#invalidate();
+    if (this.#panel.open) this.#panel.close();
   }
 
   async #fetch(path: string, init?: RequestInit): Promise<FolderListing> {
@@ -110,43 +133,148 @@ export class FolderBrowser {
     return body as FolderListing;
   }
 
-  async #browse(path: string): Promise<void> {
-    const request = ++this.#request;
-    this.#current = path;
-    this.#canCreate = false;
-    if (this.#list.contains(document.activeElement)) this.#up.focus();
+  #node(path: string, label: string): FolderNode {
+    const row = el("div", { className: "folder-row" });
+    const expand = button("▸", "folder-expand");
+    expand.setAttribute("aria-label", `Expand ${label}`);
+    expand.setAttribute("aria-expanded", "false");
+    const select = button(label, "folder-entry");
+    const group = el("div", { className: "folder-children" });
+    group.hidden = true;
+    const node: FolderNode = { path, row, group, expand, select, loaded: false, loading: false, version: 0 };
+    expand.onclick = () => {
+      if (!group.hidden) {
+        group.hidden = true;
+        expand.textContent = "▸";
+        expand.setAttribute("aria-expanded", "false");
+        expand.setAttribute("aria-label", `Expand ${label}`);
+      } else {
+        group.hidden = false;
+        expand.textContent = "▾";
+        expand.setAttribute("aria-expanded", "true");
+        expand.setAttribute("aria-label", `Collapse ${label}`);
+        if (!node.loaded && !node.loading) void this.#load(node);
+      }
+    };
+    select.onclick = () => void this.#choose(node);
+    row.append(expand, select);
+    return node;
+  }
+
+  async #load(node: FolderNode): Promise<boolean> {
+    const request = this.#request;
+    const version = ++node.version;
+    node.loading = true;
     this.#status.textContent = "Loading folders…";
-    this.#list.replaceChildren();
+    try {
+      const listing = await this.#fetch(node.path);
+      if (request !== this.#request || version !== node.version) return false;
+      node.path = listing.path;
+      node.group.replaceChildren();
+      for (const name of listing.entries) {
+        const child = this.#node(joinPath(listing.path, name), name);
+        node.group.append(child.row, child.group);
+      }
+      node.loaded = true;
+      this.#status.textContent = listing.entries.length ? "" : "No subfolders.";
+      return true;
+    } catch (error) {
+      if (request === this.#request && version === node.version) this.#status.textContent = (error as Error).message;
+      return false;
+    } finally {
+      if (request === this.#request && version === node.version) node.loading = false;
+    }
+  }
+
+  async #choose(node: FolderNode): Promise<void> {
+    const selection = ++this.#selectionRequest;
+    this.#selected?.select.removeAttribute("aria-pressed");
+    this.#selected = undefined;
+    this.#select.disabled = true;
     this.#create.disabled = true;
+    this.#location.textContent = node.path;
+    this.#location.title = node.path;
+    // A separate request also validates an entry selected while its expansion is loading.
+    if (!node.loaded && !await this.#load(node)) return;
+    if (selection !== this.#selectionRequest) return;
+    this.#status.textContent = node.group.children.length ? "" : "No subfolders.";
+    this.#selected = node;
+    node.select.setAttribute("aria-pressed", "true");
+    this.#location.textContent = node.path;
+    this.#location.title = node.path;
+    this.#select.disabled = false;
+    this.#create.disabled = false;
+  }
+
+  async #browse(path: string): Promise<void> {
+    this.#invalidate();
+    const request = this.#request;
+    this.#select.disabled = true;
+    this.#create.disabled = true;
+    this.#location.textContent = path || "Home";
+    this.#list.replaceChildren();
+    this.#status.textContent = "Loading folders…";
     try {
       const listing = await this.#fetch(path);
       if (request !== this.#request) return;
-      this.#current = listing.path;
-      this.#location.textContent = listing.path;
-      this.#location.title = listing.path;
-      const select = button("Select this folder", "small");
-      select.onclick = () => {
-        this.path.value = listing.path;
-        ++this.#completionRequest;
-        clearTimeout(this.#timer);
-        this.#suggestions.replaceChildren();
-        this.#hide();
-        this.path.focus();
-      };
-      this.#list.append(select);
-      for (const name of listing.entries) {
-        const entry = button(name, "folder-entry");
-        entry.onclick = () => void this.#browse(joinPath(listing.path, name));
-        this.#list.append(entry);
+      const parts = listing.path.split("/").filter(Boolean);
+      const ancestors: FolderListing[] = [];
+      if (listing.path.startsWith("/")) {
+        for (let i = 0; i < parts.length; i++) {
+          const ancestorPath = i ? `/${parts.slice(0, i).join("/")}` : "/";
+          try {
+            const ancestor = await this.#fetch(ancestorPath);
+            if (request !== this.#request) return;
+            if (ancestor.path !== ancestorPath || !ancestor.entries.includes(parts[i])) {
+              ancestors.length = 0;
+              break;
+            }
+            ancestors.push(ancestor);
+          } catch {
+            if (request !== this.#request) return;
+            ancestors.length = 0;
+            break;
+          }
+        }
+      }
+      let container = this.#list;
+      let selected: FolderNode | undefined;
+      for (const current of [...ancestors, listing]) {
+        const label = current.path === "/" ? "/" : current.path.split("/").filter(Boolean).slice(-1)[0] || current.path;
+        let node = selected;
+        if (!node) {
+          node = this.#node(current.path, label);
+          container.append(node.row, node.group);
+        }
+        node.loaded = true;
+        node.group.hidden = false;
+        node.expand.textContent = "▾";
+        node.expand.setAttribute("aria-expanded", "true");
+        node.expand.setAttribute("aria-label", `Collapse ${label}`);
+        const nextPath = ancestors[ancestors.indexOf(current) + 1]?.path ?? listing.path;
+        selected = undefined;
+        for (const name of current.entries) {
+          const child = this.#node(joinPath(current.path, name), name);
+          node.group.append(child.row, child.group);
+          if (child.path === nextPath && current !== listing) selected = child;
+        }
+        container = node.group;
+        if (current === listing) selected = node;
       }
       this.#status.textContent = listing.entries.length ? "" : "No subfolders.";
-      this.#canCreate = true;
-      this.#create.disabled = false;
+      if (selected) {
+        await this.#choose(selected);
+        if (request !== this.#request) return;
+        const listRect = this.#list.getBoundingClientRect();
+        const selectedRect = selected.row.getBoundingClientRect();
+        if (selectedRect.top < listRect.top) {
+          this.#list.scrollTop += selectedRect.top - listRect.top;
+        } else if (selectedRect.bottom > listRect.bottom) {
+          this.#list.scrollTop += selectedRect.bottom - listRect.bottom;
+        }
+      }
     } catch (error) {
-      if (request !== this.#request) return;
-      this.#location.textContent = path || "Home";
-      this.#location.title = path || "Home";
-      this.#status.textContent = (error as Error).message;
+      if (request === this.#request) this.#status.textContent = (error as Error).message;
     }
   }
 
@@ -156,28 +284,29 @@ export class FolderBrowser {
       this.#status.textContent = "Enter a folder name without slashes.";
       return;
     }
-    if (this.#create.disabled) return;
+    const parent = this.#selected;
+    if (this.#create.disabled || !parent) return;
     const generation = this.#generation;
-    this.#canCreate = false;
-    const request = ++this.#request;
-    const path = joinPath(this.#current, name);
+    const request = this.#request;
+    const selection = this.#selectionRequest;
+    const path = joinPath(parent.path, name);
     this.#create.disabled = true;
     this.#status.textContent = "Creating folder…";
     try {
       await this.#fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) });
       if (generation === this.#generation) {
         this.#completionCache = undefined;
-        ++this.#completionRequest;
-        clearTimeout(this.#timer);
-        this.#suggestions.replaceChildren();
+        this.#clearCompletion();
       }
-      if (request !== this.#request) return;
+      if (request !== this.#request || selection !== this.#selectionRequest) return;
       this.#folderName.value = "";
-      await this.#browse(path);
+      const child = this.#node(path, name);
+      parent.group.append(child.row, child.group);
+      if (parent.group.hidden) parent.expand.click();
+      await this.#choose(child);
     } catch (error) {
-      if (request !== this.#request) return;
+      if (request !== this.#request || selection !== this.#selectionRequest) return;
       this.#status.textContent = (error as Error).message;
-      this.#canCreate = true;
       this.#create.disabled = false;
     }
   }
