@@ -680,6 +680,48 @@ test("shows host access failures in the mobile popup", async ({ page }) => {
   await expect(page.getByRole("dialog")).not.toBeVisible();
 });
 
+for (const viewport of [
+  { width: 1280, height: 800 },
+  { width: 390, height: 844 },
+  { width: 390, height: 480 },
+]) {
+  test(`keeps the launcher usable at ${viewport.width}x${viewport.height}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.route("**/api/hosts/writer/folders**", async (route) => {
+      await route.fulfill({
+        json: { path: "/work", entries: Array.from({ length: 30 }, (_, i) => `folder-${i}`) },
+      });
+    });
+    await page.goto("/");
+    if (viewport.width <= 768) await page.locator("[data-session-drawer-toggle]").click();
+    await page.getByRole("button", { name: "Start session on writer", exact: true }).click();
+    const dialog = page.getByRole("dialog");
+    const form = dialog.locator(".session-launch-form");
+    const checkForm = async () => {
+      const { clientHeight, scrollHeight } = await form.evaluate((element) => ({
+        clientHeight: element.clientHeight,
+        scrollHeight: element.scrollHeight,
+      }));
+      expect(clientHeight).toBeGreaterThan(200);
+      expect(scrollHeight - clientHeight).toBeLessThanOrEqual(1);
+    };
+    await checkForm();
+    await dialog.getByRole("button", { name: "Browse folders" }).click();
+    const lastFolder = dialog.getByRole("button", { name: "folder-29", exact: true });
+    await lastFolder.scrollIntoViewIfNeeded();
+    await expect(lastFolder).toBeVisible();
+    await checkForm();
+    const name = dialog.getByLabel("Name", { exact: true });
+    await name.fill("example");
+    await expect(name).toHaveValue("example");
+    const recent = dialog.locator('.past-session[data-session-id="past-new"]');
+    await recent.click();
+    await expect(recent).toHaveAttribute("aria-pressed", "true");
+    await dialog.getByRole("button", { name: "Browse folders" }).click();
+    await checkForm();
+  });
+}
+
 test("browses, creates and selects host folders with path completion", async ({ page }) => {
   const created: string[] = [];
   await page.route("**/api/hosts/writer/folders**", async (route) => {
