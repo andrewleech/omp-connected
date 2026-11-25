@@ -1007,7 +1007,6 @@ function createDashboard(root: HTMLElement): void {
     const focusKey = rail.contains(focused)
       ? focused?.dataset.orderKey
       : undefined;
-    const focusAction = focused?.dataset.orderAction;
     const oldScrollTop = rail.scrollTop;
     const railTop = rail.getBoundingClientRect().top;
     const oldAnchor = Array.from(
@@ -1087,7 +1086,7 @@ function createDashboard(root: HTMLElement): void {
       section.append(heading);
       if (group.sessions.length === 0)
         section.append(el("p", { className: "empty", text: "No sessions" }));
-      for (const [index, session] of group.sessions.entries()) {
+      for (const session of group.sessions) {
         const memberKey = groupMemberKey(session);
         const row = el("div", { className: "session-row" });
         row.dataset.memberKey = memberKey;
@@ -1162,14 +1161,13 @@ function createDashboard(root: HTMLElement): void {
           className: "session-drag-handle",
           type: "button",
           text: "⋮⋮",
-          title: `Drag ${sessionLabel(session)} to reorder`,
+          title: `Drag ${sessionLabel(session)} to reorder; arrow keys move it`,
         }) as HTMLButtonElement;
         handle.setAttribute(
           "aria-label",
-          `Drag ${sessionLabel(session)} to reorder`,
+          `Drag ${sessionLabel(session)} to reorder; arrow keys move it`,
         );
         handle.dataset.orderKey = memberKey;
-        handle.dataset.orderAction = "drag";
         handle.onpointerdown = (event) => {
           if (event.button !== 0 || group.sessions.length < 2) return;
           event.preventDefault();
@@ -1288,57 +1286,38 @@ function createDashboard(root: HTMLElement): void {
           handle.onlostpointercapture = (end) => finish(end, true);
         };
         row.append(handle);
-        for (const [direction, offset] of [
-          ["up", -1],
-          ["down", 1],
-        ] as const) {
-          const neighbour = group.sessions[index + offset];
-          const move = el("button", {
-            className: "session-move",
-            type: "button",
-            text: direction === "up" ? "↑" : "↓",
-            title: `Move ${sessionLabel(session)} ${direction}`,
-            disabled: !neighbour,
-          }) as HTMLButtonElement;
-          move.setAttribute(
-            "aria-label",
-            `Move ${sessionLabel(session)} ${direction}`,
-          );
-          move.dataset.orderKey = memberKey;
-          move.dataset.orderAction = direction;
-          move.onclick = () => {
-            keyboardMoves = keyboardMoves
-              .then(async () => {
-                const current = groupSessions(
-                  state.sessions,
-                  state.groups,
-                  state.order,
-                ).find(
-                  (candidate) =>
-                    candidate.id === group.id &&
-                    candidate.custom === group.custom,
-                );
-                const sessions = current?.sessions ?? [];
-                const currentIndex = sessions.findIndex(
-                  (item) => groupMemberKey(item) === memberKey,
-                );
-                const anchor =
-                  currentIndex < 0
-                    ? undefined
-                    : sessions[currentIndex + offset];
-                if (anchor)
-                  await mutateGroups("/reorder", {
-                    session: memberKey,
-                    anchor: groupMemberKey(anchor),
-                    position: direction === "up" ? "before" : "after",
-                  });
-              })
-              .catch((error: unknown) =>
-                showStatus((error as Error).message, "warning"),
+        handle.onkeydown = (event) => {
+          if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+          event.preventDefault();
+          const offset = event.key === "ArrowUp" ? -1 : 1;
+          keyboardMoves = keyboardMoves
+            .then(async () => {
+              const current = groupSessions(
+                state.sessions,
+                state.groups,
+                state.order,
+              ).find(
+                (candidate) =>
+                  candidate.id === group.id &&
+                  candidate.custom === group.custom,
               );
-          };
-          row.append(move);
-        }
+              const sessions = current?.sessions ?? [];
+              const currentIndex = sessions.findIndex(
+                (item) => groupMemberKey(item) === memberKey,
+              );
+              const anchor =
+                currentIndex < 0 ? undefined : sessions[currentIndex + offset];
+              if (anchor)
+                await mutateGroups("/reorder", {
+                  session: memberKey,
+                  anchor: groupMemberKey(anchor),
+                  position: offset < 0 ? "before" : "after",
+                });
+            })
+            .catch((error: unknown) =>
+              showStatus((error as Error).message, "warning"),
+            );
+        };
         section.append(row);
       }
       container.append(section);
@@ -1351,22 +1330,10 @@ function createDashboard(root: HTMLElement): void {
     if (newAnchor && anchorTop !== undefined)
       rail.scrollTop += newAnchor.getBoundingClientRect().top - anchorTop;
     else rail.scrollTop = oldScrollTop;
-    if (focusKey && focusAction) {
-      const controls = Array.from(
+    if (focusKey) {
+      const control = Array.from(
         rail.querySelectorAll<HTMLButtonElement>("[data-order-key]"),
-      );
-      const control =
-        controls.find(
-          (item) =>
-            item.dataset.orderKey === focusKey &&
-            item.dataset.orderAction === focusAction &&
-            !item.disabled,
-        ) ??
-        controls.find(
-          (item) =>
-            item.dataset.orderKey === focusKey &&
-            item.dataset.orderAction === "drag",
-        );
+      ).find((item) => item.dataset.orderKey === focusKey);
       control?.focus({ preventScroll: true });
       control?.scrollIntoView({ block: "nearest", inline: "nearest" });
     }

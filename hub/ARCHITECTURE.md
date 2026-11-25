@@ -258,7 +258,7 @@ A member key is `${hostId}:label:${ompcLabel}` when the session's agent explicit
 
 `order` is one shared sequence of member keys across all hosts and groups. Each rail section filters this sequence to its own sessions; ordering does not change group membership. A successful host Collab listing adds newly discovered identities at the head, newest first, without moving known identities. Repeated listings are idempotent, and failed listings or disconnected hosts do not remove keys. When an instance key becomes a label key, the hub preserves its position.
 
-The rail provides a drag handle for mouse and touch and move up/down controls for keyboard access. These actions reorder within the visible section by moving a session relative to another session in the shared sequence.
+Each rail row has a drag handle for mouse and touch; with the handle focused, ArrowUp and ArrowDown move the session for keyboard access. These actions reorder within the visible section by moving a session relative to another session in the shared sequence.
 
 The session's name must not drop out of its key while its agent reconnects:
 

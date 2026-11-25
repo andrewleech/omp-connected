@@ -110,11 +110,11 @@ test("keyboard reordering synchronises the global order between dashboards", asy
     (req) =>
       req.url().endsWith("/api/groups/reorder") && req.method() === "POST",
   );
-  const down = group(page, "Project").locator(
-    '[data-order-key="writer:label:writer"][data-order-action="down"]',
+  const handle = group(page, "Project").locator(
+    '[data-order-key="writer:label:writer"]',
   );
-  await down.focus();
-  await page.keyboard.press("Enter");
+  await handle.focus();
+  await page.keyboard.press("ArrowDown");
   expect((await reorder).postDataJSON()).toEqual({
     session: writer,
     anchor: viewer,
@@ -164,9 +164,7 @@ test("pointer and touch drags reorder sessions within a group", async ({
     "Writable room",
   );
 
-  const handle = project.locator(
-    '[data-order-key="writer:label:writer"][data-order-action="drag"]',
-  );
+  const handle = project.locator('[data-order-key="writer:label:writer"]');
   const viewerRow = project
     .locator(".session-row")
     .filter({ has: page.locator(VIEWER) });
