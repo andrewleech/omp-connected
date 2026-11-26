@@ -128,3 +128,26 @@ New observation from the re-run: the notice block is now part of the child's fir
 ## Cleanup
 
 Only processes started for this run were stopped: the hub (by PID), the host omp sessions (by killing the temp tmux server created with a unique socket name) and the browser scripts. Copies of the auth database in the temp homes were deleted (again after the re-run, which also stopped its own hub, host sessions and daemon worker by PID). Session files, screenshots and scripts remain under `/tmp/side-smoke`.
+
+## Automated checks
+
+Fork branch `collab-side-request` at head `git log -1` after commit "test(collab): expect the framed side request task in the guest client test", off upstream/main `d9a63f498b`. Bun 1.4.4 on PATH (the CLI needs 1.4.4 or newer; with Bun 1.4.2 the registry smoke, session lease probe and bash fd-inheritance tests fail for that reason and pass on 1.4.4).
+
+| Command | Result |
+|---|---|
+| `bun test packages/coding-agent/test/task packages/coding-agent/test/collab packages/coding-agent/test/session packages/coding-agent/test/session-storage-fd-inheritance.test.ts` (fork worktree) | 2211 pass, 0 fail |
+| `bun test` in `packages/collab-web` | 172 pass, 0 fail |
+| `tsc --noEmit` for `packages/wire`, `packages/collab-web`, `packages/coding-agent` | no errors in these packages |
+| `oxlint` and `oxfmt --check` on the changed `.ts` and `.tsx` files | clean |
+| `bun test tests/webui` in `hub` (omp-connected) | 185 pass, 0 fail |
+| `bunx playwright test tests/e2e/scheduled-send.spec.ts --repeat-each=4 --retries=0` in `hub` | 52 pass, 0 fail (one earlier single run had a flaky first attempt while the smoke environment was loading the machine) |
+
+Review rounds: standard review, adversarial review and a re-review of the fixes. Findings fixed: child approval mode inherited from the parent instead of forced to yolo (live and after revive), first prompt runs no slash or extension commands, revived child reports nothing to the parent, parent artifact manager adopted, task depth consistent live and revived, cap of 8 live children (parked children count again once revived), 120 second start timeout, internal error text hidden from guests, one side request in flight per peer, text, image count and image size limits, image field whitelist, framed first message so a mid-turn snapshot is not mistaken for the child's own work.
+
+## Open items
+
+- Image attachments: the upstream guest composer has no attach UI, so the embed API sends text only and the popover disables Start while attachment chips exist. The fleet guest has image attach; when this branch is merged into the integration the embed must read the composer attachments (a follow-up in the integration merge).
+- The upstream 19.2.x base is not the deployed fleet base. The branch is not yet merged into `ompc-fleet`; add a `[[submodules.branches]]` entry and refresh through mbm when it is wanted in the fleet build. Not deployed.
+- Mobile child panel header shows no title while the child runs (bug 4), the agents rail covering Send at some dashboard widths (bug 2) and the join toast covering Send on mobile (bug 3) were not checked against the base guest; none is specific to the side request code.
+- The child's first message shows the framing notice as raw text above the task in the subagent panel (cosmetic).
+- The host advertises side requests for an unpersisted session; Start then reports "Side requests need a persisted session" and keeps the draft.

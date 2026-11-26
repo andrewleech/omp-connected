@@ -42,3 +42,7 @@ Checked at planning HEAD `903d96f`.
 - Upstream now has `/btw` (ephemeral side turn, `Agent.buildSideRequestContext`, promotion to a forked session with branch reason `btw`). Inspect and reuse it only where it serves the snapshot contract; a child here is an interactive subagent, not an ephemeral turn.
 - Hold-Send menu: the existing send-when choices (In / At / When idle) are the popover in `hub/src/webui/lib/scheduled-send.ts`, an overlay on the unpatched same-origin Collab guest, not part of `packages/collab-web`. The prototype's guest-side menu is not carried over. The guest exposes a small embed API; the hub popover gets a Side request mode. Ticket 3 splits into a guest part (fork) and a hub part (this repo).
 - Wire contract chosen for all tickets: guest `{t:"side-request", reqId, text, images?}`; host replies only to the sender `{t:"side-request-result", reqId, ok:true, agentId}` or `{..., ok:false, message}`; welcome carries `sideRequests?: true`.
+
+## Result: 2026-11-26
+
+Tickets 1 to 4 executed on branch `collab-side-request` in the fork and in this repo. Evidence, checks, review findings and open items are in [the results report](20261126_collab_side_request_results.md). Not deployed and not yet merged into the fleet integration.
