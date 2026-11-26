@@ -50,11 +50,14 @@ const sessions = {
   },
 };
 
-// The guest's composer markup that the dashboard's scheduled send hooks
+// The guest's composer markup that the dashboard's send options hook
 // (lib/scheduled-send.ts). Like the real React composer, the prompt lives in
 // the page's own state, fed by input events, and Send is disabled while it
-// is blank; Send logs the prompt into [data-sent].
-const guest = `<!doctype html><html><body style="margin:0;background:#111;color:#fff;font:14px system-ui"><aside data-native-status-bar style="float:right;margin:12px;padding:8px;border:1px solid #65b9e8">project · main · active · model · context · 42 tok/s</aside><main style="padding:64px 12px">Collab control fixture<ol data-sent></ol></main>
+// is blank; Send logs the prompt into [data-sent]. The stub also provides
+// the guest's embed API, window.ompCollabGuest: tests drive window.guestStub
+// (sideRequests, failWith) from the page; a successful submitSideRequest()
+// logs the draft into [data-side] and clears the composer like the real guest.
+const guest = `<!doctype html><html><body style="margin:0;background:#111;color:#fff;font:14px system-ui"><aside data-native-status-bar style="float:right;margin:12px;padding:8px;border:1px solid #65b9e8">project · main · active · model · context · 42 tok/s</aside><main style="padding:64px 12px">Collab control fixture<ol data-sent></ol><ol data-side></ol></main>
 <div class="sh-composer" style="position:fixed;left:0;right:0;bottom:0;padding:10px"><div class="sh-composer-inner" style="display:flex;gap:8px"><textarea class="sh-composer-input" aria-label="prompt" style="flex:1"></textarea><div class="sh-composer-actions"><button type="button" class="sh-btn sh-btn-primary">Send</button></div></div></div>
 <script>
 const input = document.querySelector(".sh-composer-input");
@@ -88,6 +91,24 @@ composer.addEventListener("drop", (event) => {
     Number(imageAttachments.dataset.imageAttachments) + count,
   );
 });
+const guestStub = { sideRequests: false, failWith: "", calls: 0 };
+window.guestStub = guestStub;
+window.ompCollabGuest = {
+  get sideRequests() { return guestStub.sideRequests; },
+  async submitSideRequest() {
+    if (!guestStub.sideRequests) throw new Error("Side requests are not available.");
+    if (text.trim() === "") throw new Error("Type a request first.");
+    guestStub.calls += 1;
+    const sent = text;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    if (guestStub.failWith) throw new Error(guestStub.failWith);
+    const item = document.createElement("li");
+    item.textContent = sent;
+    document.querySelector("[data-side]").append(item);
+    if (text === sent) { text = ""; input.value = ""; sync(); }
+    return { agentId: "side-" + guestStub.calls };
+  },
+};
 sync();
 </script></body></html>`;
 
@@ -442,6 +463,13 @@ async function transferApi(
   return Response.json({ error: "not found" }, { status: 404 });
 }
 
+let withoutScheduleNext = false;
+function setWriterSchedule(on: boolean): void {
+  const features = sessions.writer.features;
+  const at = features.indexOf("session.schedule.v1");
+  if (on && at < 0) features.push("session.schedule.v1");
+  else if (!on && at >= 0) features.splice(at, 1);
+}
 let writerExited = false;
 // The writer's agent registered as ompc session "writer"; POST /__forget-label
 // lists it without that name, as a restarted hub does until it re-registers.
@@ -813,6 +841,12 @@ Bun.serve({
       for (const socket of dashboardSockets) socket.send(event);
       return json({ ok: true });
     }
+    // The next dashboard page load lists the writer without
+    // session.schedule.v1, as a session whose extension predates scheduling.
+    if (url.pathname === "/__without-schedule" && request.method === "POST") {
+      withoutScheduleNext = true;
+      return json({ ok: true });
+    }
     if (url.pathname === "/api/hosts")
       return json([{ hostId: "writer" }, { hostId: "viewer" }]);
     if (url.pathname === "/api/hosts/writer/collab") {
@@ -979,6 +1013,8 @@ Bun.serve({
       return new Response(guest, { headers: { "content-type": "text/html" } });
     if (url.pathname === "/" || url.pathname === "/index.html") {
       resetWriter();
+      setWriterSchedule(!withoutScheduleNext);
+      withoutScheduleNext = false;
       groupRoutes = freshGroups();
       writerBusy = true;
       return new Response(Bun.file(indexPath), {

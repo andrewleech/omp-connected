@@ -1509,7 +1509,7 @@ function createDashboard(root: HTMLElement): void {
 
   // Customize the same-origin Collab guest on every frame load (see
   // lib/collab-frame.ts), forward its edge swipes to the drawers, and add
-  // scheduled send to a control room whose extension serves it.
+  // the send options (scheduled send, side requests) to a control room.
   root.addEventListener(
     "load",
     (event) => {
@@ -1548,12 +1548,13 @@ function createDashboard(root: HTMLElement): void {
         entry &&
         session &&
         entry.access === "control" &&
-        doc.location.href !== "about:blank" &&
-        session.features?.includes(SCHEDULE_FEATURE)
+        doc.location.href !== "about:blank"
       )
         attachScheduledSend(
           doc,
-          scheduleApi(sessionApiBase(session.host_id, session.instanceId)),
+          session.features?.includes(SCHEDULE_FEATURE)
+            ? scheduleApi(sessionApiBase(session.host_id, session.instanceId))
+            : null,
         );
     },
     true,

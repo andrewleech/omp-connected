@@ -173,6 +173,12 @@ An extension that also advertises `session.schedule.v1` holds prompts queued fro
 
 Without `whenIdle`, `delayMs` is a whole number of milliseconds up to 7 days. The session re-reads the wall clock at least once a minute, so a host that sleeps through a due time sends the prompt when it wakes. `text` is at most 100,000 characters, and at most 20 prompts can wait per session. All three methods need `control` access, like the other methods.
 
+### Send options popover (`lib/scheduled-send.ts`)
+
+Holding the Collab guest's Send button opens a popover on the same-origin guest document. The scheduling modes (In, At, When idle) use the `session.schedule.v1` calls above and need that feature. The Side request mode needs no hub call: it uses the guest's embed API `window.ompCollabGuest` (`sideRequests` getter and `submitSideRequest()`), which starts an independent subagent over the Collab protocol and owns the draft. `sideRequests` is true only while the guest is live, writable, the host advertises support and no host question is pending. The popover reads it live: the mode is offered only when it is true on open, Start is disabled with a message when it turns false while the popover is open, and it is checked again on submit. Success closes the popover; a rejection shows the message inline, keeps the popover open and leaves the draft untouched. The subagent shares the working directory with the session.
+
+`attachScheduledSend` is attached to every control-access frame. A session without `session.schedule.v1` gets no strip and no polling, and the popover shows only Side request. If neither scheduling nor side requests are available, a held Send sends as usual. Attached images (`.sh-attachment`) disable Start in every mode.
+
 ### Host session history and launching (`host.sessions.v1`)
 
 A capable connected extension answers host-wide history and launch requests. The hub chooses the longest-connected agent advertising `host.sessions.v1` for history and launches without reservations, and `host.sessions.reserved-labels` for launches with `reservedLabels`, including an empty list. The extension requires a local control share, reads OMP's own history, excludes open conversation UUIDs (including ownership leases without a Collab share), and resolves a selected UUID to its local journal before launching. A host with no connected extension cannot be started remotely.

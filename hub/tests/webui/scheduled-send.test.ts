@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
   MAX_SCHEDULE_DELAY_MS,
+  availableModes,
   delayFromDuration,
   delayUntilClock,
   formatCountdown,
   formatFireTime,
+  sideRequestGuest,
 } from "@/webui/lib/scheduled-send";
 
 const MINUTE = 60_000;
@@ -74,5 +76,47 @@ describe("formatFireTime", () => {
     expect(later.split(" ")[0]).toBe(
       new Date(2026, 9, 3).toLocaleDateString([], { weekday: "short" }),
     );
+  });
+});
+
+describe("availableModes", () => {
+  test("scheduling modes need the schedule feature, Side request the guest", () => {
+    expect(availableModes(true, false)).toEqual(["in", "at", "idle"]);
+    expect(availableModes(true, true)).toEqual(["in", "at", "idle", "side"]);
+    expect(availableModes(false, true)).toEqual(["side"]);
+    expect(availableModes(false, false)).toEqual([]);
+  });
+});
+
+describe("sideRequestGuest", () => {
+  const submit = async () => ({ agentId: "a1" });
+
+  test("returns the guest only while it advertises side requests", () => {
+    const guest = { sideRequests: true, submitSideRequest: submit };
+    expect(sideRequestGuest({ ompCollabGuest: guest })).toBe(guest);
+  });
+
+  test("is read live from the guest", () => {
+    const guest = { sideRequests: false, submitSideRequest: submit };
+    const win = { ompCollabGuest: guest };
+    expect(sideRequestGuest(win)).toBeNull();
+    guest.sideRequests = true;
+    expect(sideRequestGuest(win)).toBe(guest);
+    guest.sideRequests = false;
+    expect(sideRequestGuest(win)).toBeNull();
+  });
+
+  test("a missing, partial or non-true guest offers nothing", () => {
+    expect(sideRequestGuest(null)).toBeNull();
+    expect(sideRequestGuest({})).toBeNull();
+    expect(sideRequestGuest({ ompCollabGuest: {} })).toBeNull();
+    expect(
+      sideRequestGuest({ ompCollabGuest: { sideRequests: true } }),
+    ).toBeNull();
+    expect(
+      sideRequestGuest({
+        ompCollabGuest: { sideRequests: 1, submitSideRequest: submit },
+      }),
+    ).toBeNull();
   });
 });

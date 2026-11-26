@@ -1,12 +1,20 @@
-// Scheduled send for the embedded Collab guest (control mode).
+// Send options for the embedded Collab guest (control mode).
 //
-// Holding the guest's Send button for LONG_PRESS_MS opens a popover that
-// queues the composer text to be sent later, either after a duration or at a
-// clock time. The prompt is held by the session itself (the omp-connected
-// extension's session.schedule_prompt), so it is sent even when this page is
-// closed. A strip above the composer lists what is waiting, with a countdown
-// and a cancel button, and is refreshed from the session so prompts queued
-// from another device show up too.
+// Holding the guest's Send button for LONG_PRESS_MS opens a popover with
+// other ways to send the composer text. Three modes queue it to be sent
+// later, either after a duration, at a clock time or when the agent is idle.
+// The prompt is held by the session itself (the omp-connected extension's
+// session.schedule_prompt), so it is sent even when this page is closed. A
+// strip above the composer lists what is waiting, with a countdown and a
+// cancel button, and is refreshed from the session so prompts queued from
+// another device show up too. These modes need the schedule feature.
+//
+// The fourth mode, Side request, starts an independent subagent from the
+// current conversation. It is offered only while the guest's embed API
+// `window.ompCollabGuest` reports `sideRequests: true` (connected, writable,
+// host supports it, no question pending), and submits through the guest's
+// `submitSideRequest()`, which owns the draft. The guest sends text only, so
+// attached images block Start, as they block the scheduling modes.
 //
 // Like lib/collab-frame.ts this works on the same-origin guest document
 // without patching it, and relies on these parts of the guest's markup:
@@ -51,7 +59,7 @@ ${SEND_BUTTON}.omp-sched-holding {
 }
 .omp-sched-pop [hidden], .omp-sched-strip[hidden] { display: none !important; }
 .omp-sched-title { font-weight: 600; }
-.omp-sched-modes { display: flex; gap: 4px; }
+.omp-sched-modes { display: flex; flex-wrap: wrap; gap: 4px; }
 .omp-sched-modes .sh-btn[aria-pressed="true"] { color: var(--fg); border-color: var(--accent); }
 .omp-sched-fields { display: flex; align-items: center; gap: 6px; color: var(--fg-muted); }
 .omp-sched-fields input {
@@ -184,12 +192,60 @@ function defaultClockValue(now: Date): string {
   return `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
 }
 
+export type SendMode = "in" | "at" | "idle" | "side";
+
+/** The guest's embed API (`window.ompCollabGuest`); the hub only reads it. */
+export interface CollabGuestApi {
+  readonly sideRequests: boolean;
+  submitSideRequest(): Promise<{ agentId: string }>;
+}
+
+/** The guest's embed API when it currently offers side requests, else null.
+ *  Read live: the guest's capability changes with its connection. */
+export function sideRequestGuest(win: object | null): CollabGuestApi | null {
+  if (!win || !("ompCollabGuest" in win)) return null;
+  const guest = win.ompCollabGuest;
+  if (!guest || typeof guest !== "object") return null;
+  return "sideRequests" in guest &&
+    guest.sideRequests === true &&
+    "submitSideRequest" in guest &&
+    typeof guest.submitSideRequest === "function"
+    ? // Both members were checked above.
+      (guest as CollabGuestApi)
+    : null;
+}
+
+/** The popover's modes, in display order: the three scheduling modes when
+ *  the session serves scheduling, and Side request when the guest offers it. */
+export function availableModes(schedule: boolean, side: boolean): SendMode[] {
+  return [
+    ...(schedule ? (["in", "at", "idle"] as const) : []),
+    ...(side ? (["side"] as const) : []),
+  ];
+}
+
+const SCHEDULE_IMAGES_NOTE =
+  "Images can't be scheduled. Remove them, or send this one now.";
+const SIDE_IMAGES_NOTE =
+  "Images can't be sent with a side request. Remove them first.";
+
+/** Why Start is disabled when the guest stops offering side requests while
+ *  the popover is open. */
+export const SIDE_UNAVAILABLE =
+  "Side requests are unavailable right now: the session may be read-only, reconnecting or waiting for an answer.";
+const SIDE_PREVIEW =
+  "Starts an independent subagent from the current conversation. It shares the workspace with this session, so their edits can conflict.";
+
 /**
- * Adds scheduled send to a freshly loaded guest document. Everything it
+ * Adds the send options to a freshly loaded guest document. Everything it
  * starts belongs to the guest window, so it all ends when the frame
- * navigates away.
+ * navigates away. A null `api` means the session cannot schedule prompts:
+ * only Side request is offered, and only while the guest supports it.
  */
-export function attachScheduledSend(doc: Document, api: ScheduleApi): void {
+export function attachScheduledSend(
+  doc: Document,
+  api: ScheduleApi | null,
+): void {
   const win = doc.defaultView;
   if (!win) return;
   const style = doc.createElement("style");
@@ -200,6 +256,7 @@ export function attachScheduledSend(doc: Document, api: ScheduleApi): void {
   let hold: { timer: number; x: number; y: number; button: Element } | null =
     null;
   let swallowClick = false;
+  let refreshPopover: (() => void) | null = null;
   let popover: HTMLElement | null = null;
   const strip = Object.assign(doc.createElement("div"), {
     className: "omp-sched-strip",
@@ -212,6 +269,9 @@ export function attachScheduledSend(doc: Document, api: ScheduleApi): void {
     target instanceof win.Element ? target.closest(SEND_BUTTON) : null;
   const promptText = (): string =>
     doc.querySelector<HTMLTextAreaElement>(PROMPT_INPUT)?.value ?? "";
+  const sideGuest = () => sideRequestGuest(win);
+  const hasModes = (): boolean =>
+    availableModes(api !== null, sideGuest() !== null).length > 0;
 
   function endHold(): void {
     if (!hold) return;
@@ -230,7 +290,8 @@ export function attachScheduledSend(doc: Document, api: ScheduleApi): void {
         !button ||
         (button as HTMLButtonElement).disabled ||
         event.button !== 0 ||
-        promptText().trim() === ""
+        promptText().trim() === "" ||
+        !hasModes()
       )
         return;
       endHold();
@@ -241,6 +302,9 @@ export function attachScheduledSend(doc: Document, api: ScheduleApi): void {
         y: event.clientY,
         timer: win.setTimeout(() => {
           endHold();
+          // The guest may have lost side requests during the hold; let the
+          // release send as usual then.
+          if (!hasModes()) return;
           // The release still produces a click on Send; swallow that one.
           swallowClick = true;
           openPopover(button);
@@ -284,21 +348,26 @@ export function attachScheduledSend(doc: Document, api: ScheduleApi): void {
   function closePopover(): void {
     popover?.remove();
     popover = null;
+    refreshPopover = null;
   }
 
   function openPopover(anchor: Element): void {
     closePopover();
     const now = new Date();
-    let mode: "in" | "at" | "idle" = "in";
+    const schedule = api !== null;
+    const sideOffered = sideGuest() !== null;
+    let mode: SendMode = schedule ? "in" : "side";
+    let submitting = false;
 
     const pop = Object.assign(doc.createElement("div"), {
       className: "omp-sched-pop",
     });
     pop.setAttribute("role", "dialog");
-    pop.setAttribute("aria-label", "Send later");
+    pop.setAttribute("aria-label", "Send options");
+    pop.tabIndex = -1;
     const title = Object.assign(doc.createElement("div"), {
       className: "omp-sched-title",
-      textContent: "Send later",
+      textContent: "Send options",
     });
 
     const modes = Object.assign(doc.createElement("div"), {
@@ -319,7 +388,15 @@ export function attachScheduledSend(doc: Document, api: ScheduleApi): void {
       className: "sh-btn",
       textContent: "When idle",
     });
-    modes.append(inMode, atMode, idleMode);
+    const sideMode = Object.assign(doc.createElement("button"), {
+      type: "button",
+      className: "sh-btn",
+      textContent: "Side request",
+    });
+    if (schedule) modes.append(inMode, atMode, idleMode);
+    if (sideOffered) modes.append(sideMode);
+    // A single mode needs no chooser.
+    modes.hidden = modes.childElementCount < 2;
 
     const numberInput = (label: string, value: number) => {
       const input = Object.assign(doc.createElement("input"), {
@@ -359,8 +436,7 @@ export function attachScheduledSend(doc: Document, api: ScheduleApi): void {
     preview.setAttribute("aria-live", "polite");
     const note = Object.assign(doc.createElement("div"), {
       className: "omp-sched-note",
-      textContent:
-        "Images can't be scheduled. Remove them, or send this one now.",
+      textContent: SCHEDULE_IMAGES_NOTE,
     });
     const error = Object.assign(doc.createElement("div"), {
       className: "omp-sched-error",
@@ -394,12 +470,25 @@ export function attachScheduledSend(doc: Document, api: ScheduleApi): void {
           : delayUntilClock(clockInput.value, new Date());
 
     function update(): void {
+      const side = sideGuest() !== null;
       inMode.setAttribute("aria-pressed", String(mode === "in"));
       atMode.setAttribute("aria-pressed", String(mode === "at"));
       idleMode.setAttribute("aria-pressed", String(mode === "idle"));
+      sideMode.setAttribute("aria-pressed", String(mode === "side"));
+      sideMode.disabled = !side;
       inFields.hidden = mode !== "in";
       atFields.hidden = mode !== "at";
       const hasImages = doc.querySelector(ATTACHMENT) !== null;
+      const blank = promptText().trim() === "";
+      if (mode === "side") {
+        note.textContent = SIDE_IMAGES_NOTE;
+        note.hidden = !hasImages;
+        preview.textContent = side ? SIDE_PREVIEW : SIDE_UNAVAILABLE;
+        confirm.textContent = "Start";
+        confirm.disabled = !side || hasImages || blank || submitting;
+        return;
+      }
+      note.textContent = SCHEDULE_IMAGES_NOTE;
       note.hidden = !hasImages;
       const ms = delay();
       preview.textContent =
@@ -411,44 +500,55 @@ export function attachScheduledSend(doc: Document, api: ScheduleApi): void {
               : "Pick a time."
             : `Sends ${formatFireTime(Date.now() + ms, new Date())} (in ${formatCountdown(ms)})`;
       confirm.textContent = mode === "idle" ? "Queue" : "Schedule";
-      confirm.disabled = ms === null || hasImages || promptText().trim() === "";
+      confirm.disabled = ms === null || hasImages || blank || submitting;
     }
 
     async function submit(): Promise<void> {
-      const ms = delay();
+      const ms = mode === "side" ? 0 : delay();
       const text = promptText();
       if (ms === null || text.trim() === "" || confirm.disabled) return;
+      submitting = true;
       confirm.disabled = true;
       error.textContent = "";
       try {
-        const added = await api.add(text, ms, mode === "idle");
-        if (!win || doc.defaultView === null) return;
-        clearPrompt(text);
-        closePopover();
-        prompts = [...prompts.filter((p) => p.id !== added.id), added].sort(
-          (a, b) => a.fireAt - b.fireAt,
-        );
-        renderStrip();
+        if (mode === "side") {
+          // Checked again here: the guest's state may have changed since the
+          // popover last refreshed.
+          const guest = sideGuest();
+          if (!guest) throw new Error(SIDE_UNAVAILABLE);
+          await guest.submitSideRequest();
+          if (doc.defaultView === null) return;
+          if (popover === pop) closePopover();
+        } else if (api) {
+          const added = await api.add(text, ms, mode === "idle");
+          if (!win || doc.defaultView === null) return;
+          clearPrompt(text);
+          closePopover();
+          prompts = [...prompts.filter((p) => p.id !== added.id), added].sort(
+            (a, b) => a.fireAt - b.fireAt,
+          );
+          renderStrip();
+        }
       } catch (failure) {
-        error.textContent = (failure as Error).message;
+        // The guest's rejection comes from its own realm: read the message
+        // instead of testing instanceof.
+        error.textContent =
+          (failure as Error | undefined)?.message || String(failure);
+        submitting = false;
         update();
       }
     }
 
-    inMode.addEventListener("click", () => {
-      mode = "in";
+    const choose = (next: SendMode, focus?: HTMLElement) => () => {
+      if (submitting) return;
+      mode = next;
       update();
-      minutesInput.focus();
-    });
-    atMode.addEventListener("click", () => {
-      mode = "at";
-      update();
-      clockInput.focus();
-    });
-    idleMode.addEventListener("click", () => {
-      mode = "idle";
-      update();
-    });
+      focus?.focus();
+    };
+    inMode.addEventListener("click", choose("in", minutesInput));
+    atMode.addEventListener("click", choose("at", clockInput));
+    idleMode.addEventListener("click", choose("idle"));
+    sideMode.addEventListener("click", choose("side"));
     for (const input of [hoursInput, minutesInput, clockInput])
       input.addEventListener("input", update);
     cancel.addEventListener("click", closePopover);
@@ -470,8 +570,11 @@ export function attachScheduledSend(doc: Document, api: ScheduleApi): void {
     doc.body.append(pop);
     popover = pop;
     placePopover(pop, anchor);
-    minutesInput.focus();
-    minutesInput.select();
+    refreshPopover = update;
+    if (mode === "in") {
+      minutesInput.focus();
+      minutesInput.select();
+    } else pop.focus();
   }
 
   function placePopover(pop: HTMLElement, anchor: Element): void {
@@ -540,6 +643,7 @@ export function attachScheduledSend(doc: Document, api: ScheduleApi): void {
     });
     cancel.setAttribute("aria-label", "Cancel scheduled prompt");
     cancel.addEventListener("click", () => {
+      if (!api) return;
       cancel.disabled = true;
       api.cancel(prompt.id).then(
         () => {
@@ -585,6 +689,7 @@ export function attachScheduledSend(doc: Document, api: ScheduleApi): void {
   }
 
   async function refresh(): Promise<void> {
+    if (!api) return;
     try {
       const listed = await api.list();
       if (doc.defaultView === null) return;
@@ -604,11 +709,16 @@ export function attachScheduledSend(doc: Document, api: ScheduleApi): void {
   let lastPoll = 0;
   win.setInterval(() => {
     if (doc.visibilityState !== "visible") return;
+    // The guest's side request capability changes with its connection.
+    refreshPopover?.();
     const now = Date.now();
     // Poll on the interval, and again shortly after a prompt falls due so
     // it leaves the strip once the session has sent it.
     const overdue = prompts.some((p) => p.fireAt + 2_000 <= now);
-    if (now - lastPoll >= POLL_MS || (overdue && now - lastPoll >= 3_000)) {
+    if (
+      api &&
+      (now - lastPoll >= POLL_MS || (overdue && now - lastPoll >= 3_000))
+    ) {
       lastPoll = now;
       void refresh();
     }
