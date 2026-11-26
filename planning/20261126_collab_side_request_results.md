@@ -159,6 +159,33 @@ Bugs and observations from this run:
 
 Cleanup for this run: the hub (by PID), both tmux servers (by their temp `TMUX_TMPDIR`) and one omp daemon worker started under the temp home were stopped; the auth copy was deleted. Session files, screenshots and scripts remain under `/tmp/side-smoke/fleet`.
 
+### Re-run with the completed-conversation snapshot
+
+Date: 2026-11-27. Same isolation and setup as above, against the fleet worktree `fleet-v19.1.1-side-request-final-2` (binary `omp/19.1.1`, guest bundle `.collab-guest.*` of that worktree, hub dashboard from the then-current `hub/` working tree). The commit `34c3427dbd` named for the snapshot rule is not an object in that worktree; the worktree carries the same change as `109b80dddd` ("snapshot only the completed conversation for a side request", under HEAD `31350dce6f`), which is what ran. Three host sessions (fresh sessions, same haiku-5-5 at thinking `low`) ran in parallel. Parent: three bash `sleep 20` calls then "done"; side task: "run `echo side-ok` and reply with the output only". Each child's transcript was read from its session file: its tool calls, and whether the trial's unique parent words appear in the history copied before the notice.
+
+| # | Check | Result | Observed |
+|---|---|---|---|
+| A | Rapid `submitSideRequest()`, 0.2 to 0.4 s after the parent prompt, 12 children (F0, R1 to R10, and C0 below) | Pass, 12 of 12 | Each child's only tool call was `echo side-ok` and its answer was "side-ok". None of the trial's parent words (prompt, tool calls) appears in any child's history. F0, R1, R2 and R3 ran to the parent's "done" (4 parents, all "done"); the other 8 parent turns were stopped by the script about 10 s after the start |
+| B | Fresh parent session with only an unanswered prompt (F0) | Pass | The child started; its copied history was empty (0 entries before the notice); it ran `echo side-ok` only |
+| C | Parent with a completed earlier turn ("pong") and a new unanswered prompt, 0.28 s later (C0) | Pass | The copied history was exactly the earlier turn (user "pong", assistant "pong"); the new prompt text is not in the child's file; the child ran `echo side-ok` only |
+| D | Popover, 3 s offset, 3 children (P1 to P3) | Pass, 3 of 3 | Popover offered In / At / When idle / Side request. No parent words in the copied history (it ended at the earlier stopped turn); first and only tool call `echo side-ok` |
+| E | Popover, 25 s offset, 3 children (P4 to P6) | Pass for the task, history differs | Each child ran only `echo side-ok`. The copied history did contain the parent's prompt and the completed part of its turn (tool calls and results up to the last finished tool round), ending at a tool result. The snapshot therefore stops at the last finished round, not at the last finished turn, when the parent has completed rounds; the child did not touch it |
+| F | Follow-up to a child | Pass | A follow-up in the child drawer was answered by the same child |
+| G | Draft, history, normal send | Pass | After Start the draft was empty and the popover gone 200 ms after the click, the drawer 280 ms. ArrowUp recalled the prompt sent from the page; the side request text was not in history; ArrowDown restored the empty draft. A normal prompt sent while the parent was busy was queued and answered, and the parent then finished "done". History holds the prompts sent from the current page load only: with two fresh prompts ArrowUp walked newest to oldest and then stayed on the oldest, and a fresh page with none recalled nothing. This resolves F4 above |
+| H | Image chip disables Start | Pass | In Side request mode Start was disabled with "Images can't be sent with a side request. Remove them first."; a forced click created no child and kept chip and draft; after Cancel a normal send with the image worked |
+| I | Cap message | Pass | After the session reached 8 children, `submitSideRequest()` returned "Too many side request subagents are running (limit 8)". Through the popover the same text showed inline; the popover stayed open, the draft was kept and Start stayed enabled. Slots were freed only after about two minutes (one retry loop of about 120 s was needed before the next start succeeded), so idle children count against the cap until they are parked |
+| J | Mobile (iPhone 13 touch) hold-Send | Pass | A 700 ms hold opened the same four-mode popover; Side request and Start created a child with an empty draft. The child header still shows no title while the child runs (bug 4) |
+
+Numbers:
+
+- Children created in this re-run: 29 across the three sessions (the 12 rapid-shape children above, 3 x 3 s and 3 x 25 s popover children, children from the draft/history, mobile, follow-up and cap checks, and one child that started after a long cap wait). In all 29 the only tool call after the notice was `echo side-ok`. **Children that touched the parent's work: 0 of 29** (previous fleet build: 1 of 12).
+- Children whose copied history contained the parent's unanswered prompt: 0 of the 12 rapid-shape children and 0 of the 3 children at the 3 s offset. The 3 children at the 25 s offset did, together with the completed part of the parent's turn, as described in row E.
+- Not counted as a rapid-shape trial: one trial (R11) was refused by the cap, and the next (R12) started after about 120 s of cap retries, by which time the parent's turn had finished, so its history contained the finished turn.
+
+Observation: the notice text still shows in the first bubble of the child transcript (also on mobile).
+
+Cleanup for this re-run: the hub (by PID), the three tmux servers (by their temp `TMUX_TMPDIR`) and the omp daemon workers under the temp home were stopped; the auth copy was deleted. Artifacts remain under `/tmp/side-smoke/fleet2`.
+
 ## Cleanup
 
 Only processes started for this run were stopped: the hub (by PID), the host omp sessions (by killing the temp tmux server created with a unique socket name) and the browser scripts. Copies of the auth database in the temp homes were deleted (again after the re-run, which also stopped its own hub, host sessions and daemon worker by PID). Session files, screenshots and scripts remain under `/tmp/side-smoke`.
