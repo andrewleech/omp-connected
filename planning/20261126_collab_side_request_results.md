@@ -125,6 +125,40 @@ Bug 4 (mobile child panel header) re-checked with the mobile viewport on this he
 
 New observation from the re-run: the notice block is now part of the child's first user message, so the child's transcript shows the raw `<system-notice cause="side-request">...</system-notice>` text above the task text in the first user bubble (visible in the mobile screenshot). Not a functional problem; it is what the user sees in the subagent panel.
 
+## Fleet build smoke (v19.1.1)
+
+Date: 2026-11-27. Local only, same isolation as the earlier runs (hub on `127.0.0.1` demo ports, temp `HOME`, temp `OMP_HUB_STATE_DIR`, temp `TMUX_TMPDIR`; auth copy deleted afterwards).
+
+Environment:
+
+- Host: the fleet binary `dist/omp` of the `fleet-v19.1.1-side-request-final` worktree (`omp/19.1.1`), started with `ompc -d` and `OMP_BIN` set to that binary, so the tmux wrapper and the real `extension/` from the omp-connected checkout were used. The extension was linked into the temp home with `omp plugin link <repo>/extension`. `ompc` read its hub settings from a temp `OMP_HOST_ENV` file.
+- Guest: the fleet guest bundle (`node_modules/.collab-guest.*` of that worktree) copied to `dist/webui/collab` of a temp copy of `hub/`; the live `hub/dist` was not touched.
+- Dashboard: the `hub/` working tree at the time of the run (including another session's uncommitted edits), copied without `node_modules`, `dist` and `vendor`, then `bun install` and `bun run scripts/build-webui.ts` in the copy.
+- Model: anthropic `claude-haiku-5-5`, thinking `low`. Browser: Playwright 1.63 headless Chromium; desktop 1440x900 and "iPhone 13" touch.
+- Screenshots: `/tmp/side-smoke/fleet/shots` (not committed).
+
+| # | Check | Result | Observed |
+|---|---|---|---|
+| 1 | Extension loads, host registers, dashboard lists the session | Pass | The hub's agent list showed the session with its `ompc` label and the extension's feature list (`session.schedule.v1` and others, including `session.model_roles.v1` and `session.agent_roles.v1`). The dashboard listed the session and opened it in control mode. The session log had no error-level entries; the only warnings were model discovery probes of local providers that were not running |
+| 2a | Hold-Send menu on the fleet guest | Pass | `window.ompCollabGuest` had `sideRequests: true` and `submitSideRequest`. A 700 ms hold showed `In`, `At`, `When idle`, `Side request`; the Side request preview showed the shared workspace warning |
+| 2b | Side request while the parent runs three `sleep 20` calls, 3 s offset (popover) | Pass | The child appeared in the guest drawer, called `echo side-ok` once; a follow-up reached the same child and was answered; the parent finished "done" |
+| 2c | Same, 25 s offset (popover) | Pass | The child called `echo side-ok` once and answered the follow-up; the parent finished "done" |
+| 2d | Same, via `window.ompCollabGuest.submitSideRequest()` 0.3 s after the parent prompt | Fail | The child's first tool call was the parent's pending `sleep 20 && echo <word>`; it then ran the parent's remaining sleeps as well as `echo side-ok` and ended with "side-ok done". The parent also finished "done". See F1 |
+| 2e | Extra children of the same shape (0.1 s and 3 s offsets, via `submitSideRequest()`) | Pass, 9 of 9 | Each child made one `echo side-ok` call and answered "side-ok". The parent turn was stopped by the script about 10 s after each start, so parent completion is not reported for these. A tenth start was refused with "Too many side request subagents are running (limit 8)", so the subagent cap works |
+| 3 | Draft and history after Start; normal send | Pass | The draft was still in the box 40 ms after the Start click, and empty with the popover gone 160 to 200 ms after it; the child drawer opened 240 ms after. After closing the drawer, ArrowUp recalled the parent's last prompt, a second ArrowUp the one before it, and ArrowDown past the newest restored the empty draft. A normal prompt sent while the parent was running was accepted as a normal queued message: the host sent the running bash command to the background to handle it, answered it, then the parent continued and finished "done". The side request text was not added to history |
+| 4 | Image chip blocks Start | Pass | One chip after attaching an image. In Side request mode Start was disabled with "Images can't be sent with a side request. Remove them first." A forced click on the disabled button created no child and kept the chip and the draft. After Cancel, a normal send with the image worked: the chip cleared and the parent answered |
+| 5 | Mobile touch viewport, hold Send | Pass | A 700 ms touch hold opened the same popover; Side request, Start, empty draft, child drawer with its output streaming. The notice text shows in the first bubble. Bug 4 (no title in the child header while running) is also present in the fleet guest |
+| 6 | Existing older session in the fleet guest | Pass | The earlier session was resumed with `ompc -d --continue`. The guest loaded its full transcript (about 30 collapsed items, scrolled to the top), showed the 13-child badge on the agents toggle, offered `sideRequests: true`, and logged no page errors |
+
+Bugs and observations from this run:
+
+- F1. The child can still run the parent's open work on the fleet build. In the main session 1 of 12 children did (child 3, started 0.3 s after the parent prompt); of the 8 children started in the "parent prompt sent less than a second ago, no assistant message yet" shape, 1 did and 7 did not. The notice text is the same as on the upstream-19.2 branch re-run, where 11 of 11 children were clean. Repro: parent gets "three bash `sleep 20` calls, then done"; call `window.ompCollabGuest.submitSideRequest()` 0.1 to 0.3 s later with "run `echo side-ok` and reply with the output only"; read the child's transcript. This is a small sample at the cheapest model; it shows the framing is not a guarantee.
+- F2. In my script a follow-up sent within about 0.3 s of Start interrupted the child's running `echo` (the host's "Backgrounded early to handle an incoming message" behaviour) and the child first answered that it had no output yet. This is a test timing effect and the host's normal message handling, not a side request defect.
+- F3. The `hub/` working tree used for the dashboard includes an uncommitted collab-name feature: a "Your name" dialog blocks the guest until a name is saved (or `omp.collab.name` is set in local storage). The scripts set it. Not a side request issue; reported as requested.
+- F4. After a fresh page load, ArrowUp recalled only the two most recent prompts that were checked, not every earlier prompt of the session. I did not check whether that is the guest's intended window.
+
+Cleanup for this run: the hub (by PID), both tmux servers (by their temp `TMUX_TMPDIR`) and one omp daemon worker started under the temp home were stopped; the auth copy was deleted. Session files, screenshots and scripts remain under `/tmp/side-smoke/fleet`.
+
 ## Cleanup
 
 Only processes started for this run were stopped: the hub (by PID), the host omp sessions (by killing the temp tmux server created with a unique socket name) and the browser scripts. Copies of the auth database in the temp homes were deleted (again after the re-run, which also stopped its own hub, host sessions and daemon worker by PID). Session files, screenshots and scripts remain under `/tmp/side-smoke`.
