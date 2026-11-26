@@ -212,3 +212,7 @@ Review rounds: standard review, adversarial review and a re-review of the fixes.
 - Mobile child panel header shows no title while the child runs (bug 4), the agents rail covering Send at some dashboard widths (bug 2) and the join toast covering Send on mobile (bug 3) were not checked against the base guest; none is specific to the side request code.
 - The child's first message shows the framing notice as raw text above the task in the subagent panel (cosmetic).
 - The host advertises side requests for an unpersisted session; Start then reports "Side requests need a persisted session" and keeps the draft.
+
+## Deployment
+
+2026-11-27: the v19.1.1 fleet build with side requests, the fleet guest bundle and the hold-Send popover were deployed to the hub host and the five client hosts. Existing `ompc` sessions need a restart to run the new binary and extension; only a restarted host session accepts side requests. The fork branch `collab-side-request` and the fleet MBM branches are pushed to the fork; no upstream pull request has been opened. Binary, branch and rollback details are in the local runbook.
