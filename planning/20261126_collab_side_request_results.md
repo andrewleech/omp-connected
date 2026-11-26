@@ -99,6 +99,32 @@ Source: the parent and child session files of the main smoke session. All reques
 
 No bug was found in the draft handling, capability gating, pending question handling, read-only handling or follow-up routing.
 
+### Re-run after framing fix
+
+Date: 2026-11-27. Host process restarted from fork commit `f6ab89bfd8`, which makes the child's first user message begin with a `<system-notice cause="side-request">` block (conversation above belongs to the parent; do not answer, continue or repeat its open work) followed by the task text. `git log 3390b2b67d..HEAD` shows no `collab-web` change, so the guest bundle was not rebuilt. Same hub setup, same model (`claude-haiku-5-5`, thinking `low`), a fresh host home and session directory. Each trial: the parent gets "three separate bash `sleep 20` calls (echo one, two, three), then reply done" from the guest composer, then the side request "run `echo side-ok` and reply with the output only" is started. Trials 1 to 8 used the hold-Send popover (Side request, Start). Trials 9 to 11 called `window.ompCollabGuest.submitSideRequest()` right after clicking Send, because the popover hold needs 700 ms and the model answers within about a second.
+
+| Trial | Start after parent prompt | Last entry of the child's copied history | Child did only the side task | Parent finished unaffected |
+|---|---|---|---|---|
+| 1 | 3.9 s | the parent's prompt (first tool call still running) | Yes: `echo side-ok`, answer "side-ok" | Yes: three sleeps, "done" |
+| 2 | 25.9 s | result of the first sleep (mid-turn, partial batch) | Yes | Yes |
+| 3 | 3.9 s | the parent's prompt | Yes | Yes |
+| 4 | 25.9 s | result of the first sleep | Yes | Yes |
+| 5 | 3.9 s | the parent's prompt | Yes | Yes |
+| 6 | 25.9 s | result of the first sleep | Yes | Yes |
+| 7 | 1.2 s | the parent's prompt, no assistant message yet | Yes | Parent answered "done" without tool calls (it noted the identical request had arrived several times; this is the parent model, not the side request) |
+| 8 | 1.2 s | the parent's prompt, no assistant message yet | Yes | Yes: three sleeps, "done" |
+| 9 | 0.16 s | the parent's prompt, no assistant message yet | Yes | Yes |
+| 10 | 0.20 s | the parent's prompt, no assistant message yet | Yes | Yes |
+| 11 | 0.19 s | the parent's prompt, no assistant message yet | Yes | Yes |
+
+Result: 11 of 11 children made exactly one tool call (`echo side-ok`) and one final answer "side-ok", with no sleep call and no reply to the parent's prompt. In the previous run 1 of 4 children repeated the parent's sleeps. Trials 7 to 11 are the case where the trailing parent entry is an unanswered user prompt with no tool round yet; trials 1, 3 and 5 are the same shape with the parent's first tool call still running; trials 2, 4 and 6 are a partial tool batch. Parent prompts for trials 9 to 11 used different echo words to avoid the parent's repeated-request answer seen in trial 7. This is one model at the cheapest setting and one task; it shows no failure in 11 trials, not that failure cannot happen.
+
+One further child, started from the mobile viewport with the popover, also did only the side task (one `echo side-ok` call) and answered a follow-up correctly while the parent finished its own task.
+
+Bug 4 (mobile child panel header) re-checked with the mobile viewport on this head: still present. While the child is running the panel header shows the `running` chip, the model chip and `kill`, with no title text visible.
+
+New observation from the re-run: the notice block is now part of the child's first user message, so the child's transcript shows the raw `<system-notice cause="side-request">...</system-notice>` text above the task text in the first user bubble (visible in the mobile screenshot). Not a functional problem; it is what the user sees in the subagent panel.
+
 ## Cleanup
 
-Only processes started for this run were stopped: the hub (by PID), the host omp sessions (by killing the temp tmux server created with a unique socket name) and the browser scripts. Copies of the auth database in the temp homes were deleted. Session files, screenshots and scripts remain under `/tmp/side-smoke`.
+Only processes started for this run were stopped: the hub (by PID), the host omp sessions (by killing the temp tmux server created with a unique socket name) and the browser scripts. Copies of the auth database in the temp homes were deleted (again after the re-run, which also stopped its own hub, host sessions and daemon worker by PID). Session files, screenshots and scripts remain under `/tmp/side-smoke`.
