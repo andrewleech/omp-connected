@@ -23,3 +23,12 @@ All are relative to the local `collab-side-request-fork` worktree: `packages/cod
 ## Workflow
 
 Use independent test authoring and execution, then standard and adversarial review per the planning index. Fix issues and repeat affected checks before marking the sprint complete. Record findings and evidence in the sprint's dated result report; do not deploy.
+
+## Revalidated: 2026-11-26
+
+Checked at planning HEAD `903d96f`.
+
+- Fork: upstream/main is now `d9a63f498b` (v19.2.x), 5868 commits past the prototype base `f2b795ba74`. Collab host, protocol, wire, web guest, session and task paths all changed, so the prototype diff is reference only. Work goes on a fresh branch `collab-side-request` off `d9a63f498b`, in its own worktree. The prototype worktree is untouched.
+- Upstream now has `/btw` (ephemeral side turn, `Agent.buildSideRequestContext`, promotion to a forked session with branch reason `btw`). Inspect and reuse it only where it serves the snapshot contract; a child here is an interactive subagent, not an ephemeral turn.
+- Hold-Send menu: the existing send-when choices (In / At / When idle) are the popover in `hub/src/webui/lib/scheduled-send.ts`, an overlay on the unpatched same-origin Collab guest, not part of `packages/collab-web`. The prototype's guest-side menu is not carried over. The guest exposes a small embed API; the hub popover gets a Side request mode. Ticket 3 splits into a guest part (fork) and a hub part (this repo).
+- Wire contract chosen for all tickets: guest `{t:"side-request", reqId, text, images?}`; host replies only to the sender `{t:"side-request-result", reqId, ok:true, agentId}` or `{..., ok:false, message}`; welcome carries `sideRequests?: true`.
